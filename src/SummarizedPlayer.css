@@ -1,0 +1,169 @@
+/* SummarizedPlayer.css */
+
+.summary-wrapper {
+    text-align: center;
+    padding: 50px 20px;
+    background: linear-gradient(-45deg, #0F172A, #1E293B, #0F172A, #1E293B);
+    background-size: 400% 400%;
+    animation: gradientAnimation 20s ease infinite, fadeIn 0.7s ease-in-out;
+    min-height: 100vh;
+    color: #ffffff;
+    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    position: relative;
+  }
+  
+  @keyframes gradientAnimation {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+  
+  .summary-wrapper::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(14, 165, 233, 0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  
+  .summary-title {
+    font-size: 36px;
+    margin-bottom: 35px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #0EA5E9, #38BDF8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    position: relative;
+    z-index: 1;
+  }
+  
+  .video-switch-buttons {
+    margin: 20px 0;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  
+  .video-btn {
+    padding: 12px 24px;
+    background: rgba(30, 41, 59, 0.6);
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(14, 165, 233, 0.5);
+    color: #38BDF8;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .video-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s ease;
+  }
+  
+  .video-btn:hover {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(56, 189, 248, 0.2));
+    border-color: #38BDF8;
+    color: #fff;
+    transform: scale(1.05) translateY(-2px);
+    box-shadow: 0 4px 15px rgba(14, 165, 233, 0.4);
+  }
+  
+  .video-btn:hover::before {
+    left: 100%;
+  }
+  
+  .video-btn.active {
+    background: linear-gradient(135deg, #0EA5E9, #38BDF8);
+    border-color: #38BDF8;
+    color: white;
+    box-shadow: 0 4px 15px rgba(14, 165, 233, 0.5);
+  }
+  
+  .moment-title {
+    margin-top: 45px;
+    font-size: 28px;
+    font-weight: 600;
+    color: #38BDF8;
+    position: relative;
+    z-index: 1;
+  }
+  
+  .timestamp-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 14px;
+    margin-top: 20px;
+    animation: fadeInUp 0.8s ease;
+    position: relative;
+    z-index: 1;
+  }
+  
+  .timestamp-btn {
+    padding: 10px 20px;
+    border: 2px solid rgba(14, 165, 233, 0.5);
+    background: rgba(30, 41, 59, 0.6);
+    backdrop-filter: blur(10px);
+    color: #ffffff;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .timestamp-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s ease;
+  }
+  
+  .timestamp-btn:hover {
+    background: linear-gradient(135deg, #0EA5E9, #38BDF8);
+    border-color: #38BDF8;
+    color: #fff;
+    transform: translateY(-3px) scale(1.05);
+    box-shadow: 0 6px 20px rgba(14, 165, 233, 0.5);
+  }
+  
+  .timestamp-btn:hover::before {
+    left: 100%;
+  }
+  
+  /* Animations */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  

@@ -1,0 +1,86 @@
+.about-wrapper {
+    min-height: 100vh;
+    background: linear-gradient(-45deg, #0F172A, #1E293B, #0F172A, #1E293B);
+    background-size: 400% 400%;
+    animation: gradientAnimation 20s ease infinite;
+    padding: 80px 20px;
+    display: flex;
+    justify-content: center;
+    color: #eee;
+    position: relative;
+  }
+  
+  @keyframes gradientAnimation {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+  
+  .about-wrapper::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(14, 165, 233, 0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  
+  .about-content {
+    max-width: 900px;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95));
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 50px 40px;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5),
+                0 0 0 1px rgba(14, 165, 233, 0.2);
+    animation: fadeIn 0.8s ease;
+    position: relative;
+    z-index: 1;
+  }
+  
+  .about-content h1 {
+    text-align: center;
+    color: #ffffff;
+    font-size: 2.8rem;
+    margin-bottom: 25px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #0EA5E9, #38BDF8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  .about-content h2 {
+    color: #38BDF8;
+    margin-top: 30px;
+    margin-bottom: 15px;
+    font-size: 1.6rem;
+    font-weight: 600;
+  }
+  
+  .about-content p {
+    line-height: 1.8;
+    font-size: 1.1rem;
+    color: #94A3B8;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(15px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  

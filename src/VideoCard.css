@@ -1,0 +1,30 @@
+.video-card {
+    transition: all var(--transition-normal);
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .video-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.05) 0%, transparent 50%);
+    opacity: 0;
+    transition: opacity var(--transition-normal);
+    pointer-events: none;
+    z-index: 1;
+  }
+  
+  .video-card:hover {
+    transform: scale(1.05) translateY(-4px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7),
+                0 0 0 1px rgba(14, 165, 233, 0.2);
+  }
+  
+  .video-card:hover::after {
+    opacity: 1;
+  }
+  

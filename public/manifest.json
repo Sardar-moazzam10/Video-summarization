@@ -1,0 +1,25 @@
+{
+  "short_name": "Video Summarizer",
+  "name": "Video Summarizer - AI Video Discovery",
+  "icons": [
+    {
+      "src": "video_summarizer_icon.png",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "video_summarizer_icon.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "video_summarizer_icon.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0EA5E9",
+  "background_color": "#ffffff"
+}
