@@ -45,6 +45,7 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
 
 YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
+COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
 # Configuration
 WHISPER_ALLOW_PARALLEL = os.getenv("WHISPER_ALLOW_PARALLEL", "0") == "1"
@@ -141,10 +142,12 @@ class TranscriptionService:
 
         cmd = [
             YTDLP_BIN,
-            "--js-runtimes", "node",  # Use Node.js for YouTube extraction
-            "--remote-components", "ejs:github",  # Enable remote challenge solver
-            "--extractor-args", "youtube:player_client=web,mweb",  # Use web clients (no PO token required)
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",  # Avoid bot detection
+            "--cookies", COOKIES_FILE,
+            "--js-runtimes", "node",
+            "--extractor-args", "youtube:player_client=web",
+            "--no-check-certificates",
+            "--socket-timeout", "60",
+            "--retries", "10",
             "--ffmpeg-location", FFMPEG_BIN,
             "-x", "--audio-format", "mp3",
             "-o", output_path,

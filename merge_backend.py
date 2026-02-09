@@ -56,6 +56,7 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
 
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
 YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
 
 # === Thread Pool for Background Tasks ===
 # Increased workers to handle parallel transcription and downloads
@@ -143,7 +144,13 @@ def _download_video(video_id: str, work_dir: str) -> str:
         cmd = [
             YTDLP_BIN,
             "--ffmpeg-location", FFMPEG_BIN,
-            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--cookies", COOKIES_FILE,
+            "--js-runtimes", "node",
+            "--extractor-args", "youtube:player_client=web",
+            "--no-check-certificates",
+            "--socket-timeout", "60",
+            "--retries", "10",
+            "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best/bestvideo+bestaudio",
             "-o", output_template,
             url,
         ]
@@ -368,10 +375,11 @@ def _create_trimmed_segments(segments: List[Dict[str, Any]], work_dir: str,
     """
     # Download each unique video once (in parallel)
     video_files: Dict[str, str] = {}
+    failed_video_ids = []
     unique_videos = list(set([seg["videoId"] for seg in segments]))
     downloaded_count = 0
     download_lock = threading.Lock()
-    
+
     def _download_single(vid: str, idx: int):
         """Helper function to download a single video with progress tracking."""
         nonlocal downloaded_count
@@ -381,23 +389,47 @@ def _create_trimmed_segments(segments: List[Dict[str, Any]], work_dir: str,
                 video_files[vid] = file_path
                 downloaded_count += 1
                 progress = 70 + int((downloaded_count / len(unique_videos)) * 15)
-                _update_job_status(merge_id, stage=f"Downloading video {downloaded_count}/{len(unique_videos)}", 
+                _update_job_status(merge_id, stage=f"Downloading video {downloaded_count}/{len(unique_videos)}",
                                   progress_percent=progress)
             return file_path
         except Exception as e:
             print(f"❌ Download error for {vid}: {e}")
-            raise
-    
+            with download_lock:
+                failed_video_ids.append(vid)
+                downloaded_count += 1
+                progress = 70 + int((downloaded_count / len(unique_videos)) * 15)
+                _update_job_status(merge_id, stage=f"⚠️ Video {downloaded_count}/{len(unique_videos)} - {vid} failed",
+                                  progress_percent=progress)
+            return None  # Don't raise - allow other videos to download
+
     # Download all videos in parallel (limit to 2 concurrent downloads)
     if unique_videos:
         with ThreadPoolExecutor(max_workers=min(2, len(unique_videos)), thread_name_prefix="download_") as executor:
             futures = {executor.submit(_download_single, vid, idx): vid for idx, vid in enumerate(unique_videos)}
             for future in futures:
-                future.result()  # Wait for all to complete
+                try:
+                    future.result()  # Wait for completion
+                except Exception:
+                    pass  # Already handled in _download_single
+
+    # Check if any videos succeeded
+    if not video_files:
+        raise Exception(f"All {len(unique_videos)} videos failed to download. Cannot proceed with merge.")
+
+    if failed_video_ids:
+        print(f"⚠️ {len(failed_video_ids)} video(s) failed to download: {failed_video_ids}")
+        print(f"✅ Continuing with {len(video_files)} successful video(s)")
 
     segment_files: List[str] = []
     for idx, seg in enumerate(segments):
-        src = video_files[seg["videoId"]]
+        vid = seg["videoId"]
+
+        # Skip segments from failed videos
+        if vid not in video_files:
+            print(f"⏭️ Skipping segment {idx} from failed video {vid}")
+            continue
+
+        src = video_files[vid]
         out_seg = os.path.join(work_dir, f"seg_{idx}.mp4")
         start = float(seg["start"])
         duration = float(seg["end"] - seg["start"])

@@ -41,6 +41,7 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
 
 YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
+COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
 
 class VideoCacheManager:
@@ -164,7 +165,13 @@ class VideoCacheManager:
                 cmd = [
                     YTDLP_BIN,
                     "--ffmpeg-location", FFMPEG_BIN,
-                    "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                    "--cookies", COOKIES_FILE,
+                    "--js-runtimes", "node",
+                    "--extractor-args", "youtube:player_client=web",
+                    "--no-check-certificates",
+                    "--socket-timeout", "60",
+                    "--retries", "10",
+                    "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best/bestvideo+bestaudio",
                     "-o", output_path,
                     url,
                 ]
@@ -282,7 +289,13 @@ class VideoCacheManager:
         cmd = [
             YTDLP_BIN,
             "--ffmpeg-location", FFMPEG_BIN,
-            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--cookies", COOKIES_FILE,
+            "--js-runtimes", "node",
+            "--extractor-args", "youtube:player_client=web",
+            "--no-check-certificates",
+            "--socket-timeout", "60",
+            "--retries", "10",
+            "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best/bestvideo+bestaudio",
             "-o", output_template,
             url,
         ]
