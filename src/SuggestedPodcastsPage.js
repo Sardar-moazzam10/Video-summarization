@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { fetchVideos } from './youtubeApi.js';
 import './SuggestedPage.css';
 
@@ -17,15 +18,14 @@ const SuggestedPage = () => {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [animate, setAnimate] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState([]);
-  const [mergeDuration, setMergeDuration] = useState('300'); // seconds
+  const [mergeDuration, setMergeDuration] = useState('300');
 
-  // Handle redirect with topic from another component like Footer
   useEffect(() => {
     if (location.state?.topic) {
       handleTopicClick(location.state.topic);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state?.topic]);
 
   const handleTopicClick = async (topic) => {
@@ -34,15 +34,12 @@ const SuggestedPage = () => {
     setError('');
     setVideos([]);
     setSelectedForMerge([]);
-    setAnimate(false);
 
     try {
       const fetchedVideos = await fetchVideos(topic);
       setVideos(fetchedVideos.length > 0 ? fetchedVideos : []);
       if (fetchedVideos.length === 0) {
         setError(`No videos found for "${topic}". Try another topic!`);
-      } else {
-        setTimeout(() => setAnimate(true), 100);
       }
     } catch (err) {
       setError('Failed to fetch videos. Please try again.');
@@ -64,7 +61,7 @@ const SuggestedPage = () => {
     }
 
     try {
-      const res = await fetch('http://localhost:5002/merge', {
+      const res = await fetch('http://localhost:8000/api/v1/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -89,110 +86,155 @@ const SuggestedPage = () => {
   };
 
   return (
-    <div className="suggested-container">
-      <br></br>
-      <br></br>
-      <h1 className="suggested-title">🔥 Discover Suggested Videos</h1>
-      <p className="suggested-subtitle">Click a topic below to explore relevant videos.</p>
+    <div className="suggested-page">
+      <div className="suggested-bg-grid" />
+      <div className="suggested-bg-glow" />
 
-      <div className="topics-container">
-        {suggestedTopics.map((topic, index) => (
-          <button
-            key={index}
-            className={`topic-button ${selectedTopic === topic ? 'active' : ''}`}
-            onClick={() => handleTopicClick(topic)}
+      <div className="suggested-container">
+        {/* Header */}
+        <motion.div
+          className="suggested-header"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="suggested-icon-wrap">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#478BE0" strokeWidth="2">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+          </div>
+          <h1 className="suggested-title">Discover Videos</h1>
+          <p className="suggested-subtitle">Click a topic below to explore relevant videos</p>
+        </motion.div>
+
+        {/* Topic pills */}
+        <motion.div
+          className="suggested-topics"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.1 }}
+        >
+          {suggestedTopics.map((topic, index) => (
+            <button
+              key={index}
+              className={`suggested-topic-btn ${selectedTopic === topic ? 'active' : ''}`}
+              onClick={() => handleTopicClick(topic)}
+            >
+              {topic}
+            </button>
+          ))}
+        </motion.div>
+
+        {/* Loading */}
+        {loading && (
+          <div className="suggested-loading">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+              style={{
+                display: 'inline-block',
+                width: 20,
+                height: 20,
+                border: '2px solid rgba(71,139,224,0.2)',
+                borderTopColor: '#478BE0',
+                borderRadius: '50%',
+                marginRight: 10,
+                verticalAlign: 'middle',
+              }}
+            />
+            Loading videos...
+          </div>
+        )}
+
+        {/* Error */}
+        {error && <p className="suggested-error">{error}</p>}
+
+        {/* Video grid */}
+        {videos.length > 0 && (
+          <div className="suggested-grid">
+            {videos.map((video, index) => {
+              const videoId = video.id?.videoId || video.id;
+              return (
+                <motion.div
+                  key={index}
+                  className="suggested-card"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, delay: 0.1 + index * 0.04 }}
+                >
+                  <div className="suggested-card-thumb">
+                    <img
+                      src={video.snippet.thumbnails.medium.url}
+                      alt={video.snippet.title}
+                    />
+                  </div>
+                  <div className="suggested-card-body">
+                    <h3 className="suggested-card-title">{video.snippet.title}</h3>
+                    <p className="suggested-card-desc">
+                      {video.snippet.description.substring(0, 100)}...
+                    </p>
+                    <label className="suggested-merge-label">
+                      <input
+                        type="checkbox"
+                        checked={selectedForMerge.includes(videoId)}
+                        onChange={() => handleToggleSelectForMerge(videoId)}
+                      />
+                      Select for merge
+                    </label>
+                    <div className="suggested-card-btns">
+                      <button
+                        className="suggested-btn-watch"
+                        onClick={() => handleWatchHere(video)}
+                      >
+                        Watch Here
+                      </button>
+                      <a
+                        href={`https://www.youtube.com/watch?v=${video.id.videoId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="suggested-btn-yt"
+                      >
+                        YouTube
+                      </a>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Merge bar */}
+        {videos.length > 0 && (
+          <motion.div
+            className="suggested-merge-bar"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.4 }}
           >
-            {topic}
-          </button>
-        ))}
+            <span className="suggested-merge-text">
+              {selectedForMerge.length} selected &mdash; Choose output length:
+            </span>
+            <select
+              className="suggested-merge-select"
+              value={mergeDuration}
+              onChange={(e) => setMergeDuration(e.target.value)}
+            >
+              <option value="300">5 minutes</option>
+              <option value="600">10 minutes</option>
+              <option value="900">15 minutes</option>
+            </select>
+            <button
+              className="suggested-merge-btn"
+              onClick={handleMergeSelected}
+              disabled={selectedForMerge.length < 2}
+              style={{ opacity: selectedForMerge.length < 2 ? 0.5 : 1 }}
+            >
+              Merge Selected
+            </button>
+          </motion.div>
+        )}
       </div>
-
-      {loading && <div className="loading">Loading...</div>}
-      {error && <p className="error">{error}</p>}
-
-      <div className={`videos-container ${animate ? 'slide-in' : ''}`}>
-        {videos.map((video, index) => {
-          const videoId = video.id?.videoId || video.id;
-          return (
-            <div key={index} className="video-card">
-              <img
-                src={video.snippet.thumbnails.medium.url}
-                alt={video.snippet.title}
-                className="video-thumbnail"
-              />
-              <div className="video-info">
-                <h3 className="video-title">{video.snippet.title}</h3>
-                <p className="video-description">
-                  {video.snippet.description.substring(0, 100)}...
-                </p>
-                <label style={{ display: 'block', marginTop: '8px', fontSize: '13px', color: '#eee' }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedForMerge.includes(videoId)}
-                    onChange={() => handleToggleSelectForMerge(videoId)}
-                    style={{ marginRight: '6px' }}
-                  />
-                  Select for Merge
-                </label>
-                <div className="button-group">
-                  <a
-                    href={`https://www.youtube.com/watch?v=${video.id.videoId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="watch-youtube-button"
-                  >
-                    Watch on YouTube
-                  </a>
-                  <button
-                    onClick={() => handleWatchHere(video)}
-                    className="watch-here-button"
-                  >
-                    Watch Here
-                  </button>
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {videos.length > 0 && (
-        <div style={{ marginTop: '20px', textAlign: 'center' }}>
-          <span style={{ fontSize: '14px', marginRight: '8px' }}>
-            Select at least 2 videos, then choose total output length:
-          </span>
-          <select
-            value={mergeDuration}
-            onChange={(e) => setMergeDuration(e.target.value)}
-            style={{
-              padding: '8px 10px',
-              borderRadius: '6px',
-              border: '1px solid #555',
-              backgroundColor: '#1f1f2e',
-              color: '#fff',
-              marginRight: '8px',
-            }}
-          >
-            <option value="300">5 minutes total</option>
-            <option value="600">10 minutes total</option>
-            <option value="900">15 minutes total</option>
-          </select>
-          <button
-            onClick={handleMergeSelected}
-            style={{
-              padding: '10px 18px',
-              backgroundColor: '#28a745',
-              border: 'none',
-              borderRadius: '6px',
-              color: '#fff',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-            }}
-          >
-            🧩 Merge Selected
-          </button>
-        </div>
-      )}
     </div>
   );
 };

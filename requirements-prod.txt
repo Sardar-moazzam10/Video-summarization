@@ -1,0 +1,50 @@
+# =====================================================
+# AI Video Summarization - Production Stack
+# Best-in-class libraries for FYP
+# =====================================================
+
+# === Build Tools (MUST BE FIRST) ===
+setuptools>=70.0.0
+wheel>=0.43.0
+
+# === Web Framework (FastAPI - Industry Standard) ===
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic==2.9.0
+pydantic-settings==2.5.2
+
+# === Security (Production-Grade) ===
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+slowapi==0.1.9
+email-validator>=2.0.0
+
+# === Database (Async MongoDB) ===
+pymongo==4.13.0
+motor==3.5.1
+
+# === AI/ML Core ===
+torch==2.2.2
+transformers==4.44.0
+sentence-transformers==3.0.1
+scikit-learn==1.5.1
+
+# === YouTube & Transcription ===
+youtube-transcript-api==0.6.2
+yt-dlp==2024.8.6
+openai-whisper==20231117
+
+# === HTTP & Async ===
+httpx==0.27.0
+aiohttp==3.10.5
+aiofiles==24.1.0
+
+# === Utilities ===
+python-dotenv==1.0.1
+tqdm==4.66.5
+pyyaml==6.0.2
+numpy>=1.24.0,<2.0.0
+
+# === Email (Async) ===
+aiosmtplib==3.0.1

@@ -10,6 +10,7 @@ Features:
 
 from flask import Flask, request, jsonify, Response, send_file
 from flask_cors import CORS
+from dotenv import load_dotenv
 import uuid
 import random
 import requests
@@ -24,6 +25,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List
 from datetime import datetime
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Import our services
 from transcription_service import get_transcription_service, TranscriptionService

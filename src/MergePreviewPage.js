@@ -18,6 +18,7 @@ const MergePreviewPage = () => {
   const initialResults = fromState.length ? fromState : fromStorage;
   const [selectedResults] = useState(initialResults);
   const [targetDuration, setTargetDuration] = useState('300'); // seconds
+  const [selectedStyle, setSelectedStyle] = useState('educational');
 
   const handleBack = () => {
     navigate(-1);
@@ -49,17 +50,19 @@ const MergePreviewPage = () => {
     }
 
     try {
-      const res = await fetch('http://localhost:5002/merge', {
+      const res = await fetch('http://localhost:8000/api/v1/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          selectedSegments,
-          targetDuration: parseInt(targetDuration, 10) || 300
+          video_ids: selectedSegments.map(s => s.videoId),
+          target_duration_minutes: Math.round(parseInt(targetDuration, 10) / 60),
+          generate_audio: true,
+          style: selectedStyle,
         }),
       });
       const data = await res.json();
-      if (data.mergeId) {
-        navigate(`/merged-player/${data.mergeId}`);
+      if (data.job_id) {
+        navigate(`/merged-player/${data.job_id}`);
       } else {
         alert('Server error during merge.');
       }
@@ -140,7 +143,7 @@ const MergePreviewPage = () => {
 
       <div style={styles.actions}>
         <div style={styles.durationSelector}>
-          <label style={styles.durationLabel}>Total output length:</label>
+          <label style={styles.durationLabel}>Duration:</label>
           <select
             value={targetDuration}
             onChange={(e) => setTargetDuration(e.target.value)}
@@ -149,6 +152,21 @@ const MergePreviewPage = () => {
             <option value="300">5 minutes</option>
             <option value="600">10 minutes</option>
             <option value="900">15 minutes</option>
+            <option value="1200">20 minutes</option>
+          </select>
+        </div>
+        <div style={styles.durationSelector}>
+          <label style={styles.durationLabel}>Style:</label>
+          <select
+            value={selectedStyle}
+            onChange={(e) => setSelectedStyle(e.target.value)}
+            style={styles.select}
+          >
+            <option value="educational">Educational</option>
+            <option value="casual">Casual / Podcast</option>
+            <option value="executive">Executive Briefing</option>
+            <option value="beginner">Beginner Friendly</option>
+            <option value="detailed">Detailed Analysis</option>
           </select>
         </div>
         <button onClick={handleBack} style={{ ...styles.button, backgroundColor: '#444' }}>

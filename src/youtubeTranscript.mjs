@@ -5,20 +5,22 @@
  */
 export const fetchTranscript = async (videoId) => {
   try {
-    const response = await fetch(`http://localhost:5001/transcript?videoId=${videoId}`);
+    const response = await fetch(`http://localhost:8000/api/v1/transcript?videoId=${videoId}`);
     if (!response.ok) {
       throw new Error(`Error: ${response.status}`);
     }
 
     const data = await response.json();
 
-    // ✅ If response contains an error or is not an array
-    if (!Array.isArray(data)) {
-      console.warn("⚠️ Transcript API returned an error or invalid format:", data.error || data);
+    // Backend returns { transcript: [...], source, cached } — unwrap it
+    const transcript = Array.isArray(data) ? data : data?.transcript || [];
+
+    if (!Array.isArray(transcript) || transcript.length === 0) {
+      console.warn("Transcript API returned empty or invalid format:", data.error || data);
       return [];
     }
 
-    return data;
+    return transcript;
   } catch (error) {
     console.error('🔥 Error fetching transcript:', error.message);
     return [];

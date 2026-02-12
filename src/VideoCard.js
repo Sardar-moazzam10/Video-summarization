@@ -17,7 +17,7 @@ const VideoCard = ({ video, videosList, isSelected = false, onToggleSelectForMer
   const saveToHistory = async (type) => {
     if (!username || !videoId) return;
     try {
-      await fetch('http://localhost:5000/api/user-history', {
+      await fetch('http://localhost:8000/api/v1/auth/user-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -35,14 +35,14 @@ const VideoCard = ({ video, videosList, isSelected = false, onToggleSelectForMer
 
   const handleWatchHere = async () => {
     setLoading(true);
-    await saveToHistory('watch-here');
+    await saveToHistory('watch');
     setTimeout(() => {
       navigate('/video-player', { state: { video, videosList } });
     }, 400);
   };
 
   const handleWatchYouTube = async () => {
-    await saveToHistory('youtube');
+    await saveToHistory('watch');
     window.open(`https://www.youtube.com/watch?v=${videoId}`, '_blank');
   };
 

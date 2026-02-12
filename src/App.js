@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import './App.css';
 import Navbar from './Navbar.js';
 import ChoicePage from './ChoicePage.js';
 import SearchPage from './SearchPage.js';
@@ -66,8 +67,24 @@ const RoleRedirect = () => {
 };
 
 const App = () => {
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const handleMouse = (e) => {
+      setMousePos({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener('mousemove', handleMouse);
+    return () => window.removeEventListener('mousemove', handleMouse);
+  }, []);
+
   return (
     <Router>
+      <div
+        className="ambient-glow"
+        style={{
+          background: `radial-gradient(800px circle at ${mousePos.x}px ${mousePos.y}px, rgba(71, 139, 224, 0.06), transparent 40%)`,
+        }}
+      />
       <RedirectWrapper />
       <Navbar />
       <Routes>

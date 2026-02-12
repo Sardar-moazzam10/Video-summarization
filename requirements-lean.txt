@@ -1,0 +1,36 @@
+# =====================================================
+# Video-Summarization - Lean Production Stack
+# Only 15 essential dependencies
+# =====================================================
+
+# === Web Framework (FastAPI > Flask) ===
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic-settings==2.5.2
+pydantic[email]==2.9.0
+
+# === Database ===
+pymongo==4.13.0
+motor==3.5.1
+
+# === AI/ML Core (The Heavy Hitters) ===
+torch==2.2.2
+transformers==4.52.4
+openai-whisper==20231117
+
+# === YouTube ===
+youtube-transcript-api==1.1.0
+yt-dlp==2024.8.6
+
+# === HTTP & Utils ===
+requests==2.32.3
+python-dotenv==1.0.1
+tqdm==4.67.1
+pyyaml==6.0.2
+
+# === Email (lightweight) ===
+aiosmtplib==3.0.1
+
+# === Build dependency ===
+setuptools>=65.0.0

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_URL = 'http://localhost:5000/api'; // Your Python backend
+const BASE_URL = 'http://localhost:8000/api/v1/auth'; // FastAPI backend
 
 // Signup API Call
 export const signupUser = async (formData) => {

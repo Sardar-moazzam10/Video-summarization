@@ -1,16 +1,18 @@
-// src/pages/SearchPage.js
+// src/pages/SearchPage.js - Modern UI with Multi-Select and Duration Intelligence
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import SearchBar from './SearchBar.js';
 import VideoList from './VideoList.js';
 import { fetchVideos } from './youtubeApi.js';
+import MultiSelectBar from './components/merge/MultiSelectBar.jsx';
 import './Background.css';
 
 const SearchPage = () => {
   const [videos, setVideos] = useState([]);
   const [noResults, setNoResults] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState([]);
-  const [mergeDuration, setMergeDuration] = useState('300'); // seconds
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const username = JSON.parse(localStorage.getItem('user'))?.username;
@@ -22,164 +24,210 @@ const SearchPage = () => {
     }
   }, []);
 
-  const handleSearch = async (searchQuery) => {
+  const handleSearch = async (query) => {
     setSelectedForMerge([]);
-    const fetchedVideos = await fetchVideos(searchQuery);
-    setVideos(fetchedVideos);
-    localStorage.setItem('searchedVideos', JSON.stringify(fetchedVideos));
-    setNoResults(fetchedVideos.length === 0);
+    setIsLoading(true);
 
-    // ✅ Save search query to MongoDB
-    if (username && searchQuery) {
-      try {
-        await fetch('http://localhost:5000/api/user-history', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username,
-            type: 'search',
-            query: searchQuery,
-            timestamp: new Date().toISOString(),
-          }),
-        });
-      } catch (error) {
-        console.warn('❌ Failed to save search history:', error.message);
+    try {
+      const fetchedVideos = await fetchVideos(query);
+      setVideos(fetchedVideos);
+      localStorage.setItem('searchedVideos', JSON.stringify(fetchedVideos));
+      setNoResults(fetchedVideos.length === 0);
+
+      // Save search query to MongoDB
+      if (username && query) {
+        try {
+          await fetch('http://localhost:8000/api/v1/auth/user-history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username,
+              type: 'search',
+              query,
+              timestamp: new Date().toISOString(),
+            }),
+          });
+        } catch (error) {
+          console.warn('Failed to save search history:', error.message);
+        }
       }
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleToggleSelectForMerge = (videoId) => {
     setSelectedForMerge((prev) =>
-      prev.includes(videoId) ? prev.filter((id) => id !== videoId) : [...prev, videoId]
+      prev.includes(videoId)
+        ? prev.filter((id) => id !== videoId)
+        : [...prev, videoId]
     );
   };
 
-  const handleMergeSelected = async () => {
-    if (selectedForMerge.length < 2) {
-      alert('Please select at least 2 videos to merge.');
+  // Get selected video objects for MultiSelectBar
+  const getSelectedVideoObjects = () => {
+    return videos
+      .filter((video) => selectedForMerge.includes(video.id?.videoId))
+      .map((video) => ({
+        id: video.id?.videoId,
+        title: video.snippet?.title,
+        thumbnail: video.snippet?.thumbnails?.medium?.url || video.snippet?.thumbnails?.default?.url,
+      }));
+  };
+
+  const handleMerge = async (durationMinutes) => {
+    if (selectedForMerge.length < 1) {
+      alert('Please select at least 1 video to summarize.');
       return;
     }
 
+    setIsLoading(true);
+
     try {
-      const res = await fetch('http://localhost:5002/merge', {
+      const res = await fetch('http://localhost:8000/api/v1/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          selectedSegments: selectedForMerge.map((id) => ({ videoId: id })),
-          targetDuration: parseInt(mergeDuration, 10) || 300,
+          video_ids: selectedForMerge,
+          target_duration_minutes: durationMinutes,
+          generate_audio: true,
         }),
       });
       const data = await res.json();
-      if (data.mergeId) {
-        navigate(`/merged-player/${data.mergeId}`);
+      if (data.job_id) {
+        navigate(`/merged-player/${data.job_id}`);
       } else {
-        alert('Server error during merge.');
+        alert(data.detail || 'Server error during merge.');
       }
     } catch (error) {
-      console.error('❌ Merge error:', error);
+      console.error('Merge error:', error);
       alert('Server error during merge.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
+  const handleRemoveVideo = (videoId) => {
+    setSelectedForMerge((prev) => prev.filter((id) => id !== videoId));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedForMerge([]);
+  };
+
   return (
-    <div style={styles.container}>
-      <br></br>
-      <br></br>
-      <div style={styles.header}>
-        <h1 style={styles.title}>🎬 Discover Videos by Title</h1>
-        <p style={styles.subtitle}>
-          Enter a topic or keyword to explore relevant videos instantly!
-        </p>
-      </div>
-      <SearchBar onSearch={handleSearch} />
-      {noResults ? (
-        <div style={styles.noResults}>
-          <h2>😔 Oops! No Videos Found</h2>
-          <p>Try using different keywords or explore other topics!</p>
+    <div className="min-h-screen text-white" style={{ background: '#000212' }}>
+      {/* Header Section */}
+      <motion.div
+        className="pt-20 pb-10 px-4"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6 }}
+      >
+        <div className="max-w-4xl mx-auto text-center">
+          <motion.h1
+            className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-400 via-blue-300 to-blue-500 bg-clip-text text-transparent mb-4"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.2 }}
+          >
+            AI Video Summarizer
+          </motion.h1>
+          <motion.p
+            className="text-dark-300 text-lg max-w-2xl mx-auto"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+          >
+            Search YouTube videos, select multiple sources, and get an AI-powered
+            unified summary with intelligent fusion technology.
+          </motion.p>
         </div>
-      ) : (
-        <>
-          <VideoList
-            videos={videos}
-            selectedVideoIds={selectedForMerge}
-            onToggleSelectForMerge={handleToggleSelectForMerge}
-          />
-          {videos.length > 0 && (
-            <div style={styles.mergeBar}>
-              <span style={styles.mergeLabel}>
-                Select at least 2 videos, then choose total output length:
-              </span>
-              <select
-                value={mergeDuration}
-                onChange={(e) => setMergeDuration(e.target.value)}
-                style={styles.select}
+      </motion.div>
+
+      {/* Search Section */}
+      <motion.div
+        className="px-4 pb-8"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+      >
+        <div className="max-w-2xl mx-auto">
+          <SearchBar onSearch={handleSearch} />
+        </div>
+      </motion.div>
+
+      {/* Results Section */}
+      <div className="px-4 pb-32">
+        {isLoading && !videos.length ? (
+          <div className="flex justify-center py-20">
+            <motion.div
+              className="w-12 h-12 border-4 border-primary-500/30 border-t-primary-500 rounded-full"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            />
+          </div>
+        ) : noResults ? (
+          <motion.div
+            className="text-center py-20"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+          >
+            <div className="text-6xl mb-4">🔍</div>
+            <h2 className="text-2xl font-bold text-dark-200 mb-2">No Videos Found</h2>
+            <p className="text-dark-400">Try different keywords or explore other topics!</p>
+          </motion.div>
+        ) : videos.length > 0 ? (
+          <>
+            {/* Selection Info */}
+            {selectedForMerge.length > 0 && (
+              <motion.div
+                className="max-w-6xl mx-auto mb-6 px-4"
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
               >
-                <option value="300">5 minutes total</option>
-                <option value="600">10 minutes total</option>
-                <option value="900">15 minutes total</option>
-              </select>
-              <button onClick={handleMergeSelected} style={styles.mergeButton}>
-                🧩 Merge & Summarize Selected
-              </button>
-            </div>
-          )}
-        </>
-      )}
+                <div className="bg-gradient-to-r from-accent-500/10 to-primary-500/10 border border-accent-500/30 rounded-xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">✨</span>
+                    <div>
+                      <p className="font-semibold text-white">
+                        {selectedForMerge.length} video{selectedForMerge.length > 1 ? 's' : ''} selected
+                      </p>
+                      <p className="text-sm text-dark-400">
+                        Click videos to add/remove from selection
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleClearSelection}
+                    className="text-dark-400 hover:text-white transition-colors"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Video Grid */}
+            <VideoList
+              videos={videos}
+              selectedVideoIds={selectedForMerge}
+              onToggleSelectForMerge={handleToggleSelectForMerge}
+            />
+          </>
+        ) : null}
+      </div>
+
+      {/* Multi-Select Bar */}
+      <MultiSelectBar
+        selectedVideos={getSelectedVideoObjects()}
+        onRemove={handleRemoveVideo}
+        onClear={handleClearSelection}
+        onMerge={handleMerge}
+        isLoading={isLoading}
+      />
     </div>
   );
-};
-
-const styles = {
-  container: {
-    padding: '20px',
-    minHeight: '100vh',
-    color: '#fff',
-  },
-  header: {
-    textAlign: 'center',
-    marginBottom: '20px',
-  },
-  title: {
-    fontSize: '36px',
-    fontWeight: 'bold',
-    color: '#0EA5E9',
-  },
-  subtitle: {
-    fontSize: '18px',
-    marginTop: '10px',
-  },
-  noResults: {
-    textAlign: 'center',
-    marginTop: '50px',
-    color: '#ccc',
-  },
-  mergeBar: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '10px',
-    marginTop: '20px',
-  },
-  mergeLabel: {
-    fontSize: '14px',
-  },
-  select: {
-    padding: '8px 10px',
-    borderRadius: '6px',
-    border: '1px solid #555',
-    backgroundColor: '#1f1f2e',
-    color: '#fff',
-  },
-  mergeButton: {
-    padding: '10px 18px',
-    backgroundColor: '#28a745',
-    border: 'none',
-    borderRadius: '6px',
-    color: '#fff',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-  },
 };
 
 export default SearchPage;

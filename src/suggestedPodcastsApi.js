@@ -3,7 +3,7 @@
 
 import axios from "axios";
 
-const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
+const API_KEY = process.env.REACT_APP_YOUTUBE_API_KEY;
 const BASE_URL = "https://www.googleapis.com/youtube/v3";
 
 // Fetch relevant podcasts based on selected topic

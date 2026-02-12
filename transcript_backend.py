@@ -21,6 +21,10 @@ from pymongo import MongoClient
 from datetime import datetime
 import whisper
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # === Configuration ===
 device = "cpu"
@@ -31,8 +35,10 @@ app = Flask(__name__)
 CORS(app)
 
 # === MongoDB ===
-client = MongoClient("mongodb+srv://hamzaarif725725:hamzapodcastly@podcastlycluster.hyrqok6.mongodb.net/")
-db = client['user-auth']
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "user-auth")
+client = MongoClient(MONGODB_URI)
+db = client[MONGODB_DATABASE]
 transcripts_collection = db['transcripts']
 
 # === Fallback 1: yt-dlp with cookies ===

@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/
+      - MONGODB_DATABASE=video-summarizer
+    depends_on:
+      - mongo
+    volumes:
+      - audio_cache:/app/audio_cache
+      - faiss_index:/app/faiss_index
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
+  audio_cache:
+  faiss_index:

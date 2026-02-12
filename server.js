@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 import * as cheerio from 'cheerio';
 
 const app = express();
-const PORT = 8080;
+const PORT = process.env.PROXY_PORT || 8081;
 
 app.use(cors());
 

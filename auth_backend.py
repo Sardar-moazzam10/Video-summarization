@@ -2,24 +2,31 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
 from flask_mail import Mail, Message
+from dotenv import load_dotenv
 import hashlib
 import random
+import os
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
 # ===== MongoDB Configuration =====
-client = MongoClient("mongodb+srv://hamzaarif725725:hamzapodcastly@podcastlycluster.hyrqok6.mongodb.net/")
-db = client['user-auth']
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "user-auth")
+client = MongoClient(MONGODB_URI)
+db = client[MONGODB_DATABASE]
 users = db['users']
 history = db['history']
 
 # ===== Email Configuration =====
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'podcastlycontact@gmail.com'
-app.config['MAIL_PASSWORD'] = 'rirs ogxd tulr mbat'
+app.config['MAIL_SERVER'] = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+app.config['MAIL_PORT'] = int(os.getenv("MAIL_PORT", "587"))
+app.config['MAIL_USE_TLS'] = os.getenv("MAIL_USE_TLS", "True").lower() == "true"
+app.config['MAIL_USERNAME'] = os.getenv("MAIL_USERNAME", "")
+app.config['MAIL_PASSWORD'] = os.getenv("MAIL_PASSWORD", "")
 mail = Mail(app)
 
 verification_codes = {}

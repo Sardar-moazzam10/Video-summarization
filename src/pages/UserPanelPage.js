@@ -19,7 +19,7 @@ const UserPanelPage = () => {
 
   useEffect(() => {
     if (username) {
-      axios.get(`http://localhost:5000/api/user/${username}`)
+      axios.get(`http://localhost:8000/api/v1/auth/user/${username}`)
         .then(res => setUserData(res.data))
         .catch(() => setMessage('Error fetching user data.'));
     }
@@ -30,13 +30,13 @@ const UserPanelPage = () => {
   };
 
   const handleUpdate = () => {
-    axios.put(`http://localhost:5000/api/user/update/${username}`, userData)
+    axios.put(`http://localhost:8000/api/v1/auth/user/update/${username}`, userData)
       .then(res => setMessage(res.data.message))
       .catch(() => setMessage('Update failed.'));
   };
 
   const handlePasswordUpdate = () => {
-    axios.put(`http://localhost:5000/api/user/update-password/${username}`, {
+    axios.put(`http://localhost:8000/api/v1/auth/user/update-password/${username}`, {
       oldPassword,
       newPassword
     })
@@ -46,7 +46,7 @@ const UserPanelPage = () => {
 
   const handleDelete = () => {
     if (window.confirm('Are you sure you want to delete your account?')) {
-      axios.delete(`http://localhost:5000/api/user/delete/${username}`)
+      axios.delete(`http://localhost:8000/api/v1/auth/user/delete/${username}`)
         .then(res => {
           localStorage.removeItem('user');
           setMessage(res.data.message);

@@ -1,0 +1,10 @@
+node_modules
+venv
+__pycache__
+*.pyc
+.env
+.git
+audio_cache
+faiss_index
+*.mp3
+*.wav
