@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import './ChoicePage.css';
@@ -71,8 +71,92 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } },
 };
 
+const TYPING_PHRASES = [
+  'Into 60 Seconds of Insight',
+  'Into a Concise Masterclip',
+  'Into Actionable Knowledge',
+  'Into Minutes of Knowledge',
+];
+
+const TERMINAL_LINES = [
+  '> Analyzing 3 video transcripts...',
+  '> Clustering topics with FAISS vectors',
+  '> Generating chapters via Gemini 2.0 Flash',
+  '> Synthesizing voice narration (28 voices)',
+  '> Extracting highlights with Gemini 3 Pro',
+  '> \u2713 Summary ready \u2014 4m 32s highlight reel',
+];
+
+const PIPELINE_STAGES = [
+  { key: 'transcribing', label: 'Transcribe', icon: '01' },
+  { key: 'analyzing',    label: 'Analyze',    icon: '02' },
+  { key: 'fusing',       label: 'Fuse',       icon: '03' },
+  { key: 'summarizing',  label: 'Summarize',  icon: '04' },
+  { key: 'enriching',    label: 'Enrich',     icon: '05' },
+  { key: 'voice',        label: 'Voice',      icon: '06' },
+  { key: 'video',        label: 'Video',      icon: '07' },
+  { key: 'completed',    label: 'Done',       icon: '\u2713' },
+];
+
 const ChoicePage = () => {
   const navigate = useNavigate();
+
+  // Typing animation state
+  const [displayText, setDisplayText] = useState('');
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    const currentPhrase = TYPING_PHRASES[phraseIndex];
+    let timeout;
+
+    if (!isDeleting) {
+      if (displayText.length < currentPhrase.length) {
+        timeout = setTimeout(() => {
+          setDisplayText(currentPhrase.slice(0, displayText.length + 1));
+        }, 80);
+      } else {
+        timeout = setTimeout(() => setIsDeleting(true), 2000);
+      }
+    } else {
+      if (displayText.length > 0) {
+        timeout = setTimeout(() => {
+          setDisplayText(displayText.slice(0, -1));
+        }, 40);
+      } else {
+        timeout = setTimeout(() => {
+          setIsDeleting(false);
+          setPhraseIndex((prev) => (prev + 1) % TYPING_PHRASES.length);
+        }, 500);
+      }
+    }
+
+    return () => clearTimeout(timeout);
+  }, [displayText, phraseIndex, isDeleting]);
+
+  // Terminal cycling state
+  const [terminalIndex, setTerminalIndex] = useState(0);
+
+  useEffect(() => {
+    const isLastLine = terminalIndex === TERMINAL_LINES.length - 1;
+    const delay = isLastLine ? 3000 : 2000;
+    const timer = setTimeout(() => {
+      setTerminalIndex((prev) => (prev + 1) % TERMINAL_LINES.length);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [terminalIndex]);
+
+  // Pipeline animation state
+  const [activeStage, setActiveStage] = useState(0);
+
+  useEffect(() => {
+    const isCompleted = activeStage === PIPELINE_STAGES.length - 1;
+    const delay = isCompleted ? 2500 : 1500;
+    const timer = setTimeout(() => {
+      setActiveStage((prev) => (prev + 1) % PIPELINE_STAGES.length);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [activeStage]);
 
   return (
     <div className="choice-page">
@@ -95,7 +179,10 @@ const ChoicePage = () => {
           <motion.h1 variants={fadeUp} className="hero-title">
             Transform Hours of Video
             <br />
-            <span className="hero-title-gradient">Into Minutes of Knowledge</span>
+            <span className="hero-title-gradient">
+              {displayText}
+              <span className="typing-cursor" />
+            </span>
           </motion.h1>
 
           <motion.p variants={fadeUp} className="hero-description">
@@ -146,30 +233,124 @@ const ChoicePage = () => {
               </div>
               <span className="visual-title-bar">AI Video Summarizer</span>
             </div>
-            <div className="visual-body">
-              <div className="visual-waveform">
-                {Array.from({ length: 32 }).map((_, i) => (
-                  <motion.div
-                    key={i}
-                    className="wave-bar"
-                    animate={{
-                      height: [8, 20 + Math.random() * 30, 8],
-                    }}
-                    transition={{
-                      duration: 1 + Math.random() * 0.5,
-                      repeat: Infinity,
-                      delay: i * 0.05,
-                      ease: 'easeInOut',
-                    }}
-                  />
-                ))}
-              </div>
-              <div className="visual-text-lines">
-                <div className="text-line" style={{ width: '90%' }} />
-                <div className="text-line" style={{ width: '75%' }} />
-                <div className="text-line" style={{ width: '85%' }} />
-                <div className="text-line" style={{ width: '60%' }} />
-              </div>
+            <div className="power-box-content">
+              {/* Selected videos */}
+              <motion.div
+                className="power-thumbnails"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.6, duration: 0.5 }}
+              >
+                <div className="power-thumb power-thumb--blue">
+                  <svg className="power-thumb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <span className="power-thumb-label">Video 1</span>
+                  <div className="power-thumb-check">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                </div>
+                <div className="power-thumb power-thumb--violet">
+                  <svg className="power-thumb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <span className="power-thumb-label">Video 2</span>
+                  <div className="power-thumb-check">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                </div>
+                <div className="power-thumb power-thumb--emerald">
+                  <svg className="power-thumb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <span className="power-thumb-label">Video 3</span>
+                  <div className="power-thumb-check">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Duration selector */}
+              <motion.div
+                className="power-duration"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.85, duration: 0.4 }}
+              >
+                <svg className="power-duration-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span className="power-duration-label">Duration:</span>
+                <span className="power-duration-value">10 min</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </motion.div>
+
+              {/* Processing Pipeline */}
+              <motion.div
+                className="power-pipeline"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 1.0, duration: 0.5 }}
+              >
+                {PIPELINE_STAGES.map((stage, i) => {
+                  const status = i < activeStage ? 'complete'
+                               : i === activeStage ? 'active'
+                               : 'pending';
+                  return (
+                    <React.Fragment key={stage.key}>
+                      <div className={`pipeline-stage pipeline-stage--${status}`}>
+                        <div className="pipeline-dot">
+                          {status === 'complete' ? (
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                          ) : (
+                            <span className="pipeline-dot-text">{stage.icon}</span>
+                          )}
+                        </div>
+                        <span className="pipeline-label">{stage.label}</span>
+                      </div>
+                      {i < PIPELINE_STAGES.length - 1 && (
+                        <div className={`pipeline-connector pipeline-connector--${i < activeStage ? 'complete' : 'pending'}`} />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </motion.div>
+
+              {/* Output — one cohesive video */}
+              <motion.div
+                className={`power-output ${activeStage === PIPELINE_STAGES.length - 1 ? 'power-output--done' : ''}`}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 1.4, duration: 0.5 }}
+              >
+                <div className="power-output-header">
+                  <div className="power-output-dot" />
+                  <span className="power-output-label">1 Cohesive Video</span>
+                  <span className="power-output-time">10:00</span>
+                </div>
+                <div className="power-mini-waveform">
+                  {Array.from({ length: 24 }).map((_, i) => (
+                    <motion.div
+                      key={i}
+                      className="power-mini-bar"
+                      animate={{
+                        height: [3, 8 + Math.random() * 12, 3],
+                      }}
+                      transition={{
+                        duration: 1 + Math.random() * 0.5,
+                        repeat: Infinity,
+                        delay: i * 0.04,
+                        ease: 'easeInOut',
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="power-pills">
+                  <span className="power-pill">Chapters</span>
+                  <span className="power-pill">Key Takeaways</span>
+                  <span className="power-pill">Narration</span>
+                  <span className="power-pill">Highlights</span>
+                </div>
+              </motion.div>
+            </div>
+
+            {/* Live Terminal */}
+            <div className="power-terminal">
+              <span className="power-terminal-line" key={terminalIndex}>
+                {TERMINAL_LINES[terminalIndex]}
+              </span>
             </div>
           </div>
         </motion.div>

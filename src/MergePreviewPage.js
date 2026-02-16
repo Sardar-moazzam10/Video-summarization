@@ -19,6 +19,8 @@ const MergePreviewPage = () => {
   const [selectedResults] = useState(initialResults);
   const [targetDuration, setTargetDuration] = useState('300'); // seconds
   const [selectedStyle, setSelectedStyle] = useState('educational');
+  const [generateVideo, setGenerateVideo] = useState(true);
+  const [highlightDuration, setHighlightDuration] = useState('120');
 
   const handleBack = () => {
     navigate(-1);
@@ -58,6 +60,8 @@ const MergePreviewPage = () => {
           target_duration_minutes: Math.round(parseInt(targetDuration, 10) / 60),
           generate_audio: true,
           style: selectedStyle,
+          generate_video: generateVideo,
+          highlight_duration_seconds: parseInt(highlightDuration, 10),
         }),
       });
       const data = await res.json();
@@ -169,11 +173,34 @@ const MergePreviewPage = () => {
             <option value="detailed">Detailed Analysis</option>
           </select>
         </div>
+        <div style={styles.videoToggle}>
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={generateVideo}
+              onChange={(e) => setGenerateVideo(e.target.checked)}
+              style={styles.checkbox}
+            />
+            Video Highlights
+          </label>
+          {generateVideo && (
+            <select
+              value={highlightDuration}
+              onChange={(e) => setHighlightDuration(e.target.value)}
+              style={styles.select}
+            >
+              <option value="60">1 min</option>
+              <option value="120">2 min</option>
+              <option value="180">3 min</option>
+              <option value="300">5 min</option>
+            </select>
+          )}
+        </div>
         <button onClick={handleBack} style={{ ...styles.button, backgroundColor: '#444' }}>
           ⬅ Back to Search
         </button>
         <button onClick={handleConfirmMerge} style={{ ...styles.button, backgroundColor: '#28a745' }}>
-          🎧 Merge & Play Combined Podcast
+          {generateVideo ? '🎬 Merge with Video Highlights' : '🎧 Merge & Play Combined Podcast'}
         </button>
       </div>
     </div>
@@ -302,6 +329,26 @@ const styles = {
     backgroundColor: '#1f1f2e',
     color: '#fff',
     fontSize: '14px',
+  },
+  videoToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginRight: '20px',
+  },
+  checkboxLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '14px',
+    color: '#ccc',
+    cursor: 'pointer',
+  },
+  checkbox: {
+    width: '16px',
+    height: '16px',
+    accentColor: '#8B5DFF',
+    cursor: 'pointer',
   },
 };
 

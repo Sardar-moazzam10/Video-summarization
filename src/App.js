@@ -34,7 +34,7 @@ import Footer from './Footer.js';
 import ProtectedRoute from './ProtectedRoute.js';
 import ContactPage from './ContactPage.js';
 import AboutPage from './AboutPage.js';
-import FloatingIconButton from './FloatingIconButton.js';
+import AssistantWidget from './AssistantWidget.js';
 
 
 // Automatically redirect based on login status
@@ -164,7 +164,7 @@ const App = () => {
         {/* UNKNOWN ROUTES */}
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
-      <FloatingIconButton />
+      <AssistantWidget />
       <Footer />
     </Router>
   );

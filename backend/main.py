@@ -20,7 +20,7 @@ import time
 
 from .core.config import get_settings
 from .core.database import close_database
-from .api import auth, transcript, merge, voice, search
+from .api import auth, transcript, merge, voice, search, chat
 
 settings = get_settings()
 
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
         from .services.gemini_service import get_gemini_service
         gemini = get_gemini_service()
         if gemini.is_available():
-            print(f"[OK] Gemini AI: configured ({settings.GEMINI_MODEL})")
+            print(f"[OK] Gemini AI: configured (text: {settings.GEMINI_MODEL}, video: {settings.GEMINI_VIDEO_MODEL})")
         else:
             print("[INFO] Gemini AI: not configured (BART fallback active)")
     except Exception as e:
@@ -113,6 +113,7 @@ app.include_router(transcript.router)
 app.include_router(merge.router)
 app.include_router(voice.router)  # FREE Edge TTS
 app.include_router(search.router)  # FAISS semantic search
+app.include_router(chat.router)  # Chat with video (FAISS + Gemini)
 
 
 @app.get("/")

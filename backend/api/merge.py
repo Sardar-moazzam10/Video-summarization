@@ -96,6 +96,8 @@ async def create_merge_job(
         duration_style=get_duration_style(request.target_duration_minutes),
         voice_id=request.voice_id,
         generate_audio=request.generate_audio,
+        generate_video=request.generate_video,
+        highlight_duration_seconds=request.highlight_duration_seconds,
         style=request.style,
     )
 
@@ -177,7 +179,9 @@ async def get_job_result(job_id: str):
         "summary_text": job_data.get("summary_text", ""),
         "rich_output": job_data.get("rich_output"),
         "audio_url": f"/api/v1/merge/{job_id}/audio" if job_data.get("audio_path") else None,
+        "video_url": f"/api/v1/merge/{job_id}/video" if job_data.get("video_path") else None,
         "subtitle_url": f"/api/v1/merge/{job_id}/subtitles" if job_data.get("subtitle_path") else None,
+        "highlight_segments": job_data.get("highlight_segments", []),
         "metadata": job_data.get("fusion_metadata", {}),
         "created_at": job_data["created_at"],
         "completed_at": job_data.get("completed_at"),
@@ -203,6 +207,28 @@ async def get_job_audio(job_id: str):
         audio_path,
         media_type="audio/mpeg",
         filename=f"summary_{job_id}.mp3"
+    )
+
+
+@router.get("/{job_id}/video")
+async def get_job_video(job_id: str):
+    """
+    Download the generated highlight reel video.
+    """
+    jobs_collection = await get_jobs_collection()
+    job_data = await jobs_collection.find_one({"job_id": job_id})
+
+    if not job_data:
+        raise HTTPException(404, "Job not found")
+
+    video_path = job_data.get("video_path")
+    if not video_path or not os.path.exists(video_path):
+        raise HTTPException(404, "Video highlight reel not available")
+
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        filename=f"highlights_{job_id}.mp4"
     )
 
 
@@ -313,6 +339,26 @@ async def stream_job_progress(job_id: str):
 
 
 # =====================================================
+# HELPERS
+# =====================================================
+
+def _fit_to_duration(highlights: list, target_seconds: int) -> list:
+    """Select highlights that fit within the time budget."""
+    selected = []
+    total = 0.0
+    for h in highlights:
+        dur = h["end_time"] - h["start_time"]
+        if dur <= 0:
+            continue
+        if total + dur <= target_seconds * 1.1:  # Allow 10% overage
+            selected.append(h)
+            total += dur
+        if total >= target_seconds:
+            break
+    return selected
+
+
+# =====================================================
 # BACKGROUND PROCESSING
 # =====================================================
 
@@ -362,7 +408,7 @@ async def process_merge_job(job_id: str):
             "Fetching video transcripts..."
         )
 
-        transcripts = await fetch_transcripts(job.video_ids)
+        transcripts, raw_segments = await fetch_transcripts_with_segments(job.video_ids)
 
         await update_status(
             JobStatus.TRANSCRIBING,
@@ -373,13 +419,95 @@ async def process_merge_job(job_id: str):
         if not transcripts:
             raise Exception("Could not fetch any transcripts")
 
+        # Language check — detect non-English transcripts and retry translation
+        try:
+            from langdetect import detect
+            non_english = {}
+            for vid, text in transcripts.items():
+                sample = text[:3000]
+                try:
+                    lang = detect(sample)
+                except Exception:
+                    lang = "en"  # Assume English if detection fails
+                if lang != "en":
+                    non_english[vid] = lang
+                    print(f"[WARN] Transcript for {vid} detected as '{lang}' (not English)")
+
+            if non_english:
+                lang_list = ", ".join(f"{lang}" for _, lang in non_english.items())
+                await update_status(
+                    JobStatus.TRANSCRIBING,
+                    30,
+                    f"Non-English transcripts detected ({lang_list}). Retrying translation..."
+                )
+
+                # Retry translation with deep_translator
+                try:
+                    from deep_translator import GoogleTranslator
+                    translator = GoogleTranslator(source="auto", target="en")
+                    for vid, lang in non_english.items():
+                        text = transcripts[vid]
+                        # Translate in 4500-char batches
+                        chunks = [text[i:i+4500] for i in range(0, len(text), 4500)]
+                        translated_chunks = []
+                        for chunk in chunks:
+                            try:
+                                translated = translator.translate(chunk)
+                                translated_chunks.append(translated if translated else chunk)
+                            except Exception:
+                                translated_chunks.append(chunk)
+                        new_text = " ".join(translated_chunks)
+                        # Verify translation worked
+                        try:
+                            new_lang = detect(new_text[:3000])
+                        except Exception:
+                            new_lang = lang
+                        if new_lang == "en":
+                            transcripts[vid] = new_text
+                            print(f"[Transcript] Re-translation succeeded for {vid}: {lang} -> en")
+                        else:
+                            print(f"[WARN] Re-translation failed for {vid}, still '{new_lang}'")
+                except Exception as e:
+                    print(f"[WARN] Translation retry failed: {e}")
+
+                # Final check — warn user if still non-English
+                still_non_english = []
+                for vid in non_english:
+                    try:
+                        if detect(transcripts[vid][:3000]) != "en":
+                            still_non_english.append(vid)
+                    except Exception:
+                        pass
+
+                if still_non_english:
+                    await update_status(
+                        JobStatus.TRANSCRIBING,
+                        30,
+                        f"Warning: {len(still_non_english)} transcript(s) could not be translated to English. Summary quality may be reduced."
+                    )
+                    print(f"[WARN] Proceeding with non-English transcripts for: {still_non_english}")
+                else:
+                    await update_status(
+                        JobStatus.TRANSCRIBING,
+                        30,
+                        f"All transcripts translated to English successfully"
+                    )
+        except ImportError:
+            print("[WARN] langdetect not installed — skipping language check")
+        except Exception as e:
+            print(f"[WARN] Language detection skipped: {e}")
+
         # Index transcripts in FAISS for semantic search (best-effort)
         try:
             from ..services.vector_store import get_vector_store
             store = get_vector_store()
             for vid, text in transcripts.items():
+                segs = raw_segments.get(vid, [])
                 if not store.is_video_indexed(vid):
-                    store.add_transcript(vid, vid, text)
+                    if segs:
+                        store.add_transcript_with_timestamps(vid, vid, segs)
+                    else:
+                        store.add_transcript(vid, vid, text)
         except Exception as e:
             print(f"[WARN] FAISS indexing skipped: {e}")
 
@@ -573,6 +701,107 @@ async def process_merge_job(job_id: str):
                 "Voice generation complete"
             )
 
+        # STAGE 6: Video Highlight Generation (97-99%) - Optional
+        video_path = None
+        highlight_segments_result = []
+        if job.generate_video:
+            await update_status(
+                JobStatus.GENERATING_VIDEO,
+                97,
+                "Generating video highlight reel with Gemini 3 Pro..."
+            )
+
+            try:
+                from ..services.gemini_service import get_gemini_service
+                from ..services.video_service import get_video_service
+
+                gemini = get_gemini_service()
+                video_svc = get_video_service()
+
+                # Step 1: Download source videos
+                await update_status(
+                    JobStatus.GENERATING_VIDEO, 97,
+                    "Downloading source videos for highlight extraction..."
+                )
+                unique_video_ids = list(raw_segments.keys())
+
+                async def video_progress(msg):
+                    await update_status(JobStatus.GENERATING_VIDEO, 98, msg)
+
+                video_paths = await video_svc.download_videos(
+                    unique_video_ids, progress_callback=video_progress
+                )
+
+                if not video_paths:
+                    raise Exception("Could not download any source videos")
+
+                # Step 2: Identify highlights using Gemini 3 Pro
+                all_highlights = []
+                per_video_seconds = job.highlight_duration_seconds // max(len(video_paths), 1)
+
+                for vid, vid_path in video_paths.items():
+                    await update_status(
+                        JobStatus.GENERATING_VIDEO, 98,
+                        f"Gemini 3 Pro analyzing video {vid} (thinking: high)..."
+                    )
+
+                    # Try Gemini 3 Pro with native video understanding
+                    highlights = await gemini.identify_highlights_from_video(
+                        video_id=vid,
+                        video_file_path=vid_path,
+                        target_seconds=per_video_seconds,
+                    )
+
+                    # Fallback to transcript-based heuristic
+                    if not highlights:
+                        segs = raw_segments.get(vid, [])
+                        if segs:
+                            print(f"[Video] Using transcript fallback for {vid}")
+                            highlights = gemini.identify_highlights_from_transcript(
+                                video_id=vid,
+                                segments=segs,
+                                target_seconds=per_video_seconds,
+                            )
+
+                    all_highlights.extend(highlights)
+
+                if all_highlights:
+                    # Sort by importance, trim to fit duration budget
+                    all_highlights.sort(
+                        key=lambda h: h.get("importance_score", 0), reverse=True
+                    )
+                    highlight_segments_result = _fit_to_duration(
+                        all_highlights, job.highlight_duration_seconds
+                    )
+                    # Sort chronologically for viewing
+                    highlight_segments_result.sort(
+                        key=lambda h: (h["video_id"], h["start_time"])
+                    )
+
+                    # Step 3: Generate the highlight reel
+                    await update_status(
+                        JobStatus.GENERATING_VIDEO, 99,
+                        f"Cutting and stitching {len(highlight_segments_result)} highlight clips..."
+                    )
+
+                    video_path = await video_svc.generate_highlight_reel(
+                        job_id=job.job_id,
+                        highlight_segments=highlight_segments_result,
+                        video_paths=video_paths,
+                        audio_path=audio_path if job.generate_audio else None,
+                        progress_callback=video_progress,
+                    )
+
+                    print(f"[Video] Highlight reel generated: {video_path}")
+                else:
+                    print("[Video] No highlights identified — skipping video generation")
+
+            except Exception as e:
+                print(f"[WARN] Video generation failed (continuing without): {e}")
+                import traceback
+                traceback.print_exc()
+                video_path = None
+
         # COMPLETED
         job.status = JobStatus.COMPLETED
         job.progress_percent = 100
@@ -582,6 +811,8 @@ async def process_merge_job(job_id: str):
         job.fusion_metadata = fusion_metadata
         job.audio_path = audio_path
         job.subtitle_path = subtitle_path
+        job.video_path = video_path
+        job.highlight_segments = highlight_segments_result
         job.completed_at = datetime.utcnow()
 
         rich_output_dict = rich_output.model_dump() if rich_output else None
@@ -597,6 +828,8 @@ async def process_merge_job(job_id: str):
                 "fusion_metadata": fusion_metadata.model_dump(),
                 "audio_path": audio_path,
                 "subtitle_path": subtitle_path,
+                "video_path": video_path,
+                "highlight_segments": highlight_segments_result,
                 "completed_at": job.completed_at,
             }}
         )
@@ -626,12 +859,17 @@ async def process_merge_job(job_id: str):
         _active_jobs.pop(job_id, None)
 
 
-async def fetch_transcripts(video_ids: list) -> Dict[str, str]:
+async def fetch_transcripts_with_segments(video_ids: list):
     """
     Fetch transcripts for multiple videos in parallel.
+    Returns BOTH flat text and raw segments with timestamps.
 
     Uses the 3-tier transcript service (YouTube API → yt-dlp → Whisper).
-    Handles both video IDs and full YouTube URLs.
+
+    Returns:
+        Tuple of:
+        - Dict[video_id, flat_text]
+        - Dict[video_id, list_of_segments] where each segment has {text, start, duration}
     """
     from ..services.transcript_service import get_transcript_service, extract_video_id
 
@@ -643,19 +881,30 @@ async def fetch_transcripts(video_ids: list) -> Dict[str, str]:
             result = await service.get_transcript(video_id)
             if result and result.get("transcript"):
                 source = result.get("source", "unknown")
+                segments = []
                 if isinstance(result["transcript"], list):
+                    segments = result["transcript"]
                     text = " ".join(
-                        seg.get("text", "") for seg in result["transcript"]
+                        seg.get("text", "") for seg in segments
                     )
                 else:
                     text = str(result["transcript"])
 
                 if text.strip():
-                    print(f"[Merge] Got transcript for {video_id} via {source} ({len(text.split())} words)")
-                    return (video_id, text)
+                    print(f"[Merge] Got transcript for {video_id} via {source} ({len(text.split())} words, {len(segments)} segments)")
+                    return (video_id, text, segments)
         except Exception as e:
             print(f"[WARN] Could not fetch transcript for {video_id}: {e}")
         return None
 
     results = await asyncio.gather(*[_fetch_one(raw_id) for raw_id in video_ids])
-    return {vid: text for vid, text in results if vid is not None}
+
+    text_map = {}
+    segments_map = {}
+    for r in results:
+        if r is not None:
+            vid, text, segs = r
+            text_map[vid] = text
+            segments_map[vid] = segs
+
+    return text_map, segments_map

@@ -24,6 +24,7 @@ class JobStatus(str, Enum):
     SUMMARIZING = "summarizing"
     ENRICHING = "enriching"
     GENERATING_VOICE = "generating_voice"
+    GENERATING_VIDEO = "generating_video"
     COMPLETED = "completed"
     PARTIAL_SUCCESS = "partial_success"
     ERROR = "error"
@@ -56,6 +57,15 @@ class FusionMetadata(BaseModel):
     conflicts_detected: List[ConflictInfo] = []
     processing_time_seconds: float = 0.0
     video_count: int = 0
+
+
+class HighlightSegment(BaseModel):
+    """A segment identified by Gemini AI as a highlight"""
+    video_id: str
+    start_time: float
+    end_time: float
+    reason: str = ""
+    importance_score: float = 0.0
 
 
 class VideoSegment(BaseModel):
@@ -98,6 +108,8 @@ class MergeJobCreate(BaseModel):
     target_duration_minutes: int = Field(default=10, ge=5, le=20)
     voice_id: Optional[str] = None
     generate_audio: bool = True
+    generate_video: bool = False
+    highlight_duration_seconds: int = Field(default=120, ge=30, le=600)
     style: str = "educational"
 
 
@@ -117,9 +129,12 @@ class MergeJob(BaseModel):
     duration_style: DurationStyle = DurationStyle.BRIEF
     voice_id: Optional[str] = None
     generate_audio: bool = True
+    generate_video: bool = False
+    highlight_duration_seconds: int = 120
     style: str = "educational"
 
     # Processing results
+    highlight_segments: List[Dict] = []
     segments: List[VideoSegment] = []
     summary_text: Optional[str] = None
     rich_output: Optional[RichOutput] = None

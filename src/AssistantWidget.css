@@ -1,0 +1,393 @@
+/* ============================================
+   Assistant Widget — Floating Chatbot
+   ============================================ */
+
+/* Floating Icon Container */
+.assistant-fab {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  z-index: 9999;
+  cursor: pointer;
+}
+
+.assistant-fab-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #478BE0, #38BDF8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(56, 189, 248, 0.4);
+  box-shadow: 0 6px 25px rgba(71, 139, 224, 0.5),
+              0 0 0 1px rgba(56, 189, 248, 0.3);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  position: relative;
+}
+
+.assistant-fab-btn svg {
+  width: 32px;
+  height: 32px;
+  color: #fff;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+/* Breathing glow animation when closed */
+.assistant-fab-btn--breathing {
+  animation: breathe 3.5s infinite ease-in-out;
+}
+
+@keyframes breathe {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(71, 139, 224, 0.4),
+                0 0 0 1px rgba(56, 189, 248, 0.2);
+  }
+  50% {
+    box-shadow: 0 6px 35px rgba(71, 139, 224, 0.7),
+                0 0 40px rgba(56, 189, 248, 0.15),
+                0 0 0 1px rgba(56, 189, 248, 0.4);
+  }
+}
+
+/* Orbiting spark */
+.assistant-orbit-spark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 6px 2px rgba(255, 255, 255, 0.6);
+  animation: orbit 8s infinite linear;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes orbit {
+  0%   { transform: rotate(0deg)   translateX(36px) rotate(0deg); }
+  100% { transform: rotate(360deg) translateX(36px) rotate(-360deg); }
+}
+
+/* Hover ripple ring */
+.assistant-fab-btn::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(71, 139, 224, 0.3);
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.3s ease;
+  pointer-events: none;
+}
+
+.assistant-fab:hover .assistant-fab-btn::after {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Hover effect */
+.assistant-fab:hover .assistant-fab-btn {
+  transform: scale(1.08);
+  box-shadow: 0 8px 35px rgba(71, 139, 224, 0.7),
+              0 0 50px rgba(56, 189, 248, 0.3),
+              0 0 0 2px rgba(56, 189, 248, 0.5);
+}
+
+.assistant-fab:active .assistant-fab-btn {
+  transform: scale(1.02);
+}
+
+/* Notification dot */
+.assistant-notification-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 14px;
+  height: 14px;
+  background: #ef4444;
+  border-radius: 50%;
+  border: 2px solid #000212;
+  z-index: 1;
+}
+
+.assistant-notification-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid #ef4444;
+  animation: assistantPulse 2s infinite ease-in-out;
+}
+
+@keyframes assistantPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.6); opacity: 0; }
+}
+
+/* ============================================
+   Chat Panel
+   ============================================ */
+
+.assistant-panel {
+  position: fixed;
+  bottom: 110px;
+  right: 30px;
+  width: 400px;
+  height: 520px;
+  background: rgba(0, 2, 18, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(71, 139, 224, 0.15);
+  border-radius: 20px;
+  z-index: 9998;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5),
+              0 0 40px rgba(71, 139, 224, 0.1);
+
+  /* Entry animation */
+  animation: panelSlideIn 0.3s ease-out;
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Header */
+.assistant-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.assistant-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.assistant-header-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.assistant-header-subtitle {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 500;
+  margin: 0;
+}
+
+.assistant-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.assistant-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* Messages Area */
+.assistant-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Custom scrollbar */
+.assistant-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.assistant-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.assistant-messages::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.assistant-messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Message bubbles */
+.assistant-msg {
+  max-width: 85%;
+  padding: 12px 16px;
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  animation: msgFadeIn 0.3s ease-out;
+}
+
+@keyframes msgFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.assistant-msg--bot {
+  align-self: flex-start;
+  background: rgba(71, 139, 224, 0.08);
+  border: 1px solid rgba(71, 139, 224, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  border-bottom-left-radius: 4px;
+}
+
+.assistant-msg--user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #478BE0, #2F61A0);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+/* Bold text in bot messages */
+.assistant-msg--bot strong {
+  color: #8ecaff;
+  font-weight: 600;
+}
+
+/* Typing indicator */
+.assistant-typing {
+  align-self: flex-start;
+  display: flex;
+  gap: 5px;
+  padding: 14px 18px;
+  background: rgba(71, 139, 224, 0.08);
+  border: 1px solid rgba(71, 139, 224, 0.1);
+  border-radius: 16px;
+  border-bottom-left-radius: 4px;
+}
+
+.assistant-typing-dot {
+  width: 7px;
+  height: 7px;
+  background: rgba(71, 139, 224, 0.5);
+  border-radius: 50%;
+  animation: typingBounce 1.4s infinite ease-in-out;
+}
+
+.assistant-typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.assistant-typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* Quick Reply Area */
+.assistant-replies {
+  padding: 12px 20px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.assistant-reply-btn {
+  padding: 8px 14px;
+  background: rgba(71, 139, 224, 0.06);
+  border: 1px solid rgba(71, 139, 224, 0.2);
+  border-radius: 9999px;
+  color: #58adff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.assistant-reply-btn:hover {
+  background: rgba(71, 139, 224, 0.15);
+  border-color: rgba(71, 139, 224, 0.4);
+  color: #8ecaff;
+  transform: translateY(-1px);
+}
+
+.assistant-reply-btn:active {
+  transform: translateY(0);
+}
+
+/* ============================================
+   Responsive
+   ============================================ */
+
+@media (max-width: 480px) {
+  .assistant-fab {
+    bottom: 20px;
+    right: 20px;
+  }
+
+  .assistant-fab-btn {
+    width: 50px;
+    height: 50px;
+  }
+
+  .assistant-fab-btn svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  .assistant-panel {
+    bottom: 84px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    height: 70vh;
+    max-height: 520px;
+  }
+
+  .assistant-notification-dot {
+    width: 12px;
+    height: 12px;
+  }
+
+  .assistant-orbit-spark {
+    animation-name: orbitMobile;
+  }
+
+  @keyframes orbitMobile {
+    0%   { transform: rotate(0deg)   translateX(28px) rotate(0deg); }
+    100% { transform: rotate(360deg) translateX(28px) rotate(-360deg); }
+  }
+}

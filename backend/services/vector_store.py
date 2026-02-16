@@ -143,6 +143,67 @@ class VectorStore:
         print(f"[VectorStore] Indexed {len(sentences)} sentences from {video_id}")
         return len(sentences)
 
+    def add_transcript_with_timestamps(
+        self,
+        video_id: str,
+        video_title: str,
+        segments: list,
+    ) -> int:
+        """
+        Index transcript segments preserving timestamps.
+
+        Args:
+            video_id: YouTube video ID
+            video_title: Human-readable title
+            segments: List of {text, start, duration} dicts
+
+        Returns:
+            Number of segments indexed
+        """
+        import faiss
+
+        if self.is_video_indexed(video_id):
+            return 0
+
+        # Filter segments with meaningful text (at least 3 words)
+        valid_segments = [
+            seg for seg in segments
+            if len(seg.get("text", "").strip().split()) >= 3
+        ]
+
+        if not valid_segments:
+            return 0
+
+        texts = [seg["text"].strip() for seg in valid_segments]
+        timestamps = [float(seg.get("start", 0)) for seg in valid_segments]
+
+        # Generate embeddings
+        embedder = _get_embedder()
+        embeddings = embedder.encode(texts, show_progress_bar=False)
+        embeddings = np.array(embeddings, dtype="float32")
+
+        # Normalize for cosine similarity
+        faiss.normalize_L2(embeddings)
+
+        # Add to index
+        self.index.add(embeddings)
+
+        # Track metadata with timestamps
+        for i, (text, ts) in enumerate(zip(texts, timestamps)):
+            self.metadata.append({
+                "text": text,
+                "video_id": video_id,
+                "video_title": video_title,
+                "timestamp": ts,
+                "sentence_index": i,
+            })
+
+        self._indexed_videos.add(video_id)
+        self._save()
+
+        print(f"[VectorStore] Indexed {len(texts)} segments with timestamps from {video_id}")
+        return len(texts)
+
     def search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
         Semantic search across all indexed transcripts.

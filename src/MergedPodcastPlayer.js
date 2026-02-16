@@ -10,6 +10,7 @@ const STAGES = [
   { key: 'summarizing', label: 'Summarizing', icon: '04' },
   { key: 'enriching', label: 'AI Enriching', icon: '05' },
   { key: 'generating_voice', label: 'Voice Gen', icon: '06' },
+  { key: 'generating_video', label: 'Video Gen', icon: '07' },
 ];
 
 const MergedPodcastPlayer = () => {
@@ -22,6 +23,10 @@ const MergedPodcastPlayer = () => {
   const [audioUrl, setAudioUrl] = useState('');
   const [metadata, setMetadata] = useState(null);
   const [richOutput, setRichOutput] = useState(null);
+  const [videoUrl, setVideoUrl] = useState('');
+  const [chatQuestion, setChatQuestion] = useState('');
+  const [chatAnswer, setChatAnswer] = useState(null);
+  const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState('');
   const pollIntervalRef = useRef(null);
   const lastStatusRef = useRef('');
@@ -34,6 +39,7 @@ const MergedPodcastPlayer = () => {
       case 'summarizing': return 3000;
       case 'enriching': return 3000;
       case 'generating_voice': return 4000;
+      case 'generating_video': return 5000;
       default: return 3000;
     }
   };
@@ -53,6 +59,9 @@ const MergedPodcastPlayer = () => {
         setRichOutput(resultRes.data.rich_output || null);
         if (resultRes.data.audio_url) {
           setAudioUrl(`http://localhost:8000${resultRes.data.audio_url}`);
+        }
+        if (resultRes.data.video_url) {
+          setVideoUrl(`http://localhost:8000${resultRes.data.video_url}`);
         }
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -105,6 +114,9 @@ const MergedPodcastPlayer = () => {
                 if (res.data.audio_url) {
                   setAudioUrl(`http://localhost:8000${res.data.audio_url}`);
                 }
+                if (res.data.video_url) {
+                  setVideoUrl(`http://localhost:8000${res.data.video_url}`);
+                }
               });
             eventSource.close();
           } else if (data.status === 'error') {
@@ -142,7 +154,7 @@ const MergedPodcastPlayer = () => {
   const handleBack = () => navigate('/search-by-title');
 
   const getStepStatus = (stepName) => {
-    const statusOrder = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'completed'];
+    const statusOrder = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'generating_video', 'completed'];
     const currentIdx = statusOrder.indexOf(status);
     const stepIdx = statusOrder.indexOf(stepName);
     if (stepIdx < currentIdx) return 'complete';
@@ -150,7 +162,25 @@ const MergedPodcastPlayer = () => {
     return 'pending';
   };
 
-  const isProcessing = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice'].includes(status);
+  const isProcessing = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'generating_video'].includes(status);
+
+  const handleChat = async () => {
+    if (!chatQuestion.trim()) return;
+    setChatLoading(true);
+    setChatAnswer(null);
+    try {
+      const res = await axios.post('http://localhost:8000/api/v1/chat', {
+        question: chatQuestion.trim(),
+        top_k: 5,
+      });
+      setChatAnswer(res.data);
+    } catch (err) {
+      console.error('Chat error:', err);
+      setChatAnswer({ answer: 'Failed to get an answer. Please try again.', sources: [] });
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   return (
     <div style={styles.page}>
@@ -281,6 +311,29 @@ const MergedPodcastPlayer = () => {
                 <audio controls style={styles.audioPlayer}>
                   <source src={audioUrl} type="audio/mpeg" />
                 </audio>
+              </motion.div>
+            )}
+
+            {/* Video Player */}
+            {videoUrl && (
+              <motion.div
+                style={styles.videoCard}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.22 }}
+              >
+                <div style={styles.audioHeader}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                  <span style={styles.audioTitle}>Video Highlights</span>
+                </div>
+                <video
+                  controls
+                  style={styles.videoPlayer}
+                  poster=""
+                >
+                  <source src={videoUrl} type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
               </motion.div>
             )}
 
@@ -427,6 +480,54 @@ const MergedPodcastPlayer = () => {
                 </div>
               </motion.div>
             )}
+
+            {/* Chat with Video */}
+            <motion.div
+              style={styles.chatCard}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.62 }}
+            >
+              <h3 style={styles.sectionTitle}>Chat with Video</h3>
+              <p style={styles.chatSubtext}>Ask questions about the video content</p>
+              <div style={styles.chatInputRow}>
+                <input
+                  type="text"
+                  value={chatQuestion}
+                  onChange={(e) => setChatQuestion(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleChat()}
+                  placeholder="e.g. What are the main arguments discussed?"
+                  style={styles.chatInput}
+                  disabled={chatLoading}
+                />
+                <button
+                  onClick={handleChat}
+                  disabled={chatLoading || !chatQuestion.trim()}
+                  style={{
+                    ...styles.chatBtn,
+                    opacity: chatLoading || !chatQuestion.trim() ? 0.5 : 1,
+                  }}
+                >
+                  {chatLoading ? 'Thinking...' : 'Ask'}
+                </button>
+              </div>
+              {chatAnswer && (
+                <div style={styles.chatAnswerBox}>
+                  <p style={styles.chatAnswerText}>{chatAnswer.answer}</p>
+                  {chatAnswer.sources?.length > 0 && (
+                    <div style={styles.chatSources}>
+                      <span style={styles.chatSourcesLabel}>Sources:</span>
+                      {chatAnswer.sources.map((src, i) => (
+                        <span key={i} style={styles.chatSourceTag}>
+                          {src.video_title || `Segment ${i + 1}`}
+                          {src.timestamp != null && ` @ ${Math.floor(src.timestamp)}s`}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </motion.div>
 
             {/* Export Buttons */}
             <motion.div
@@ -920,6 +1021,97 @@ const styles = {
     cursor: 'pointer',
     transition: 'all 0.2s',
     fontFamily: 'inherit',
+  },
+  // ===== Video Player Styles =====
+  videoCard: {
+    background: 'rgba(17, 24, 39, 0.5)',
+    border: '1px solid rgba(168, 85, 247, 0.15)',
+    borderRadius: '16px',
+    padding: '20px 24px',
+    marginBottom: '20px',
+  },
+  videoPlayer: {
+    width: '100%',
+    borderRadius: '10px',
+    outline: 'none',
+    backgroundColor: '#000',
+    maxHeight: '450px',
+  },
+  // ===== Chat Styles =====
+  chatCard: {
+    background: 'rgba(17, 24, 39, 0.5)',
+    border: '1px solid rgba(255,255,255,0.06)',
+    borderRadius: '16px',
+    padding: '24px 28px',
+    marginBottom: '20px',
+  },
+  chatSubtext: {
+    fontSize: '0.85rem',
+    color: 'rgba(255,255,255,0.35)',
+    margin: '-8px 0 16px',
+  },
+  chatInputRow: {
+    display: 'flex',
+    gap: '10px',
+  },
+  chatInput: {
+    flex: 1,
+    padding: '12px 16px',
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '10px',
+    color: '#fff',
+    fontSize: '14px',
+    fontFamily: 'inherit',
+    outline: 'none',
+  },
+  chatBtn: {
+    padding: '12px 24px',
+    background: 'linear-gradient(135deg, #478BE0, #2F61A0)',
+    color: '#fff',
+    fontSize: '14px',
+    fontWeight: 600,
+    border: 'none',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+  },
+  chatAnswerBox: {
+    marginTop: '16px',
+    padding: '16px 20px',
+    background: 'rgba(71,139,224,0.06)',
+    border: '1px solid rgba(71,139,224,0.12)',
+    borderRadius: '12px',
+  },
+  chatAnswerText: {
+    fontSize: '0.93rem',
+    lineHeight: 1.7,
+    color: 'rgba(255,255,255,0.75)',
+    margin: 0,
+  },
+  chatSources: {
+    marginTop: '12px',
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  chatSourcesLabel: {
+    fontSize: '0.75rem',
+    color: 'rgba(255,255,255,0.35)',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  chatSourceTag: {
+    padding: '3px 10px',
+    background: 'rgba(71,139,224,0.1)',
+    border: '1px solid rgba(71,139,224,0.15)',
+    borderRadius: '9999px',
+    fontSize: '11px',
+    color: '#58adff',
+    fontWeight: 500,
   },
 };
 

@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     YOUTUBE_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_VIDEO_MODEL: str = "gemini-3-pro-preview"
     GEMINI_FALLBACK_TO_BART: bool = True
 
     # =====================================================
