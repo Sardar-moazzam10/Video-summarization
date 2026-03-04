@@ -41,6 +41,79 @@ settings = get_settings()
 
 
 # =====================================================
+# LOCAL ENRICHMENT FALLBACK (used when Gemini is unavailable)
+# =====================================================
+
+def _extract_top_sentences(sentences: list, n: int = 5) -> list:
+    """Extract top-N sentences by TF-IDF importance score."""
+    import numpy as np
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    if len(sentences) <= n:
+        return sentences
+    try:
+        vec = TfidfVectorizer(stop_words='english', max_features=300)
+        matrix = vec.fit_transform(sentences)
+        scores = np.asarray(matrix.sum(axis=1)).flatten()
+        top_idx = scores.argsort()[::-1][:n]
+        # Return in original order for readability
+        return [sentences[i] for i in sorted(top_idx)]
+    except Exception:
+        return sentences[:n]
+
+
+def _generate_local_enrichment(summary_text: str, style: str) -> RichOutput:
+    """
+    Generate basic structured output (TLDR, key takeaways, chapters)
+    from the BART summary text when Gemini is unavailable.
+
+    Uses: first-2-sentences for TLDR, TF-IDF for takeaways,
+    even splits for chapters. No new models required.
+    """
+    import re
+
+    sentences = [
+        s.strip()
+        for s in re.split(r'(?<=[.!?])\s+', summary_text.strip())
+        if len(s.split()) >= 6
+    ]
+
+    if not sentences:
+        return RichOutput(summary=summary_text, style_applied=style)
+
+    # TLDR: first 2 sentences
+    tldr = ' '.join(sentences[:2])
+
+    # Key Takeaways: top-5 TF-IDF sentences
+    takeaways = _extract_top_sentences(sentences, n=5)
+
+    # Chapters: divide sentences into 3 equal sections
+    n = len(sentences)
+    third = max(1, n // 3)
+    chapter_groups = [
+        sentences[:third],
+        sentences[third:2 * third],
+        sentences[2 * third:],
+    ]
+    chapters = []
+    chapter_titles = ["Introduction & Overview", "Core Discussion", "Conclusions & Key Points"]
+    for title, group in zip(chapter_titles, chapter_groups):
+        if group:
+            chapters.append({"title": title, "text": ' '.join(group)})
+
+    print(f"[LocalEnrich] Generated TLDR ({len(tldr.split())}w), "
+          f"{len(takeaways)} takeaways, {len(chapters)} chapters")
+
+    return RichOutput(
+        summary=summary_text,
+        tldr=tldr,
+        key_takeaways=takeaways,
+        chapters=chapters,
+        style_applied=style,
+    )
+
+
+# =====================================================
 # IN-MEMORY JOB TRACKING (for quick access)
 # Jobs are also persisted to MongoDB
 # =====================================================
@@ -181,6 +254,7 @@ async def get_job_result(job_id: str):
         "audio_url": f"/api/v1/merge/{job_id}/audio" if job_data.get("audio_path") else None,
         "video_url": f"/api/v1/merge/{job_id}/video" if job_data.get("video_path") else None,
         "subtitle_url": f"/api/v1/merge/{job_id}/subtitles" if job_data.get("subtitle_path") else None,
+        "video_ids": job_data.get("video_ids", []),
         "highlight_segments": job_data.get("highlight_segments", []),
         "metadata": job_data.get("fusion_metadata", {}),
         "created_at": job_data["created_at"],
@@ -647,6 +721,11 @@ async def process_merge_job(job_id: str):
             print(f"[WARN] Gemini enrichment failed (using BART fallback): {e}")
             rich_output = RichOutput(summary=summary_text, style_applied=job.style)
 
+        # If Gemini produced no structured output, generate locally with TF-IDF
+        if not rich_output or not rich_output.tldr or not rich_output.key_takeaways:
+            print("[LocalEnrich] Gemini output empty — generating TLDR + takeaways locally...")
+            rich_output = _generate_local_enrichment(summary_text, job.style)
+
         # STAGE 5: Voice Generation (90-97%) - Optional (FREE with Edge TTS)
         audio_path = None
         subtitle_path = None
@@ -752,15 +831,18 @@ async def process_merge_job(job_id: str):
                         target_seconds=per_video_seconds,
                     )
 
-                    # Fallback to transcript-based heuristic
+                    # Fallback: use SBERT + TF-IDF segment extractor (smarter than heuristic)
                     if not highlights:
                         segs = raw_segments.get(vid, [])
                         if segs:
-                            print(f"[Video] Using transcript fallback for {vid}")
-                            highlights = gemini.identify_highlights_from_transcript(
+                            print(f"[Video] Using SBERT+TF-IDF segment extractor for {vid}")
+                            from ..services.segment_extractor import extract_highlight_segments
+                            highlights = extract_highlight_segments(
                                 video_id=vid,
-                                segments=segs,
-                                target_seconds=per_video_seconds,
+                                transcript_segments=segs,
+                                summary_text=summary_text,
+                                target_duration_seconds=per_video_seconds,
+                                context_padding_seconds=2.0,
                             )
 
                     all_highlights.extend(highlights)

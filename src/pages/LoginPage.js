@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import './AuthPage.css';
 
 const LoginPage = () => {
@@ -11,6 +11,8 @@ const LoginPage = () => {
   const [isError, setIsError] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const redirectTo = location.state?.from || null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -46,9 +48,9 @@ const LoginPage = () => {
         }
 
         if (userData.role === 'admin') {
-          navigate('/admin-account-info');
+          navigate(redirectTo || '/admin-account-info');
         } else {
-          navigate('/');
+          navigate(redirectTo || '/search-by-title');
         }
       } else {
         setMessage('Invalid credentials');

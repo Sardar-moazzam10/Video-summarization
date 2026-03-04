@@ -28,6 +28,9 @@ const MergedPodcastPlayer = () => {
   const [chatAnswer, setChatAnswer] = useState(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState('');
+  const [videoId, setVideoId] = useState('');
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [compileError, setCompileError] = useState('');
   const pollIntervalRef = useRef(null);
   const lastStatusRef = useRef('');
 
@@ -57,6 +60,7 @@ const MergedPodcastPlayer = () => {
         setSummary(resultRes.data.summary_text || '');
         setMetadata(resultRes.data.metadata || null);
         setRichOutput(resultRes.data.rich_output || null);
+        setVideoId(resultRes.data.highlight_segments?.[0]?.video_id || resultRes.data.video_ids?.[0] || '');
         if (resultRes.data.audio_url) {
           setAudioUrl(`http://localhost:8000${resultRes.data.audio_url}`);
         }
@@ -111,6 +115,7 @@ const MergedPodcastPlayer = () => {
                 setSummary(res.data.summary_text || '');
                 setMetadata(res.data.metadata || null);
                 setRichOutput(res.data.rich_output || null);
+                setVideoId(res.data.highlight_segments?.[0]?.video_id || res.data.video_ids?.[0] || '');
                 if (res.data.audio_url) {
                   setAudioUrl(`http://localhost:8000${res.data.audio_url}`);
                 }
@@ -179,6 +184,39 @@ const MergedPodcastPlayer = () => {
       setChatAnswer({ answer: 'Failed to get an answer. Please try again.', sources: [] });
     } finally {
       setChatLoading(false);
+    }
+  };
+
+  const handleAutoCompile = async () => {
+    if (!videoId) {
+      setCompileError('No video ID found. Please re-process the video.');
+      return;
+    }
+    setIsCompiling(true);
+    setCompileError('');
+    try {
+      await axios.post('http://localhost:8000/api/v1/transcript/compile', {
+        video_id: videoId,
+        summary_text: summary,
+        highlight_duration_seconds: 120,
+      });
+      const mergeRes = await axios.post('http://localhost:8000/api/v1/merge', {
+        video_ids: [videoId],
+        generate_video: true,
+        generate_audio: false,
+        highlight_duration_seconds: 120,
+        target_duration_minutes: 5,
+        style: 'educational',
+      });
+      if (mergeRes.data.job_id) {
+        window.open(`/merged-player/${mergeRes.data.job_id}`, '_blank');
+      }
+    } catch (err) {
+      console.error('Auto-compile failed:', err);
+      const msg = err.response?.data?.detail || 'Could not compile highlights. Please try again.';
+      setCompileError(msg);
+    } finally {
+      setIsCompiling(false);
     }
   };
 
@@ -585,7 +623,27 @@ const MergedPodcastPlayer = () => {
               <button style={styles.btnPrimary} onClick={handleBack}>
                 Create Another Summary
               </button>
+              <button
+                style={{
+                  ...styles.btnPrimary,
+                  background: isCompiling
+                    ? 'rgba(168, 85, 247, 0.3)'
+                    : 'linear-gradient(135deg, #a855f7, #7c3aed)',
+                  boxShadow: '0 4px 20px rgba(168,85,247,0.3)',
+                  opacity: isCompiling ? 0.7 : 1,
+                  cursor: isCompiling ? 'not-allowed' : 'pointer',
+                }}
+                onClick={handleAutoCompile}
+                disabled={isCompiling}
+              >
+                {isCompiling ? 'Compiling...' : 'Auto-Compile Highlights'}
+              </button>
             </motion.div>
+            {compileError && (
+              <p style={{ color: '#ef4444', fontSize: '13px', textAlign: 'center', marginTop: '8px' }}>
+                {compileError}
+              </p>
+            )}
           </motion.div>
         )}
 

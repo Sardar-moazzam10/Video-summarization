@@ -88,27 +88,25 @@ const App = () => {
       <RedirectWrapper />
       <Navbar />
       <Routes>
-        {/* MAIN PAGES */}
+        {/* PUBLIC PAGES — accessible without login */}
         <Route path="/" element={<ChoicePage />} />
-        <Route path="/search-by-title" element={<SearchPage />} />
-        <Route path="/search-by-keywords" element={<SearchByKeywordsPage />} />
-        <Route path="/test-transcript" element={<TestTranscriptPage />} />
-        <Route path="/transcript-viewer" element={<TranscriptViewer />} />
-        <Route path="/suggested-podcasts" element={<SuggestedPodcastsPage />} />
-        <Route path="/summarized-player" element={<SummarizedPlayer />} />
-        <Route path="/merge-preview" element={<MergePreviewPage />} />
-        <Route path="/video-player" element={<VideoPlayerPage />} />
-        <Route path="/merged-player/:mergeId" element={<MergedPodcastPlayer />} />
-        <Route path="/trim-test" element={<TrimTestPage />} />
-
         <Route path="/contact" element={<ContactPage />} />
         <Route path="/about" element={<AboutPage />} />
 
-
-
-        <Route path="/search/:query" element={<SearchByKeywordsPage />} />
-        <Route path="/video-player/:videoId" element={<VideoPlayerPage />} />
-        <Route path="/transcript-viewer/:videoId" element={<TranscriptViewer />} />
+        {/* PROTECTED PAGES — login required */}
+        <Route path="/search-by-title" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SearchPage /></ProtectedRoute>} />
+        <Route path="/search-by-keywords" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SearchByKeywordsPage /></ProtectedRoute>} />
+        <Route path="/search/:query" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SearchByKeywordsPage /></ProtectedRoute>} />
+        <Route path="/transcript-viewer" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TranscriptViewer /></ProtectedRoute>} />
+        <Route path="/transcript-viewer/:videoId" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TranscriptViewer /></ProtectedRoute>} />
+        <Route path="/suggested-podcasts" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SuggestedPodcastsPage /></ProtectedRoute>} />
+        <Route path="/summarized-player" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SummarizedPlayer /></ProtectedRoute>} />
+        <Route path="/merge-preview" element={<ProtectedRoute allowedRoles={['user', 'admin']}><MergePreviewPage /></ProtectedRoute>} />
+        <Route path="/video-player" element={<ProtectedRoute allowedRoles={['user', 'admin']}><VideoPlayerPage /></ProtectedRoute>} />
+        <Route path="/video-player/:videoId" element={<ProtectedRoute allowedRoles={['user', 'admin']}><VideoPlayerPage /></ProtectedRoute>} />
+        <Route path="/merged-player/:mergeId" element={<ProtectedRoute allowedRoles={['user', 'admin']}><MergedPodcastPlayer /></ProtectedRoute>} />
+        <Route path="/test-transcript" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TestTranscriptPage /></ProtectedRoute>} />
+        <Route path="/trim-test" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TrimTestPage /></ProtectedRoute>} />
 
 
 

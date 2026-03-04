@@ -245,6 +245,11 @@ class GeminiService:
                 error_msg = str(e)
                 print(f"[Gemini] Attempt {attempt + 1} failed: {error_msg[:200]}")
 
+                # Quota errors: no point retrying, fail fast immediately
+                if '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg:
+                    print("[Gemini] Quota limit hit — skipping retries, using local fallback")
+                    break
+
                 if attempt < self._max_retries - 1:
                     # Parse retry delay from error if available
                     wait = self._parse_retry_delay(error_msg, default=2 ** (attempt + 1))
