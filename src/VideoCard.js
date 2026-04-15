@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './VideoCard.css';
+import { API_BASE_URL } from './config/api.js';
 
 const VideoCard = ({ video, videosList, isSelected = false, onToggleSelectForMerge }) => {
   const navigate = useNavigate();
@@ -17,7 +18,7 @@ const VideoCard = ({ video, videosList, isSelected = false, onToggleSelectForMer
   const saveToHistory = async (type) => {
     if (!username || !videoId) return;
     try {
-      await fetch('http://localhost:8000/api/v1/auth/user-history', {
+      await fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

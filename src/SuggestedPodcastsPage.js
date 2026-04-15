@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchVideos } from './youtubeApi.js';
 import './SuggestedPage.css';
+import { API_BASE_URL } from './config/api.js';
 
 const suggestedTopics = [
   'Technology', 'Entertainment', 'Health', 'Business', 'Sports',
@@ -61,7 +62,7 @@ const SuggestedPage = () => {
     }
 
     try {
-      const res = await fetch('http://localhost:8000/api/v1/merge', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

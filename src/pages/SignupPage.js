@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import './AuthPage.css';
+import { API_BASE_URL } from '../config/api.js';
 
 const SignupPage = () => {
   const [formData, setFormData] = useState({
@@ -32,7 +33,7 @@ const SignupPage = () => {
     setLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/v1/auth/signup', formData);
+      const response = await axios.post(`${API_BASE_URL}/api/v1/auth/signup`, formData);
 
       if (response.data.success) {
         setMessage('Account created! Redirecting to login...');

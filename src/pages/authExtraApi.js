@@ -1,10 +1,9 @@
 import axios from 'axios';
-
-const API_BASE_URL = 'http://localhost:8000/api/v1/auth';
+import { API_BASE_URL } from '../config/api.js';
 
 export const sendVerificationCode = async (email) => {
   try {
-    const response = await axios.post(`${API_BASE_URL}/send-verification-code`, { email });
+    const response = await axios.post(`${API_BASE_URL}/api/v1/auth/send-verification-code`, { email });
     return response.data;
   } catch (error) {
     console.error('Error sending verification code:', error);
@@ -14,7 +13,7 @@ export const sendVerificationCode = async (email) => {
 
 export const verifyCode = async (email, code) => {
   try {
-    const response = await axios.post(`${API_BASE_URL}/verify-code`, { email, code });
+    const response = await axios.post(`${API_BASE_URL}/api/v1/auth/verify-code`, { email, code });
     return response.data;
   } catch (error) {
     console.error('Error verifying code:', error);
@@ -24,7 +23,7 @@ export const verifyCode = async (email, code) => {
 
 export const resetPassword = async (email, password) => {
   try {
-    const response = await axios.post(`${API_BASE_URL}/reset-password`, { email, password });
+    const response = await axios.post(`${API_BASE_URL}/api/v1/auth/reset-password`, { email, password });
     return response.data;
   } catch (error) {
     console.error('Error resetting password:', error);

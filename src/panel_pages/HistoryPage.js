@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import './PanelStyles.css';
+import { API_BASE_URL } from '../config/api.js';
 
 const sidebarLinks = [
   { path: '/account-info', label: 'Account Info', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
@@ -11,12 +12,14 @@ const sidebarLinks = [
 
 const filterTabs = [
   { value: 'all', label: 'All', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
+  { value: 'merge', label: 'Summaries', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> },
   { value: 'search', label: 'Searches', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg> },
   { value: 'watch', label: 'Watched', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> },
   { value: 'transcript-view', label: 'Transcripts', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
 ];
 
 const typeConfig = {
+  merge: { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.2)', label: 'Summary', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> },
   search: { color: '#478BE0', bg: 'rgba(71, 139, 224, 0.1)', border: 'rgba(71, 139, 224, 0.2)', label: 'Search', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg> },
   watch: { color: '#a78bfa', bg: 'rgba(167, 139, 250, 0.1)', border: 'rgba(167, 139, 250, 0.2)', label: 'Watched', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> },
   'transcript-view': { color: '#34d399', bg: 'rgba(52, 211, 153, 0.1)', border: 'rgba(52, 211, 153, 0.2)', label: 'Transcript', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
@@ -44,7 +47,7 @@ const HistoryPage = () => {
 
   useEffect(() => {
     if (!username) { setLoading(false); return; }
-    fetch(`http://localhost:8000/api/v1/auth/user-history/${username}`)
+    fetch(`${API_BASE_URL}/api/v1/auth/user-history/${username}`)
       .then(res => res.json())
       .then(data => { setHistory(data.reverse()); setLoading(false); })
       .catch(() => setLoading(false));
@@ -53,7 +56,7 @@ const HistoryPage = () => {
   const handleClearHistory = async () => {
     if (!window.confirm('Are you sure you want to delete all history?')) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/auth/user-history/delete/${username}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/user-history/delete/${username}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) setHistory([]);
     } catch (err) {
@@ -64,7 +67,7 @@ const HistoryPage = () => {
   const handleDeleteSingle = async (e, timestamp) => {
     e.stopPropagation();
     try {
-      await fetch('http://localhost:8000/api/v1/auth/user-history/delete-one', {
+      await fetch(`${API_BASE_URL}/api/v1/auth/user-history/delete-one`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, timestamp })
@@ -76,8 +79,10 @@ const HistoryPage = () => {
   };
 
   const handleClick = (item) => {
-    if (item.type === 'search') {
-      navigate('/search-by-title', { state: { query: item.query } });
+    if (item.type === 'merge') {
+      navigate(`/merged-player/${item.jobId}`);
+    } else if (item.type === 'search') {
+      navigate(`/search/${encodeURIComponent(item.query || '')}`);
     } else if (item.type === 'watch') {
       navigate(`/video-player/${encodeURIComponent(item.videoId)}`);
     } else if (item.type === 'transcript-view') {
@@ -91,6 +96,7 @@ const HistoryPage = () => {
 
   const counts = {
     all: history.length,
+    merge: history.filter(i => i.type === 'merge').length,
     search: history.filter(i => i.type === 'search').length,
     watch: history.filter(i => i.type === 'watch').length,
     'transcript-view': history.filter(i => i.type === 'transcript-view').length,
@@ -135,7 +141,7 @@ const HistoryPage = () => {
             transition={{ duration: 0.3 }}
           >
             <h1 className="panel-heading">Activity History</h1>
-            <p className="panel-subheading">Your searches, watched videos, and transcript views</p>
+            <p className="panel-subheading">Your summaries, searches, watched videos, and transcripts</p>
 
             {/* Filter Tabs + Clear Button */}
             <div style={styles.toolbar}>
@@ -222,10 +228,18 @@ const HistoryPage = () => {
                             <span style={{ ...styles.typeBadge, background: config.bg, color: config.color, border: `1px solid ${config.border}` }}>
                               {config.label}
                             </span>
+                            {item.type === 'merge' && (
+                              <span style={{ ...styles.typeBadge, background: 'rgba(71,139,224,0.08)', color: 'rgba(71,139,224,0.7)', border: '1px solid rgba(71,139,224,0.15)', fontSize: '10px' }}>
+                                Resume ▶
+                              </span>
+                            )}
                             <span style={styles.timeAgo}>{timeAgo(item.timestamp)}</span>
                           </div>
                           <p style={styles.cardTitle}>{displayText}</p>
-                          {item.videoId && item.type !== 'search' && (
+                          {item.type === 'merge' && item.videoCount > 0 && (
+                            <p style={styles.cardMeta}>{item.videoCount} video{item.videoCount !== 1 ? 's' : ''} merged · Job: {item.jobId?.slice(0, 8)}…</p>
+                          )}
+                          {item.videoId && item.type !== 'search' && item.type !== 'merge' && (
                             <p style={styles.cardMeta}>ID: {item.videoId}</p>
                           )}
                         </div>

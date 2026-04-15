@@ -808,7 +808,7 @@ async def process_merge_job(job_id: str):
                     await update_status(JobStatus.GENERATING_VIDEO, 98, msg)
 
                 video_paths = await video_svc.download_videos(
-                    unique_video_ids, progress_callback=video_progress
+                    unique_video_ids, job_id=job_id, progress_callback=video_progress
                 )
 
                 if not video_paths:
@@ -883,6 +883,14 @@ async def process_merge_job(job_id: str):
                 import traceback
                 traceback.print_exc()
                 video_path = None
+
+            finally:
+                # Clean up downloaded source videos (job-scoped dir under audio_cache/video_downloads/)
+                import shutil as _shutil
+                _dl_dir = os.path.join("audio_cache", "video_downloads", job_id)
+                if os.path.isdir(_dl_dir):
+                    _shutil.rmtree(_dl_dir, ignore_errors=True)
+                    print(f"[Video] Cleaned up download dir: {_dl_dir}")
 
         # COMPLETED
         job.status = JobStatus.COMPLETED

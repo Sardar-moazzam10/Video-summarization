@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { API_BASE_URL } from './config/api.js';
 
 const MergePreviewPage = () => {
   const location = useLocation();
@@ -52,7 +53,7 @@ const MergePreviewPage = () => {
     }
 
     try {
-      const res = await fetch('http://localhost:8000/api/v1/merge', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

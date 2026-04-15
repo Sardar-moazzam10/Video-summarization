@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { punctuateText } from './utils/punctuateText.js';
+import { API_BASE_URL } from './config/api.js';
 
 const TrimTestPage = () => {
   const [videoInputs, setVideoInputs] = useState([{ url: '' }, { url: '' }]);
@@ -103,7 +104,7 @@ const TrimTestPage = () => {
       const start = Math.floor(Math.random() * (maxStart - minStart + 1) + minStart);
       const end = Math.min(start + 300, duration);
 
-      const transcriptResponse = await fetch(`http://localhost:8000/api/v1/transcript?videoId=${videoId}`);
+      const transcriptResponse = await fetch(`${API_BASE_URL}/api/v1/transcript?videoId=${videoId}`);
       const transcriptData = await transcriptResponse.json();
 
       const rawSegmentText = transcriptData

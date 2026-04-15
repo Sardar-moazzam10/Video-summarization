@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
 import './AuthPage.css';
+import { API_BASE_URL } from '../config/api.js';
 
 const LoginPage = () => {
   const [login, setLogin] = useState('');
@@ -21,7 +22,7 @@ const LoginPage = () => {
     setLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/v1/auth/login', {
+      const response = await axios.post(`${API_BASE_URL}/api/v1/auth/login`, {
         login,
         password,
       });

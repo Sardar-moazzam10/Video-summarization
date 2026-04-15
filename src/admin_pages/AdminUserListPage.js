@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import './AdminPanelStyles.css';
+import { API_BASE_URL } from '../config/api.js';
 
 const sidebarLinks = [
   { path: '/admin-account-info', label: 'Account Info', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
@@ -9,6 +10,11 @@ const sidebarLinks = [
   { path: '/admin-history', label: 'History', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   { path: '/admin-users', label: 'Manage Users', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
 ];
+
+const authHeaders = () => ({
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${localStorage.getItem('access_token') || ''}`,
+});
 
 const AdminUserListPage = () => {
   const [users, setUsers] = useState([]);
@@ -27,16 +33,23 @@ const AdminUserListPage = () => {
   useEffect(() => {
     fetchUsers();
     if (currentUsername) {
-      fetch(`http://localhost:8000/api/v1/auth/user/${currentUsername}`)
+      fetch(`${API_BASE_URL}/api/v1/auth/user/${currentUsername}`)
         .then(r => r.json()).then(d => setUserData(d)).catch(() => {});
     }
   }, [currentUsername]);
 
   const fetchUsers = () => {
-    fetch('http://localhost:8000/api/v1/auth/users')
-      .then(res => res.json())
+    fetch(`${API_BASE_URL}/api/v1/auth/users`, { headers: authHeaders() })
+      .then(res => {
+        if (res.status === 401 || res.status === 403) {
+          setMessage('Admin access required.'); setMsgType('error'); return [];
+        }
+        return res.json();
+      })
       .then(data => {
-        setUsers(data.map(user => ({ ...user, originalUsername: user.username })));
+        if (Array.isArray(data)) {
+          setUsers(data.map(user => ({ ...user, originalUsername: user.username })));
+        }
       })
       .catch(() => { setMessage('Failed to fetch users.'); setMsgType('error'); });
   };
@@ -48,7 +61,7 @@ const AdminUserListPage = () => {
   };
 
   const handleUpdate = (user) => {
-    fetch(`http://localhost:8000/api/v1/auth/user/update/${user.originalUsername}`, {
+    fetch(`${API_BASE_URL}/api/v1/auth/user/update/${user.originalUsername}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(user)
@@ -72,7 +85,7 @@ const AdminUserListPage = () => {
 
   const handleDelete = (username) => {
     if (window.confirm(`Delete user '${username}'?`)) {
-      fetch(`http://localhost:8000/api/v1/auth/user/delete/${username}`, { method: 'DELETE' })
+      fetch(`${API_BASE_URL}/api/v1/auth/user/delete/${username}`, { method: 'DELETE' })
         .then(res => res.json())
         .then(data => {
           setMessage(data.success ? 'User deleted.' : 'Delete failed.');
@@ -95,7 +108,7 @@ const AdminUserListPage = () => {
       setMessage('Password must be at least 6 characters.'); setMsgType('error'); return;
     }
 
-    fetch('http://localhost:8000/api/v1/auth/signup', {
+    fetch(`${API_BASE_URL}/api/v1/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newUser)

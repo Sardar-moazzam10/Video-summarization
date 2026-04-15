@@ -2,6 +2,7 @@
 Auth API routes - FastAPI router
 """
 from fastapi import APIRouter, HTTPException, Depends
+from typing import Dict, Any
 from ..models.user import (
     UserCreate, UserLogin, UserResponse, UserUpdate,
     PasswordUpdate, PasswordReset, VerificationCode, HistoryItem
@@ -9,6 +10,7 @@ from ..models.user import (
 from ..services.auth_service import AuthService
 from ..services.email_service import send_verification_email
 from ..core.database import get_database
+from ..core.security import require_role
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -137,5 +139,8 @@ async def delete_history_item(data: dict, service: AuthService = Depends(get_aut
 
 # ===== ADMIN =====
 @router.get("/users")
-async def get_all_users(service: AuthService = Depends(get_auth_service)):
+async def get_all_users(
+    service: AuthService = Depends(get_auth_service),
+    _admin: Dict[str, Any] = Depends(require_role("admin")),
+):
     return await service.get_all_users()

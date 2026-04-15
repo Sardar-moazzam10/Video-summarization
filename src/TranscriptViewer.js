@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchTranscript } from './api.js';
+import { API_BASE_URL } from './config/api.js';
 
 const TranscriptViewer = () => {
   const { videoId: urlVideoId } = useParams();
@@ -39,7 +40,7 @@ const TranscriptViewer = () => {
 
         const loggedInUser = JSON.parse(localStorage.getItem('user'))?.username;
         if (loggedInUser) {
-          await fetch('http://localhost:8000/api/v1/auth/user-history', {
+          await fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

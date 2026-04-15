@@ -62,9 +62,10 @@ async def chat_with_video(request: ChatRequest):
     store = get_vector_store()
 
     if store.index is None or store.index.ntotal == 0:
-        raise HTTPException(
-            400,
-            "No videos indexed yet. Process some videos first via the merge pipeline."
+        return ChatResponse(
+            answer="Videos are still being indexed. Please wait a moment and try again.",
+            sources=[],
+            question=request.question,
         )
 
     # Step 1: Retrieve relevant segments from FAISS
@@ -87,13 +88,22 @@ async def chat_with_video(request: ChatRequest):
         for r in results
     )
 
-    # Step 3: Generate answer with Gemini (or return raw context as fallback)
+    # Step 3: Generate answer with Gemini (or build answer from segments directly)
     gemini = get_gemini_service()
     if gemini.is_available():
         answer = await gemini.answer_question(request.question, context)
+        # answer is None when all Gemini models are quota-exhausted
+        if not answer or "Unable to generate answer" in answer:
+            answer = None
     else:
-        # Fallback: return the most relevant segment as the answer
-        answer = results[0]["text"] if results else "No answer available."
+        answer = None
+
+    if not answer:
+        # Local fallback: stitch the top retrieved segments into a direct answer
+        top_texts = [r["text"] for r in results[:3]]
+        answer = " [...] ".join(top_texts)
+        if len(answer) > 800:
+            answer = answer[:800] + "..."
 
     # Step 4: Build response
     sources = [

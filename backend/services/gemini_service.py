@@ -558,34 +558,62 @@ class GeminiService:
         Generate a concise answer to a question using transcript context.
 
         Uses Gemini Flash for speed (not Pro — chat should be fast).
+        Returns None if all models are quota-exhausted so caller can use local fallback.
         """
         if not self.is_available():
-            return context[:500] if context else "No information available."
+            return None
 
         prompt = CHAT_ANSWER_PROMPT.format(
             question=question,
             context=context[:15000],
         )
 
-        result = await asyncio.to_thread(self._call_simple, prompt)
-        return result
+        return await asyncio.to_thread(self._call_simple, prompt)
 
     def _call_simple(self, prompt: str) -> str:
-        """Simple text generation (no JSON parsing needed)."""
+        """Simple text generation with retry on rate-limit and model fallback."""
+        import time, re
+
         client = self._get_client()
+
         try:
             response = client.models.generate_content(
-                model=self._model_name,  # Use Flash for speed
+                model=self._model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.3,
                     max_output_tokens=500,
                 ),
             )
-            return response.text or "Unable to generate answer."
+            return response.text or None
+
         except Exception as e:
-            print(f"[Gemini] Chat answer failed: {e}")
-            return "Unable to generate answer at this time."
+            err_str = str(e)
+            is_quota = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+
+            if is_quota:
+                # Try to extract the retry delay suggested by the API
+                delay_match = re.search(r"retryDelay['\"]:\s*['\"](\d+)", err_str)
+                retry_after = int(delay_match.group(1)) if delay_match else 0
+
+                if retry_after > 0 and retry_after <= 35:
+                    print(f"[Gemini] Rate limited on {self._model_name}, retrying in {retry_after}s...")
+                    time.sleep(retry_after)
+                    try:
+                        response = client.models.generate_content(
+                            model=self._model_name,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=500),
+                        )
+                        return response.text or None
+                    except Exception:
+                        pass
+
+                print(f"[Gemini] Quota exhausted on {self._model_name} — using local fallback")
+            else:
+                print(f"[Gemini] Request failed ({type(e).__name__}): {e}")
+
+            return None  # caller uses local FAISS fallback
 
 
 # =====================================================

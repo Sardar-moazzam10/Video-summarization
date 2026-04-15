@@ -52,8 +52,10 @@ class VerificationCode(BaseModel):
 
 class HistoryItem(BaseModel):
     username: str
-    type: Literal["watch", "search", "transcript-view"]
+    type: Literal["watch", "search", "transcript-view", "merge"]
     videoId: Optional[str] = None
     query: Optional[str] = None
     title: Optional[str] = None
+    jobId: Optional[str] = None          # for merge type — links back to the result page
+    videoCount: Optional[int] = None     # for merge type — how many videos were merged
     timestamp: datetime = Field(default_factory=datetime.utcnow)

@@ -1,11 +1,10 @@
 import axios from 'axios';
-
-const BASE_URL = 'http://localhost:8000/api/v1/auth'; // FastAPI backend
+import { API_BASE_URL } from './config/api.js';
 
 // Signup API Call
 export const signupUser = async (formData) => {
   try {
-    const response = await axios.post(`${BASE_URL}/signup`, formData);
+    const response = await axios.post(`${API_BASE_URL}/api/v1/auth/signup`, formData);
     return response.data;
   } catch (error) {
     console.error('Signup error:', error);
@@ -19,7 +18,7 @@ export const signupUser = async (formData) => {
 // Login API Call
 export const loginUser = async (formData) => {
   try {
-    const response = await axios.post(`${BASE_URL}/login`, formData);
+    const response = await axios.post(`${API_BASE_URL}/api/v1/auth/login`, formData);
     return response.data;
   } catch (error) {
     console.error('Login error:', error);

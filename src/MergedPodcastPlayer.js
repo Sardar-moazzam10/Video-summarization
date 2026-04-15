@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import axios from 'axios';
+import { API_BASE_URL } from './config/api.js';
 
 const STAGES = [
   { key: 'transcribing', label: 'Transcribing', icon: '01' },
@@ -29,6 +30,7 @@ const MergedPodcastPlayer = () => {
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState('');
   const [videoId, setVideoId] = useState('');
+  const [videoIds, setVideoIds] = useState([]);
   const [isCompiling, setIsCompiling] = useState(false);
   const [compileError, setCompileError] = useState('');
   const pollIntervalRef = useRef(null);
@@ -49,24 +51,26 @@ const MergedPodcastPlayer = () => {
 
   const fetchStatus = async () => {
     try {
-      const res = await axios.get(`http://localhost:8000/api/v1/merge/${mergeId}`);
+      const res = await axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}`);
       const currentStatus = res.data.status;
       setStatus(currentStatus);
       setStage(res.data.stage_message || 'Processing...');
       setProgressPercent(res.data.progress_percent || 0);
 
       if (currentStatus === 'completed') {
-        const resultRes = await axios.get(`http://localhost:8000/api/v1/merge/${mergeId}/result`);
+        const resultRes = await axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`);
         setSummary(resultRes.data.summary_text || '');
         setMetadata(resultRes.data.metadata || null);
         setRichOutput(resultRes.data.rich_output || null);
         setVideoId(resultRes.data.highlight_segments?.[0]?.video_id || resultRes.data.video_ids?.[0] || '');
+        setVideoIds(resultRes.data.video_ids || []);
         if (resultRes.data.audio_url) {
-          setAudioUrl(`http://localhost:8000${resultRes.data.audio_url}`);
+          setAudioUrl(`${API_BASE_URL}${resultRes.data.audio_url}`);
         }
         if (resultRes.data.video_url) {
-          setVideoUrl(`http://localhost:8000${resultRes.data.video_url}`);
+          setVideoUrl(`${API_BASE_URL}${resultRes.data.video_url}`);
         }
+        saveToHistory(resultRes.data);
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       } else if (currentStatus === 'error') {
@@ -94,7 +98,7 @@ const MergedPodcastPlayer = () => {
     let eventSource = null;
     try {
       eventSource = new EventSource(
-        `http://localhost:8000/api/v1/merge/${mergeId}/stream`
+        `${API_BASE_URL}/api/v1/merge/${mergeId}/stream`
       );
 
       eventSource.onmessage = (event) => {
@@ -110,18 +114,20 @@ const MergedPodcastPlayer = () => {
           setProgressPercent(data.progress_percent || 0);
 
           if (data.status === 'completed') {
-            axios.get(`http://localhost:8000/api/v1/merge/${mergeId}/result`)
+            axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
               .then(res => {
                 setSummary(res.data.summary_text || '');
                 setMetadata(res.data.metadata || null);
                 setRichOutput(res.data.rich_output || null);
                 setVideoId(res.data.highlight_segments?.[0]?.video_id || res.data.video_ids?.[0] || '');
+                setVideoIds(res.data.video_ids || []);
                 if (res.data.audio_url) {
-                  setAudioUrl(`http://localhost:8000${res.data.audio_url}`);
+                  setAudioUrl(`${API_BASE_URL}${res.data.audio_url}`);
                 }
                 if (res.data.video_url) {
-                  setVideoUrl(`http://localhost:8000${res.data.video_url}`);
+                  setVideoUrl(`${API_BASE_URL}${res.data.video_url}`);
                 }
+                saveToHistory(res.data);
               });
             eventSource.close();
           } else if (data.status === 'error') {
@@ -169,19 +175,42 @@ const MergedPodcastPlayer = () => {
 
   const isProcessing = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'generating_video'].includes(status);
 
+  const saveToHistory = (resultData) => {
+    const username = JSON.parse(localStorage.getItem('user'))?.username;
+    if (!username) return;
+    const vids = resultData.video_ids || [];
+    const title = resultData.rich_output?.tldr
+      ? resultData.rich_output.tldr.slice(0, 80)
+      : `Merged summary (${vids.length} video${vids.length !== 1 ? 's' : ''})`;
+    fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username,
+        type: 'merge',
+        jobId: mergeId,
+        title,
+        videoCount: vids.length,
+        timestamp: new Date().toISOString(),
+      }),
+    }).catch(() => {});
+  };
+
   const handleChat = async () => {
     if (!chatQuestion.trim()) return;
     setChatLoading(true);
     setChatAnswer(null);
     try {
-      const res = await axios.post('http://localhost:8000/api/v1/chat', {
+      const res = await axios.post(`${API_BASE_URL}/api/v1/chat`, {
         question: chatQuestion.trim(),
         top_k: 5,
+        ...(videoIds.length > 0 && { video_ids: videoIds }),
       });
       setChatAnswer(res.data);
     } catch (err) {
       console.error('Chat error:', err);
-      setChatAnswer({ answer: 'Failed to get an answer. Please try again.', sources: [] });
+      const errMsg = err.response?.data?.detail || 'Failed to get an answer. Please try again.';
+      setChatAnswer({ answer: errMsg, sources: [] });
     } finally {
       setChatLoading(false);
     }
@@ -195,15 +224,15 @@ const MergedPodcastPlayer = () => {
     setIsCompiling(true);
     setCompileError('');
     try {
-      await axios.post('http://localhost:8000/api/v1/transcript/compile', {
+      await axios.post(`${API_BASE_URL}/api/v1/transcript/compile`, {
         video_id: videoId,
         summary_text: summary,
         highlight_duration_seconds: 120,
       });
-      const mergeRes = await axios.post('http://localhost:8000/api/v1/merge', {
+      const mergeRes = await axios.post(`${API_BASE_URL}/api/v1/merge`, {
         video_ids: [videoId],
         generate_video: true,
-        generate_audio: false,
+        generate_audio: true,
         highlight_duration_seconds: 120,
         target_duration_minutes: 5,
         style: 'educational',
@@ -611,6 +640,20 @@ const MergedPodcastPlayer = () => {
               >
                 Download TXT
               </button>
+              <button
+                style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05))', borderColor: 'rgba(239,68,68,0.3)' }}
+                onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/export?format=pdf`, '_blank')}
+              >
+                Download PDF
+              </button>
+              {audioUrl && (
+                <button
+                  style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(71,139,224,0.15), rgba(71,139,224,0.05))', borderColor: 'rgba(71,139,224,0.3)' }}
+                  onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/audio`, '_blank')}
+                >
+                  Download Audio
+                </button>
+              )}
             </motion.div>
 
             {/* Action */}

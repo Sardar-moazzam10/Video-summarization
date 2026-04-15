@@ -7,6 +7,7 @@ import VideoList from './VideoList.js';
 import { fetchVideos } from './youtubeApi.js';
 import MultiSelectBar from './components/merge/MultiSelectBar.jsx';
 import './Background.css';
+import { API_BASE_URL } from './config/api.js';
 
 const SearchPage = () => {
   const [videos, setVideos] = useState([]);
@@ -37,7 +38,7 @@ const SearchPage = () => {
       // Save search query to MongoDB
       if (username && query) {
         try {
-          await fetch('http://localhost:8000/api/v1/auth/user-history', {
+          await fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -84,7 +85,7 @@ const SearchPage = () => {
     setIsLoading(true);
 
     try {
-      const res = await fetch('http://localhost:8000/api/v1/merge', {
+      const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

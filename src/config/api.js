@@ -27,13 +27,21 @@ export const API = {
 
   // Transcript
   TRANSCRIPT: (videoId) => `${API_BASE_URL}/api/v1/transcript/${videoId}`,
+  TRANSCRIPT_QUERY: (videoId) => `${API_BASE_URL}/api/v1/transcript?videoId=${videoId}`,
+  TRANSCRIPT_COMPILE: `${API_BASE_URL}/api/v1/transcript/compile`,
+  SUMMARIZE: `${API_BASE_URL}/api/v1/summarize`,
 
   // Merge
   MERGE: `${API_BASE_URL}/api/v1/merge`,
   MERGE_STATUS: (jobId) => `${API_BASE_URL}/api/v1/merge/${jobId}`,
   MERGE_RESULT: (jobId) => `${API_BASE_URL}/api/v1/merge/${jobId}/result`,
   MERGE_AUDIO: (jobId) => `${API_BASE_URL}/api/v1/merge/${jobId}/audio`,
+  MERGE_STREAM: (jobId) => `${API_BASE_URL}/api/v1/merge/${jobId}/stream`,
+  MERGE_EXPORT: (jobId, format) => `${API_BASE_URL}/api/v1/merge/${jobId}/export?format=${format}`,
   MERGE_PROFILES: `${API_BASE_URL}/api/v1/merge/profiles`,
+
+  // Chat
+  CHAT: `${API_BASE_URL}/api/v1/chat`,
 };
 
 export default API;

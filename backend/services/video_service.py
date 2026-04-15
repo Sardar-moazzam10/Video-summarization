@@ -114,12 +114,15 @@ class VideoService:
     async def download_videos(
         self,
         video_ids: List[str],
+        job_id: str = "",
         progress_callback: Optional[Callable[[str], Awaitable]] = None,
     ) -> Dict[str, str]:
         """
         Download videos using the existing video_cache_manager.
 
         Returns dict mapping video_id to local file path.
+        Uses a persistent job-scoped directory under audio_cache/video_downloads/
+        so the caller can clean it up after video generation completes.
         """
         import sys
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -127,7 +130,11 @@ class VideoService:
             sys.path.insert(0, project_root)
 
         video_paths = {}
-        work_dir = tempfile.mkdtemp(prefix="video_dl_")
+        if job_id:
+            work_dir = str(Path("audio_cache/video_downloads") / job_id)
+            os.makedirs(work_dir, exist_ok=True)
+        else:
+            work_dir = tempfile.mkdtemp(prefix="video_dl_")
 
         for i, vid in enumerate(video_ids):
             if progress_callback:

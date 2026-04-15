@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './UserPanelPage.css';
+import { API_BASE_URL } from '../config/api.js';
 
 const UserPanelPage = () => {
   const [userData, setUserData] = useState({
@@ -19,7 +20,7 @@ const UserPanelPage = () => {
 
   useEffect(() => {
     if (username) {
-      axios.get(`http://localhost:8000/api/v1/auth/user/${username}`)
+      axios.get(`${API_BASE_URL}/api/v1/auth/user/${username}`)
         .then(res => setUserData(res.data))
         .catch(() => setMessage('Error fetching user data.'));
     }
@@ -30,13 +31,13 @@ const UserPanelPage = () => {
   };
 
   const handleUpdate = () => {
-    axios.put(`http://localhost:8000/api/v1/auth/user/update/${username}`, userData)
+    axios.put(`${API_BASE_URL}/api/v1/auth/user/update/${username}`, userData)
       .then(res => setMessage(res.data.message))
       .catch(() => setMessage('Update failed.'));
   };
 
   const handlePasswordUpdate = () => {
-    axios.put(`http://localhost:8000/api/v1/auth/user/update-password/${username}`, {
+    axios.put(`${API_BASE_URL}/api/v1/auth/user/update-password/${username}`, {
       oldPassword,
       newPassword
     })
@@ -46,7 +47,7 @@ const UserPanelPage = () => {
 
   const handleDelete = () => {
     if (window.confirm('Are you sure you want to delete your account?')) {
-      axios.delete(`http://localhost:8000/api/v1/auth/user/delete/${username}`)
+      axios.delete(`${API_BASE_URL}/api/v1/auth/user/delete/${username}`)
         .then(res => {
           localStorage.removeItem('user');
           setMessage(res.data.message);

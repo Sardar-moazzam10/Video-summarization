@@ -1,11 +1,12 @@
 /**
+import { API_BASE_URL } from './config/api.js';
  * Fetch transcript for a given YouTube video ID
  * @param {string} videoId - The YouTube video ID
  * @returns {Array} - Array of transcript entries or empty array if unavailable
  */
 export const fetchTranscript = async (videoId) => {
   try {
-    const response = await fetch(`http://localhost:8000/api/v1/transcript?videoId=${videoId}`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/transcript?videoId=${videoId}`);
     if (!response.ok) {
       throw new Error(`Error: ${response.status}`);
     }

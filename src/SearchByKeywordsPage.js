@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchVideos } from './youtubeApi.js';
 import { fetchTranscript, searchKeywordInTranscript } from './youtubeTranscript.mjs';
+import { API_BASE_URL } from './config/api.js';
 
 const SearchByKeywordsPage = () => {
   const [keyword, setKeyword] = useState('');
@@ -11,19 +12,26 @@ const SearchByKeywordsPage = () => {
   const [selectedVideos, setSelectedVideos] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { query: urlQuery } = useParams();
 
   useEffect(() => {
+    if (urlQuery) {
+      const decoded = decodeURIComponent(urlQuery);
+      setKeyword(decoded);
+      // Will trigger search via the keyword effect below
+      return;
+    }
     const savedKeyword = sessionStorage.getItem('keyword');
     const savedResults = sessionStorage.getItem('results');
     if (savedKeyword && savedResults) {
       setKeyword(savedKeyword);
       setResults(JSON.parse(savedResults));
     }
-  }, []);
+  }, [urlQuery]);
 
   const fetchSummary = async (transcriptText) => {
     try {
-      const response = await fetch('http://localhost:8000/api/v1/summarize', {
+      const response = await fetch(`${API_BASE_URL}/api/v1/summarize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript: transcriptText }),
@@ -36,20 +44,32 @@ const SearchByKeywordsPage = () => {
     }
   };
 
-  const handleSearch = async () => {
-    if (!keyword.trim()) return;
+  // Auto-run search when navigated from history with a URL query param
+  useEffect(() => {
+    if (urlQuery) {
+      const decoded = decodeURIComponent(urlQuery);
+      if (decoded.trim()) {
+        runSearch(decoded);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlQuery]);
+
+  const runSearch = useCallback(async (searchTerm) => {
+    const term = (searchTerm || keyword).trim();
+    if (!term) return;
     setResults([]);
     setSelectedVideos([]);
     setLoading(true);
 
     try {
-      const videos = await fetchVideos(keyword);
+      const videos = await fetchVideos(term);
       const matches = [];
 
       for (const video of videos) {
         const transcript = await fetchTranscript(video.id.videoId);
         if (transcript) {
-          const keywordMatches = searchKeywordInTranscript(transcript, keyword);
+          const keywordMatches = searchKeywordInTranscript(transcript, term);
           if (keywordMatches.length > 0) {
             const transcriptText = transcript.map((e) => e.text).join(' ');
             const summary = await fetchSummary(transcriptText);
@@ -59,18 +79,18 @@ const SearchByKeywordsPage = () => {
       }
 
       setResults(matches);
-      sessionStorage.setItem('keyword', keyword);
+      sessionStorage.setItem('keyword', term);
       sessionStorage.setItem('results', JSON.stringify(matches));
 
       const username = JSON.parse(localStorage.getItem('user'))?.username;
       if (username) {
-        await fetch('http://localhost:8000/api/v1/auth/user-history', {
+        await fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             username,
             type: 'search',
-            query: keyword,
+            query: term,
             timestamp: new Date().toISOString(),
           }),
         });
@@ -80,7 +100,10 @@ const SearchByKeywordsPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSearch = () => runSearch(keyword);
 
   const toggleSelect = (videoId) => {
     setSelectedVideos((prev) =>
@@ -209,7 +232,7 @@ const SearchByKeywordsPage = () => {
                       onClick={() => {
                         const username = JSON.parse(localStorage.getItem('user'))?.username;
                         if (username) {
-                          fetch('http://localhost:8000/api/v1/auth/user-history', {
+                          fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
