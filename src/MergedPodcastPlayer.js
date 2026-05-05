@@ -29,6 +29,7 @@ const MergedPodcastPlayer = () => {
   const [chatAnswer, setChatAnswer] = useState(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [videoId, setVideoId] = useState('');
   const [videoIds, setVideoIds] = useState([]);
   const [isCompiling, setIsCompiling] = useState(false);
@@ -57,13 +58,14 @@ const MergedPodcastPlayer = () => {
       setStage(res.data.stage_message || 'Processing...');
       setProgressPercent(res.data.progress_percent || 0);
 
-      if (currentStatus === 'completed') {
+      if (currentStatus === 'completed' || currentStatus === 'partial_success') {
         const resultRes = await axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`);
         setSummary(resultRes.data.summary_text || '');
         setMetadata(resultRes.data.metadata || null);
         setRichOutput(resultRes.data.rich_output || null);
         setVideoId(resultRes.data.highlight_segments?.[0]?.video_id || resultRes.data.video_ids?.[0] || '');
         setVideoIds(resultRes.data.video_ids || []);
+        setWarning(resultRes.data.warning || res.data.warning || '');
         if (resultRes.data.audio_url) {
           setAudioUrl(`${API_BASE_URL}${resultRes.data.audio_url}`);
         }
@@ -113,7 +115,7 @@ const MergedPodcastPlayer = () => {
           setStage(data.stage_message || 'Processing...');
           setProgressPercent(data.progress_percent || 0);
 
-          if (data.status === 'completed') {
+          if (data.status === 'completed' || data.status === 'partial_success') {
             axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
               .then(res => {
                 setSummary(res.data.summary_text || '');
@@ -121,6 +123,7 @@ const MergedPodcastPlayer = () => {
                 setRichOutput(res.data.rich_output || null);
                 setVideoId(res.data.highlight_segments?.[0]?.video_id || res.data.video_ids?.[0] || '');
                 setVideoIds(res.data.video_ids || []);
+                setWarning(res.data.warning || data.warning || '');
                 if (res.data.audio_url) {
                   setAudioUrl(`${API_BASE_URL}${res.data.audio_url}`);
                 }
@@ -165,7 +168,7 @@ const MergedPodcastPlayer = () => {
   const handleBack = () => navigate('/search-by-title');
 
   const getStepStatus = (stepName) => {
-    const statusOrder = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'generating_video', 'completed'];
+    const statusOrder = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'generating_video', 'partial_success', 'completed'];
     const currentIdx = statusOrder.indexOf(status);
     const stepIdx = statusOrder.indexOf(stepName);
     if (stepIdx < currentIdx) return 'complete';
@@ -378,6 +381,21 @@ const MergedPodcastPlayer = () => {
                 <audio controls style={styles.audioPlayer}>
                   <source src={audioUrl} type="audio/mpeg" />
                 </audio>
+              </motion.div>
+            )}
+
+            {warning && (
+              <motion.div
+                style={styles.warningCard}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.21 }}
+              >
+                <div style={styles.warningIcon}>!</div>
+                <div>
+                  <h3 style={styles.warningTitle}>Video Warning</h3>
+                  <p style={styles.warningText}>{warning}</p>
+                </div>
               </motion.div>
             )}
 
@@ -879,6 +897,40 @@ const styles = {
     width: '100%',
     borderRadius: '8px',
     outline: 'none',
+  },
+  warningCard: {
+    background: 'rgba(245, 158, 11, 0.1)',
+    border: '1px solid rgba(245, 158, 11, 0.28)',
+    borderRadius: '16px',
+    padding: '18px 20px',
+    marginBottom: '20px',
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'flex-start',
+  },
+  warningIcon: {
+    width: '26px',
+    height: '26px',
+    borderRadius: '999px',
+    background: 'rgba(245, 158, 11, 0.18)',
+    color: '#fbbf24',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+  warningTitle: {
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    color: '#fde68a',
+    margin: '0 0 4px',
+  },
+  warningText: {
+    fontSize: '0.9rem',
+    lineHeight: 1.6,
+    color: '#fef3c7',
+    margin: 0,
   },
   summaryCard: {
     background: 'rgba(17, 24, 39, 0.5)',

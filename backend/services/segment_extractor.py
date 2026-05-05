@@ -4,9 +4,12 @@ Segment Extractor — Maps summary text to transcript timestamps.
 Pipeline:
     1. Receive summary text + list of transcript segments (with timestamps)
     2. Group raw 1-3s entries into coherent ~40-word blocks
-    3. Score each block using hybrid method:
-       - Semantic similarity (Sentence-BERT): 70% weight
-       - TF-IDF extractive importance: 30% weight
+    3. Score each block using research paper-aligned 4-signal hybrid method:
+       - SBERT semantic similarity to summary: 30%
+       - TF-IDF extractive importance: 15%
+       - CLIP cross-modal visual-text score: 35%
+       - PGL-SUM temporal attention score: 20%
+       Falls back to 70/30 SBERT/TF-IDF when CLIP/temporal are unavailable.
     4. Select top-scoring non-overlapping segments within time budget
     5. Return segments formatted for the existing /api/v1/merge endpoint
 
@@ -15,8 +18,19 @@ Reuses get_sentence_transformer() from fusion_engine.py — no second model load
 
 import re
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dataclasses import dataclass
+
+
+# Research paper-aligned 4-signal weights (SBERT + TF-IDF + CLIP + temporal attention)
+SEMANTIC_WEIGHT  = 0.30   # SBERT similarity to summary
+TFIDF_WEIGHT     = 0.15   # TF-IDF extractive importance
+CLIP_WEIGHT      = 0.35   # CLIP cross-modal visual-text score
+TEMPORAL_WEIGHT  = 0.20   # PGL-SUM self-attention temporal importance
+
+# Fallback weights when CLIP/temporal scores are absent (sums to 1.0)
+FALLBACK_SEMANTIC_WEIGHT = 0.70
+FALLBACK_TFIDF_WEIGHT    = 0.30
 
 
 @dataclass
@@ -37,6 +51,7 @@ def extract_highlight_segments(
     context_padding_seconds: float = 3.0,
     min_segment_duration: float = 5.0,
     max_segment_duration: float = 45.0,
+    visual_keyframes: Optional[List[Dict]] = None,
 ) -> List[Dict]:
     """
     Main entry point. Maps a summary to transcript timestamps.
@@ -44,11 +59,15 @@ def extract_highlight_segments(
     Args:
         video_id: YouTube video ID (passed through to output)
         transcript_segments: [{text, start, duration}] from MongoDB
-        summary_text: Abstractive summary text (BART or Gemini output)
+        summary_text: Abstractive summary text (BART or Ollama output)
         target_duration_seconds: Total compiled video duration budget
         context_padding_seconds: Extra seconds added before/after each cut
         min_segment_duration: Skip segments shorter than this
         max_segment_duration: Cap any single segment at this length
+        visual_keyframes: Optional [{timestamp, visual_score, ...}] from
+            visual_keyframe_extractor.extract_keyframes(). When supplied,
+            the per-segment visual score (max keyframe score whose timestamp
+            falls inside the segment) is blended into the importance score.
 
     Returns:
         List of segment dicts for /api/v1/merge:
@@ -69,11 +88,13 @@ def extract_highlight_segments(
     scored = _score_segments_hybrid(
         grouped_segments=grouped,
         summary_text=summary_text,
+        visual_keyframes=visual_keyframes,
     )
 
     selected = _select_within_budget(
         scored_segments=scored,
         target_seconds=target_duration_seconds,
+        context_padding=context_padding_seconds,
     )
 
     return _format_for_merge(
@@ -148,13 +169,17 @@ def _group_transcript_segments(
 def _score_segments_hybrid(
     grouped_segments: List[ScoredSegment],
     summary_text: str,
-    semantic_weight: float = 0.7,
-    tfidf_weight: float = 0.3,
+    visual_keyframes: Optional[List[Dict]] = None,
 ) -> List[ScoredSegment]:
     """
-    Scores each grouped segment using combined semantic + TF-IDF method.
+    Scores each grouped segment using research paper-aligned 4-signal blend:
+      - SBERT semantic similarity (30%)
+      - TF-IDF extractive importance (15%)
+      - CLIP cross-modal visual-text score (35%)
+      - PGL-SUM temporal attention score (20%)
 
-    Combined formula: (0.7 × semantic_similarity) + (0.3 × tfidf_importance)
+    Degrades gracefully: if CLIP/temporal scores are absent from keyframes,
+    falls back to 70/30 SBERT/TF-IDF weights.
     """
     segment_texts = [s.text for s in grouped_segments]
 
@@ -164,13 +189,71 @@ def _score_segments_hybrid(
         summary_text=summary_text,
     )
 
-    for i, seg in enumerate(grouped_segments):
-        sem = semantic_scores[i]
-        tfidf = tfidf_scores[i]
-        seg.importance_score = (semantic_weight * sem) + (tfidf_weight * tfidf)
-        seg.reason = f"Semantic match: {sem:.2f}, TF-IDF: {tfidf:.2f}"
+    use_clip = bool(visual_keyframes) and any("clip_score" in kf for kf in visual_keyframes)
+    use_temporal = bool(visual_keyframes) and any("temporal_score" in kf for kf in visual_keyframes)
+
+    if use_clip or use_temporal:
+        # Determine available signals and normalize weights to sum to 1.0
+        sem_w     = SEMANTIC_WEIGHT
+        tfidf_w   = TFIDF_WEIGHT
+        clip_w    = CLIP_WEIGHT    if use_clip     else 0.0
+        temp_w    = TEMPORAL_WEIGHT if use_temporal else 0.0
+
+        total = sem_w + tfidf_w + clip_w + temp_w
+        sem_w /= total; tfidf_w /= total; clip_w /= total; temp_w /= total
+
+        for i, seg in enumerate(grouped_segments):
+            sem    = semantic_scores[i]
+            tfidf  = tfidf_scores[i]
+            clip   = _clip_score_for_segment(seg.start_time, seg.end_time, visual_keyframes) if use_clip else 0.0
+            temp   = _temporal_score_for_segment(seg.start_time, seg.end_time, visual_keyframes) if use_temporal else 0.0
+
+            seg.importance_score = (sem_w * sem) + (tfidf_w * tfidf) + (clip_w * clip) + (temp_w * temp)
+            seg.reason = (
+                f"Semantic: {sem:.2f}, TF-IDF: {tfidf:.2f}, "
+                f"CLIP: {clip:.2f}, Temporal: {temp:.2f}"
+            )
+    else:
+        # Pure text fallback (70/30 SBERT/TF-IDF)
+        for i, seg in enumerate(grouped_segments):
+            sem   = semantic_scores[i]
+            tfidf = tfidf_scores[i]
+            seg.importance_score = (FALLBACK_SEMANTIC_WEIGHT * sem) + (FALLBACK_TFIDF_WEIGHT * tfidf)
+            seg.reason = f"Semantic: {sem:.2f}, TF-IDF: {tfidf:.2f}"
 
     return grouped_segments
+
+
+def _clip_score_for_segment(
+    start_time: float,
+    end_time: float,
+    keyframes: List[Dict],
+) -> float:
+    """Max clip_score of any keyframe whose timestamp falls in [start_time, end_time]."""
+    best = 0.0
+    for kf in keyframes:
+        ts = kf.get("timestamp", -1.0)
+        if start_time <= ts <= end_time:
+            score = kf.get("clip_score", 0.0)
+            if score > best:
+                best = score
+    return best
+
+
+def _temporal_score_for_segment(
+    start_time: float,
+    end_time: float,
+    keyframes: List[Dict],
+) -> float:
+    """Max temporal_score of any keyframe whose timestamp falls in [start_time, end_time]."""
+    best = 0.0
+    for kf in keyframes:
+        ts = kf.get("timestamp", -1.0)
+        if start_time <= ts <= end_time:
+            score = kf.get("temporal_score", 0.0)
+            if score > best:
+                best = score
+    return best
 
 
 def _compute_tfidf_scores(segment_texts: List[str]) -> List[float]:
@@ -252,10 +335,12 @@ def _select_within_budget(
     scored_segments: List[ScoredSegment],
     target_seconds: int,
     overlap_gap_seconds: float = 5.0,
+    context_padding: float = 2.0,
 ) -> List[ScoredSegment]:
     """
     Greedy selection of top-scoring non-overlapping segments within budget.
-    Allows 10% overage on target duration.
+    Accounts for context_padding that will be added by _format_for_merge so the
+    final video does not exceed target_seconds.
     """
     candidates = sorted(
         scored_segments,
@@ -267,9 +352,13 @@ def _select_within_budget(
     total_duration = 0.0
 
     for candidate in candidates:
-        duration = candidate.end_time - candidate.start_time
-        if duration <= 0:
+        content_dur = candidate.end_time - candidate.start_time
+        if content_dur <= 0:
             continue
+
+        # Include padding in the budget accounting so the final video
+        # matches target_seconds after _format_for_merge adds padding.
+        padded_dur = content_dur + 2 * context_padding
 
         overlaps = any(
             not (
@@ -282,9 +371,9 @@ def _select_within_budget(
         if overlaps:
             continue
 
-        if total_duration + duration <= target_seconds * 1.1:
+        if total_duration + padded_dur <= target_seconds:
             selected.append(candidate)
-            total_duration += duration
+            total_duration += padded_dur
 
         if total_duration >= target_seconds:
             break

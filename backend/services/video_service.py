@@ -33,6 +33,7 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
 
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
 YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")
+NODE_BIN = _resolve_binary("NODE_PATH", "node")
 
 
 class VideoService:
@@ -172,6 +173,10 @@ class VideoService:
         cmd = [
             YTDLP_BIN,
             "--ffmpeg-location", self.ffmpeg,
+            "--js-runtimes", f"node:{NODE_BIN}",
+            "--remote-components", "ejs:github",
+            "--no-check-certificates",
+            "--socket-timeout", "60",
             "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best",
             "-o", output_template,
             url,
@@ -218,8 +223,8 @@ class VideoService:
 
             cmd = [
                 self.ffmpeg, "-y",
-                "-ss", str(start),
                 "-i", src,
+                "-ss", str(start),
                 "-t", str(duration),
                 "-c", "copy",
                 "-avoid_negative_ts", "make_zero",

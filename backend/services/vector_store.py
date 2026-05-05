@@ -5,7 +5,9 @@ Stores sentence embeddings in a FAISS index for fast similarity search.
 Enables "search by meaning" — users can type natural language queries
 and find relevant sections across all previously processed videos.
 
-Uses the same all-MiniLM-L6-v2 embedder as the fusion engine.
+Shares the sentence transformer singleton from fusion_engine — no second
+model load. Embedding dimension is detected dynamically from the loaded model
+(384 for all-MiniLM-L6-v2, 768 for BAAI/bge-base-en-v1.5).
 """
 
 import numpy as np
@@ -14,18 +16,13 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 # Lazy-loaded
-_embedder = None
 _vector_store = None
 
 
 def _get_embedder():
-    """Reuse the same embedder as the fusion engine."""
-    global _embedder
-    if _embedder is None:
-        from sentence_transformers import SentenceTransformer
-        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        print("[VectorStore] Loaded embedder: all-MiniLM-L6-v2")
-    return _embedder
+    """Reuse the singleton model from fusion_engine — avoids loading a second copy."""
+    from .fusion_engine import get_sentence_transformer
+    return get_sentence_transformer()
 
 
 class VectorStore:
@@ -37,9 +34,8 @@ class VectorStore:
     - Persistent index on disk
     - Metadata tracking (video_id, video_title, text, timestamp)
     - Deduplication by video_id
+    - Dynamic embedding dimension (matches whatever model config specifies)
     """
-
-    DIMENSION = 384  # all-MiniLM-L6-v2 output dimension
 
     def __init__(self, index_dir: str = "faiss_index"):
         self.index_dir = Path(index_dir)
@@ -47,7 +43,15 @@ class VectorStore:
         self.index = None
         self.metadata: List[Dict[str, Any]] = []
         self._indexed_videos: set = set()
+        self._dimension: Optional[int] = None  # resolved lazily or from saved metadata
         self._load_or_create()
+
+    def _get_dimension(self) -> int:
+        """Return embedding dimension, detected from model on first call."""
+        if self._dimension is None:
+            embedder = _get_embedder()
+            self._dimension = embedder.get_sentence_embedding_dimension()
+        return self._dimension
 
     def _load_or_create(self):
         """Load existing index from disk or create a new one."""
@@ -61,19 +65,31 @@ class VectorStore:
                 self.index = faiss.read_index(str(idx_file))
                 with open(meta_file, "rb") as f:
                     data = pickle.load(f)
-                self.metadata = data.get("metadata", [])
-                self._indexed_videos = data.get("indexed_videos", set())
-                print(f"[VectorStore] Loaded index: {self.index.ntotal} vectors, {len(self._indexed_videos)} videos")
+                saved_dim = data.get("embedding_dim") or self.index.d
+                current_dim = self._get_dimension()
+                if saved_dim != current_dim:
+                    # Embedding model changed — old index is incompatible, start fresh
+                    print(f"[VectorStore] Dim mismatch: saved={saved_dim}, model={current_dim} "
+                          f"— recreating index (existing transcripts will re-index on next request)")
+                    self.index = faiss.IndexFlatIP(current_dim)
+                    self.metadata = []
+                    self._indexed_videos = set()
+                else:
+                    self.metadata = data.get("metadata", [])
+                    self._indexed_videos = data.get("indexed_videos", set())
+                    self._dimension = saved_dim
+                    print(f"[VectorStore] Loaded index: {self.index.ntotal} vectors, "
+                          f"{len(self._indexed_videos)} videos, dim={self._dimension}")
             except Exception as e:
                 print(f"[VectorStore] Failed to load index, creating new: {e}")
-                self.index = faiss.IndexFlatIP(self.DIMENSION)
+                self.index = faiss.IndexFlatIP(self._get_dimension())
                 self.metadata = []
                 self._indexed_videos = set()
         else:
-            self.index = faiss.IndexFlatIP(self.DIMENSION)
+            self.index = faiss.IndexFlatIP(self._get_dimension())
             self.metadata = []
             self._indexed_videos = set()
-            print("[VectorStore] Created new empty index")
+            print(f"[VectorStore] Created new empty index (dim={self._dimension})")
 
     def _save(self):
         """Persist index and metadata to disk."""
@@ -84,6 +100,7 @@ class VectorStore:
             pickle.dump({
                 "metadata": self.metadata,
                 "indexed_videos": self._indexed_videos,
+                "embedding_dim": self._get_dimension(),
             }, f)
 
     def is_video_indexed(self, video_id: str) -> bool:

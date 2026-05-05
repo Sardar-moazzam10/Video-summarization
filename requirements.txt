@@ -7,6 +7,7 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
+email-validator>=2.0.0
 
 # --- Database ---
 pymongo>=4.6.0
@@ -14,9 +15,10 @@ motor>=3.3.0
 
 # --- AI / ML Core ---
 torch>=2.2.0
-transformers>=4.36.0
+transformers>=4.45.0
 sentence-transformers>=2.2.2
 openai-whisper>=20231117
+accelerate>=0.26.0     # efficient model loading (required for large transformers)
 
 # --- Vector Search ---
 faiss-cpu>=1.7.4
@@ -26,6 +28,10 @@ youtube-transcript-api>=1.0.0
 yt-dlp>=2024.1.0
 deep-translator>=1.11.0
 
+# --- Visual Keyframe Extraction (Phase 1: visual analysis stage) ---
+opencv-python-headless>=4.9.0
+scenedetect[opencv]>=0.6.4
+
 # --- Language Detection ---
 langdetect>=1.0.9
 
@@ -33,28 +39,33 @@ langdetect>=1.0.9
 edge-tts>=6.1.0
 
 # --- Auth & Security ---
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]
 passlib[bcrypt]>=1.7.4
+bcrypt==4.0.1  # passlib 1.7.4 is incompatible with bcrypt>=4.1 (72-byte enforcement)
 
 # --- Utilities ---
 numpy>=1.24.0
 scikit-learn>=1.3.0
 aiohttp>=3.9.0
 requests>=2.31.0
+httpx>=0.25.0          # Ollama REST client
 tqdm>=4.66.0
 regex>=2024.1.0
 
 # --- NLP ---
 nltk>=3.8.0
 sentencepiece>=0.2.0
+sacremoses>=0.1.1      # MarianMT / NLLB tokenizer dependency
 
-# --- Gemini AI (Gemini 3 Pro + File API + Thinking) ---
-google-genai>=1.51.0
+# --- Gemini AI (optional/legacy — system uses Ollama by default) ---
+# google-genai>=1.51.0  # Only needed if GEMINI_API_KEY is set; safe to remove
 
 # --- Export (PDF) ---
 fpdf2>=2.7.0
 
+# --- Utilities (continued) ---
+Pillow>=9.0.0          # CLIP image loading
+
 # --- Testing ---
 pytest>=7.4.0
 pytest-asyncio>=0.23.0
-httpx>=0.25.0

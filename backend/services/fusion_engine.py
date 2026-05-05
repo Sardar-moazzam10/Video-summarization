@@ -28,12 +28,17 @@ _clustering_model = None
 
 
 def get_sentence_transformer():
-    """Lazy load sentence transformer model."""
+    """Lazy load sentence transformer model from config (defaults to all-MiniLM-L6-v2)."""
     global _sentence_transformer
     if _sentence_transformer is None:
         from sentence_transformers import SentenceTransformer
-        _sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
-        print("[OK] Loaded Sentence-BERT model: all-MiniLM-L6-v2")
+        try:
+            from ..core.config import get_settings
+            model_name = get_settings().EMBEDDING_MODEL
+        except Exception:
+            model_name = "all-MiniLM-L6-v2"
+        _sentence_transformer = SentenceTransformer(model_name)
+        print(f"[OK] Loaded Sentence-BERT model: {model_name}")
     return _sentence_transformer
 
 

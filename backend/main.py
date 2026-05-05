@@ -46,16 +46,48 @@ async def lifespan(app: FastAPI):
         print("[OK] Sentence-BERT embedding model pre-loaded")
     except Exception as e:
         print(f"[WARN] Could not pre-load embedding model: {e}")
-    # Check Gemini availability
+
+    # FAISS dimension guard: clear index if it contains an unrecognised embedding dimension.
+    # VectorStore._load_or_create() also checks this at runtime, but this guard runs first.
     try:
-        from .services.gemini_service import get_gemini_service
-        gemini = get_gemini_service()
-        if gemini.is_available():
-            print(f"[OK] Gemini AI: configured (text: {settings.GEMINI_MODEL}, video: {settings.GEMINI_VIDEO_MODEL})")
-        else:
-            print("[INFO] Gemini AI: not configured (BART fallback active)")
+        import pickle as _pickle, shutil as _shutil
+        from pathlib import Path as _Path
+        _faiss_dir = _Path("faiss_index")
+        if _faiss_dir.exists():
+            _meta_path = _faiss_dir / "metadata.pkl"
+            if _meta_path.exists():
+                _meta = _pickle.load(open(_meta_path, "rb"))
+                # embedding_dim is stored in metadata; 384 is correct for MiniLM
+                _stored_dim = _meta.get("embedding_dim", 384)
+                # Accept 384 (MiniLM), 768 (BGE), and 0 (legacy, no dim saved)
+                if _stored_dim not in (384, 768, 0):
+                    _shutil.rmtree(_faiss_dir)
+                    print(f"[WARN] FAISS index cleared: unexpected embedding_dim={_stored_dim}")
     except Exception as e:
-        print(f"[WARN] Gemini check failed: {e}")
+        print(f"[WARN] FAISS dimension check failed: {e}")
+
+    # Check Ollama availability
+    try:
+        from .services.ollama_service import get_ollama_service
+        ollama = get_ollama_service()
+        if ollama.is_available():
+            print(f"[OK] Ollama LLM: ready — model: {settings.OLLAMA_MODEL}")
+        else:
+            print(f"[INFO] Ollama: not available — TF-IDF fallback active\n"
+                  f"       Run: ollama pull {settings.OLLAMA_MODEL}")
+    except Exception as e:
+        print(f"[WARN] Ollama check failed: {e}")
+
+    # Check CLIP availability
+    try:
+        from .services.clip_feature_extractor import is_clip_available
+        if is_clip_available():
+            print(f"[OK] CLIP: transformers available — {settings.CLIP_MODEL} loads on first video job")
+        else:
+            print("[INFO] CLIP: transformers unavailable — visual scoring uses motion only")
+    except Exception as e:
+        print(f"[WARN] CLIP check failed: {e}")
+
     yield
     # Shutdown
     await close_database()
@@ -71,11 +103,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS - Allow frontend (wildcard only in DEBUG mode)
-_cors_origins = settings.ALLOWED_ORIGINS + (["*"] if settings.DEBUG else [])
+# CORS - explicit origins + regex to cover any localhost/127.0.0.1 port
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -114,7 +146,7 @@ app.include_router(transcript.router)
 app.include_router(merge.router)
 app.include_router(voice.router)  # FREE Edge TTS
 app.include_router(search.router)  # FAISS semantic search
-app.include_router(chat.router)  # Chat with video (FAISS + Gemini)
+app.include_router(chat.router)  # Chat with video (FAISS + Ollama)
 
 
 @app.get("/")

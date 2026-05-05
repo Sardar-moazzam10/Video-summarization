@@ -41,7 +41,9 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
 
 YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
+FFPROBE_BIN = _resolve_binary("FFPROBE_PATH", "ffprobe")
 COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
+NODE_BIN = _resolve_binary("NODE_PATH", "node")
 
 
 class VideoCacheManager:
@@ -124,7 +126,31 @@ class VideoCacheManager:
             print(f"⚠️ Cached video has zero size: {video_path}")
             return False
 
-        # File exists and has content
+        # Probe the file so partial or corrupt downloads do not get reused.
+        cmd = [
+            FFPROBE_BIN,
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path,
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except Exception as e:
+            print(f"⚠️ Cached video probe failed for {video_path}: {e}")
+            return False
+
+        if "video" not in result.stdout:
+            print(f"⚠️ Cached file is missing a readable video stream: {video_path}")
+            return False
+
         return True
 
     def get_cached_video(self, video_id: str) -> Optional[str]:
@@ -165,9 +191,8 @@ class VideoCacheManager:
                 cmd = [
                     YTDLP_BIN,
                     "--ffmpeg-location", FFMPEG_BIN,
-                    "--cookies", COOKIES_FILE,
-                    "--js-runtimes", "node",
-                    "--extractor-args", "youtube:player_client=web",
+                    "--js-runtimes", f"node:{NODE_BIN}",
+                    "--remote-components", "ejs:github",
                     "--no-check-certificates",
                     "--socket-timeout", "60",
                     "--retries", "10",
@@ -175,6 +200,8 @@ class VideoCacheManager:
                     "-o", output_path,
                     url,
                 ]
+                if os.path.exists(COOKIES_FILE):
+                    cmd.extend(["--cookies", COOKIES_FILE])
 
                 print(f"▶ Downloading video {video_id} (attempt {attempt}/{DOWNLOAD_RETRY_ATTEMPTS})...")
 
@@ -289,9 +316,8 @@ class VideoCacheManager:
         cmd = [
             YTDLP_BIN,
             "--ffmpeg-location", FFMPEG_BIN,
-            "--cookies", COOKIES_FILE,
-            "--js-runtimes", "node",
-            "--extractor-args", "youtube:player_client=web",
+            "--js-runtimes", f"node:{NODE_BIN}",
+            "--remote-components", "ejs:github",
             "--no-check-certificates",
             "--socket-timeout", "60",
             "--retries", "10",
@@ -299,6 +325,8 @@ class VideoCacheManager:
             "-o", output_template,
             url,
         ]
+        if os.path.exists(COOKIES_FILE):
+            cmd.extend(["--cookies", COOKIES_FILE])
 
         print(f"▶ Downloading video {video_id} (no cache)...")
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)

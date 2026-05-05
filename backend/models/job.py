@@ -139,6 +139,7 @@ class MergeJob(BaseModel):
     summary_text: Optional[str] = None
     rich_output: Optional[RichOutput] = None
     fusion_metadata: Optional[FusionMetadata] = None
+    keyframes_extracted: Dict[str, int] = {}
 
     # Output paths
     audio_path: Optional[str] = None
@@ -153,6 +154,7 @@ class MergeJob(BaseModel):
 
     # Error tracking
     error: Optional[str] = None
+    warning: Optional[str] = None
     retry_count: int = 0
     max_retries: int = 3
 
@@ -167,6 +169,8 @@ class MergeJobResponse(BaseModel):
     progress_percent: int
     stage_message: str
     estimated_seconds: Optional[int] = None
+    error: Optional[str] = None
+    warning: Optional[str] = None
 
 
 class MergeJobResult(BaseModel):

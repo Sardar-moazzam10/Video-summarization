@@ -1,7 +1,8 @@
 """
 Chat with Video API — Ask questions about video content.
 
-Uses FAISS vector store for semantic retrieval + Gemini for answer synthesis.
+Uses FAISS vector store for semantic retrieval + Ollama for answer synthesis.
+Falls back to raw FAISS segments when Ollama is unavailable.
 
 Endpoints:
 - POST /api/v1/chat - Ask a question about processed video content
@@ -51,13 +52,13 @@ async def chat_with_video(request: ChatRequest):
     Ask a natural-language question about previously processed videos.
 
     1. Retrieves relevant transcript segments via FAISS semantic search
-    2. Sends context + question to Gemini for answer synthesis
+    2. Sends context + question to Ollama for answer synthesis
     3. Returns structured answer with source attributions
 
     Videos must be processed first (via the merge pipeline) to be searchable.
     """
     from ..services.vector_store import get_vector_store
-    from ..services.gemini_service import get_gemini_service
+    from ..services.ollama_service import get_ollama_service
 
     store = get_vector_store()
 
@@ -88,15 +89,11 @@ async def chat_with_video(request: ChatRequest):
         for r in results
     )
 
-    # Step 3: Generate answer with Gemini (or build answer from segments directly)
-    gemini = get_gemini_service()
-    if gemini.is_available():
-        answer = await gemini.answer_question(request.question, context)
-        # answer is None when all Gemini models are quota-exhausted
-        if not answer or "Unable to generate answer" in answer:
-            answer = None
-    else:
-        answer = None
+    # Step 3: Generate answer with Ollama (or fall back to raw FAISS segments)
+    ollama = get_ollama_service()
+    answer = None
+    if ollama.is_available():
+        answer = await ollama.answer_question(request.question, context)
 
     if not answer:
         # Local fallback: stitch the top retrieved segments into a direct answer

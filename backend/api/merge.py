@@ -41,7 +41,7 @@ settings = get_settings()
 
 
 # =====================================================
-# LOCAL ENRICHMENT FALLBACK (used when Gemini is unavailable)
+# LOCAL ENRICHMENT FALLBACK (used when Ollama is unavailable)
 # =====================================================
 
 def _extract_top_sentences(sentences: list, n: int = 5) -> list:
@@ -65,7 +65,7 @@ def _extract_top_sentences(sentences: list, n: int = 5) -> list:
 def _generate_local_enrichment(summary_text: str, style: str) -> RichOutput:
     """
     Generate basic structured output (TLDR, key takeaways, chapters)
-    from the BART summary text when Gemini is unavailable.
+    from the BART summary text when Ollama is unavailable.
 
     Uses: first-2-sentences for TLDR, TF-IDF for takeaways,
     even splits for chapters. No new models required.
@@ -210,6 +210,8 @@ async def get_job_status(job_id: str):
             status=job.status,
             progress_percent=job.progress_percent,
             stage_message=job.stage_message,
+            error=job.error,
+            warning=job.warning,
         )
 
     # Check database
@@ -224,6 +226,8 @@ async def get_job_status(job_id: str):
         status=job_data["status"],
         progress_percent=job_data["progress_percent"],
         stage_message=job_data["stage_message"],
+        error=job_data.get("error"),
+        warning=job_data.get("warning"),
     )
 
 
@@ -240,7 +244,7 @@ async def get_job_result(job_id: str):
     if not job_data:
         raise HTTPException(404, "Job not found")
 
-    if job_data["status"] != JobStatus.COMPLETED.value:
+    if job_data["status"] not in {JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value}:
         raise HTTPException(
             400,
             f"Job not completed. Current status: {job_data['status']}"
@@ -256,6 +260,9 @@ async def get_job_result(job_id: str):
         "subtitle_url": f"/api/v1/merge/{job_id}/subtitles" if job_data.get("subtitle_path") else None,
         "video_ids": job_data.get("video_ids", []),
         "highlight_segments": job_data.get("highlight_segments", []),
+        "keyframes_extracted": job_data.get("keyframes_extracted", {}),
+        "warning": job_data.get("warning"),
+        "error": job_data.get("error"),
         "metadata": job_data.get("fusion_metadata", {}),
         "created_at": job_data["created_at"],
         "completed_at": job_data.get("completed_at"),
@@ -424,7 +431,18 @@ def _fit_to_duration(highlights: list, target_seconds: int) -> list:
         dur = h["end_time"] - h["start_time"]
         if dur <= 0:
             continue
-        if total + dur <= target_seconds * 1.1:  # Allow 10% overage
+            
+        # Prevent overlapping segments from the same video to ensure summary diversity
+        is_overlapping = False
+        for s in selected:
+            if h.get("video_id") == s.get("video_id"):
+                if max(h["start_time"], s["start_time"]) < min(h["end_time"], s["end_time"]):
+                    is_overlapping = True
+                    break
+        if is_overlapping:
+            continue
+
+        if total + dur <= target_seconds:
             selected.append(h)
             total += dur
         if total >= target_seconds:
@@ -512,37 +530,16 @@ async def process_merge_job(job_id: str):
                 await update_status(
                     JobStatus.TRANSCRIBING,
                     30,
-                    f"Non-English transcripts detected ({lang_list}). Retrying translation..."
+                    f"Non-English transcripts detected ({lang_list}). Translating via NLLB-200..."
                 )
 
-                # Retry translation with deep_translator
                 try:
-                    from deep_translator import GoogleTranslator
-                    translator = GoogleTranslator(source="auto", target="en")
+                    from ..services.translation_service import translate_to_english as _nllb_translate
                     for vid, lang in non_english.items():
-                        text = transcripts[vid]
-                        # Translate in 4500-char batches
-                        chunks = [text[i:i+4500] for i in range(0, len(text), 4500)]
-                        translated_chunks = []
-                        for chunk in chunks:
-                            try:
-                                translated = translator.translate(chunk)
-                                translated_chunks.append(translated if translated else chunk)
-                            except Exception:
-                                translated_chunks.append(chunk)
-                        new_text = " ".join(translated_chunks)
-                        # Verify translation worked
-                        try:
-                            new_lang = detect(new_text[:3000])
-                        except Exception:
-                            new_lang = lang
-                        if new_lang == "en":
-                            transcripts[vid] = new_text
-                            print(f"[Transcript] Re-translation succeeded for {vid}: {lang} -> en")
-                        else:
-                            print(f"[WARN] Re-translation failed for {vid}, still '{new_lang}'")
+                        transcripts[vid] = _nllb_translate(transcripts[vid], src_lang=lang)
+                        print(f"[Transcript] NLLB translation: {vid} ({lang} → en)")
                 except Exception as e:
-                    print(f"[WARN] Translation retry failed: {e}")
+                    print(f"[WARN] NLLB translation failed: {e}")
 
                 # Final check — warn user if still non-English
                 still_non_english = []
@@ -564,7 +561,7 @@ async def process_merge_job(job_id: str):
                     await update_status(
                         JobStatus.TRANSCRIBING,
                         30,
-                        f"All transcripts translated to English successfully"
+                        "All transcripts translated to English successfully"
                     )
         except ImportError:
             print("[WARN] langdetect not installed — skipping language check")
@@ -657,73 +654,50 @@ async def process_merge_job(job_id: str):
             f"BART summary ready: {len(summary_text.split())} words"
         )
 
-        # STAGE 4.5: Gemini AI Enrichment (80-90%)
+        # STAGE 4.5: Ollama AI Enrichment (80-90%)
         rich_output = None
         try:
-            from ..services.gemini_service import get_gemini_service
-            gemini = get_gemini_service()
+            from ..services.ollama_service import get_ollama_service
+            ollama = get_ollama_service()
 
-            if gemini.is_available():
+            if ollama.is_available():
                 await update_status(
                     JobStatus.ENRICHING,
                     82,
-                    "AI enriching with Gemini (chapters, takeaways, quotes)..."
+                    f"AI enriching with Ollama/{settings.OLLAMA_MODEL} (chapters, takeaways, quotes)..."
                 )
 
-                # Gather video titles for context
-                video_titles = ", ".join(
-                    seg.title or seg.video_id
-                    for seg in job.segments
-                ) if job.segments else ", ".join(job.video_ids)
-
-                # Send FULL narrative to Gemini (bypassing BART's chunking loss)
-                gemini_result = await gemini.generate_rich_summary(
+                video_titles = ", ".join(job.video_ids)
+                rich_output = await ollama.generate_rich_summary(
                     narrative=fusion_result.narrative,
                     target_words=target_words,
                     style=job.style,
                     video_titles=video_titles,
                 )
 
-                # If Gemini produced a summary, use it over BART's
-                if gemini_result.summary and len(gemini_result.summary.split()) > 50:
-                    summary_text = gemini_result.summary
-                    print(f"[Gemini] Using Gemini summary ({len(summary_text.split())} words)")
-
-                rich_output = RichOutput(
-                    summary=summary_text,
-                    key_takeaways=gemini_result.key_takeaways,
-                    best_quotes=[
-                        {"text": q["text"], "speaker": q.get("speaker", "")}
-                        for q in gemini_result.best_quotes
-                    ] if gemini_result.best_quotes else [],
-                    chapters=[
-                        {"title": ch["title"], "text": ch["text"]}
-                        for ch in gemini_result.chapters
-                    ] if gemini_result.chapters else [],
-                    who_should_watch=gemini_result.who_should_watch,
-                    who_can_skip=gemini_result.who_can_skip,
-                    action_steps=gemini_result.action_steps,
-                    tldr=gemini_result.tldr,
-                    style_applied=gemini_result.style_applied,
-                )
-
-                await update_status(
-                    JobStatus.ENRICHING,
-                    90,
-                    f"AI enrichment complete: {len(rich_output.chapters)} chapters, "
-                    f"{len(rich_output.key_takeaways)} takeaways"
-                )
+                if rich_output:
+                    # Patch BART summary in if Ollama's summary is too short
+                    if not rich_output.summary or len(rich_output.summary.split()) < 50:
+                        rich_output.summary = summary_text
+                    else:
+                        summary_text = rich_output.summary
+                    await update_status(
+                        JobStatus.ENRICHING,
+                        90,
+                        f"AI enrichment done: {len(rich_output.chapters)} chapters, "
+                        f"{len(rich_output.key_takeaways)} takeaways"
+                    )
+                else:
+                    print("[Ollama] returned None — using local fallback")
             else:
-                print("[Gemini] Not available — using BART summary only")
-                rich_output = RichOutput(summary=summary_text, style_applied=job.style)
+                print(f"[Ollama] Not available. Run: ollama pull {settings.OLLAMA_MODEL}")
 
         except Exception as e:
-            print(f"[WARN] Gemini enrichment failed (using BART fallback): {e}")
-            rich_output = RichOutput(summary=summary_text, style_applied=job.style)
+            print(f"[WARN] Ollama enrichment failed: {e}")
 
-        # If Gemini produced no structured output, generate locally with TF-IDF
+        # Always fall back to local TF-IDF if Ollama produced no structured output
         if not rich_output or not rich_output.tldr or not rich_output.key_takeaways:
-            print("[LocalEnrich] Gemini output empty — generating TLDR + takeaways locally...")
+            print("[LocalEnrich] Generating TLDR+takeaways locally (TF-IDF)...")
             rich_output = _generate_local_enrichment(summary_text, job.style)
 
         # STAGE 5: Voice Generation (90-97%) - Optional (FREE with Edge TTS)
@@ -781,20 +755,24 @@ async def process_merge_job(job_id: str):
             )
 
         # STAGE 6: Video Highlight Generation (97-99%) - Optional
+        # Free-only pipeline: PySceneDetect + CLIP ViT-B/16 + temporal attention
         video_path = None
+        job_warning = None
         highlight_segments_result = []
+        keyframes_extracted: Dict[str, int] = {}
         if job.generate_video:
             await update_status(
                 JobStatus.GENERATING_VIDEO,
                 97,
-                "Generating video highlight reel with Gemini 3 Pro..."
+                "Generating video highlight reel (CLIP + temporal attention pipeline)..."
             )
 
             try:
-                from ..services.gemini_service import get_gemini_service
                 from ..services.video_service import get_video_service
+                from ..services.visual_keyframe_extractor import extract_keyframes
+                from ..services.clip_feature_extractor import augment_keyframes_with_clip
+                from ..services.segment_extractor import extract_highlight_segments
 
-                gemini = get_gemini_service()
                 video_svc = get_video_service()
 
                 # Step 1: Download source videos
@@ -814,48 +792,53 @@ async def process_merge_job(job_id: str):
                 if not video_paths:
                     raise Exception("Could not download any source videos")
 
-                # Step 2: Identify highlights using Gemini 3 Pro
                 all_highlights = []
                 per_video_seconds = job.highlight_duration_seconds // max(len(video_paths), 1)
 
                 for vid, vid_path in video_paths.items():
+                    segs = raw_segments.get(vid, [])
+                    if not segs:
+                        continue
+
+                    # Step 2a: Extract keyframes + temporal scores (PySceneDetect + PGL-SUM)
                     await update_status(
                         JobStatus.GENERATING_VIDEO, 98,
-                        f"Gemini 3 Pro analyzing video {vid} (thinking: high)..."
+                        f"Extracting keyframes + temporal attention for {vid}..."
                     )
+                    visual_keyframes = await asyncio.to_thread(
+                        extract_keyframes, vid, vid_path
+                    )
+                    keyframes_extracted[vid] = len(visual_keyframes)
 
-                    # Try Gemini 3 Pro with native video understanding
-                    highlights = await gemini.identify_highlights_from_video(
+                    # Step 2b: Add CLIP cross-modal scores (requires summary_text, available now)
+                    if visual_keyframes:
+                        await asyncio.to_thread(
+                            augment_keyframes_with_clip, visual_keyframes, summary_text
+                        )
+                        print(
+                            f"[Video] {vid}: {len(visual_keyframes)} keyframes "
+                            f"→ CLIP + temporal scores ready"
+                        )
+
+                    # Step 2c: Score and select highlight segments (4-signal blend)
+                    highlights = extract_highlight_segments(
                         video_id=vid,
-                        video_file_path=vid_path,
-                        target_seconds=per_video_seconds,
+                        transcript_segments=segs,
+                        summary_text=summary_text,
+                        target_duration_seconds=per_video_seconds,
+                        context_padding_seconds=2.0,
+                        visual_keyframes=visual_keyframes or None,
                     )
-
-                    # Fallback: use SBERT + TF-IDF segment extractor (smarter than heuristic)
-                    if not highlights:
-                        segs = raw_segments.get(vid, [])
-                        if segs:
-                            print(f"[Video] Using SBERT+TF-IDF segment extractor for {vid}")
-                            from ..services.segment_extractor import extract_highlight_segments
-                            highlights = extract_highlight_segments(
-                                video_id=vid,
-                                transcript_segments=segs,
-                                summary_text=summary_text,
-                                target_duration_seconds=per_video_seconds,
-                                context_padding_seconds=2.0,
-                            )
-
                     all_highlights.extend(highlights)
 
                 if all_highlights:
-                    # Sort by importance, trim to fit duration budget
+                    # Sort by importance, trim to duration budget, then sort chronologically
                     all_highlights.sort(
                         key=lambda h: h.get("importance_score", 0), reverse=True
                     )
                     highlight_segments_result = _fit_to_duration(
                         all_highlights, job.highlight_duration_seconds
                     )
-                    # Sort chronologically for viewing
                     highlight_segments_result.sort(
                         key=lambda h: (h["video_id"], h["start_time"])
                     )
@@ -876,16 +859,17 @@ async def process_merge_job(job_id: str):
 
                     print(f"[Video] Highlight reel generated: {video_path}")
                 else:
-                    print("[Video] No highlights identified — skipping video generation")
+                    job_warning = "Video generation skipped because no highlight segments were identified."
+                    print(f"[Video] {job_warning}")
 
             except Exception as e:
-                print(f"[WARN] Video generation failed (continuing without): {e}")
+                job_warning = f"Video generation failed: {e}"
+                print(f"[WARN] {job_warning}")
                 import traceback
                 traceback.print_exc()
                 video_path = None
 
             finally:
-                # Clean up downloaded source videos (job-scoped dir under audio_cache/video_downloads/)
                 import shutil as _shutil
                 _dl_dir = os.path.join("audio_cache", "video_downloads", job_id)
                 if os.path.isdir(_dl_dir):
@@ -893,9 +877,13 @@ async def process_merge_job(job_id: str):
                     print(f"[Video] Cleaned up download dir: {_dl_dir}")
 
         # COMPLETED
-        job.status = JobStatus.COMPLETED
+        if job.generate_video and not video_path:
+            job.status = JobStatus.PARTIAL_SUCCESS
+            job.stage_message = job_warning or "Summary ready, but video highlights were unavailable."
+        else:
+            job.status = JobStatus.COMPLETED
+            job.stage_message = "Your summary is ready!"
         job.progress_percent = 100
-        job.stage_message = "Your summary is ready!"
         job.summary_text = summary_text
         job.rich_output = rich_output
         job.fusion_metadata = fusion_metadata
@@ -903,6 +891,8 @@ async def process_merge_job(job_id: str):
         job.subtitle_path = subtitle_path
         job.video_path = video_path
         job.highlight_segments = highlight_segments_result
+        job.keyframes_extracted = keyframes_extracted
+        job.warning = job_warning
         job.completed_at = datetime.utcnow()
 
         rich_output_dict = rich_output.model_dump() if rich_output else None
@@ -910,9 +900,9 @@ async def process_merge_job(job_id: str):
         await jobs_collection.update_one(
             {"job_id": job_id},
             {"$set": {
-                "status": JobStatus.COMPLETED.value,
+                "status": job.status.value if hasattr(job.status, "value") else job.status,
                 "progress_percent": 100,
-                "stage_message": "Your summary is ready!",
+                "stage_message": job.stage_message,
                 "summary_text": summary_text,
                 "rich_output": rich_output_dict,
                 "fusion_metadata": fusion_metadata.model_dump(),
@@ -920,6 +910,8 @@ async def process_merge_job(job_id: str):
                 "subtitle_path": subtitle_path,
                 "video_path": video_path,
                 "highlight_segments": highlight_segments_result,
+                "keyframes_extracted": keyframes_extracted,
+                "warning": job_warning,
                 "completed_at": job.completed_at,
             }}
         )

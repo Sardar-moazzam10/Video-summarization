@@ -158,6 +158,14 @@ const ChoicePage = () => {
     return () => clearTimeout(timer);
   }, [activeStage]);
 
+  // Compression done state — true when pipeline reaches "Done"
+  const [compressionDone, setCompressionDone] = useState(false);
+
+  useEffect(() => {
+    if (activeStage === PIPELINE_STAGES.length - 1) setCompressionDone(true);
+    else if (activeStage === 0) setCompressionDone(false);
+  }, [activeStage]);
+
   return (
     <div className="choice-page">
       {/* Hero Section */}
@@ -234,7 +242,7 @@ const ChoicePage = () => {
               <span className="visual-title-bar">AI Video Summarizer</span>
             </div>
             <div className="power-box-content">
-              {/* Selected videos */}
+              {/* Input content cards */}
               <motion.div
                 className="power-thumbnails"
                 initial={{ opacity: 0, y: 10 }}
@@ -242,75 +250,134 @@ const ChoicePage = () => {
                 transition={{ delay: 0.6, duration: 0.5 }}
               >
                 <div className="power-thumb power-thumb--blue">
-                  <svg className="power-thumb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  <span className="power-thumb-label">Video 1</span>
+                  <div className="power-thumb-source-icon">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  </div>
+                  <span className="power-thumb-title">Lex Fridman #401</span>
+                  <span className="power-thumb-source">YouTube</span>
+                  <span className="power-thumb-duration power-thumb-duration--blue">2h 15m</span>
                   <div className="power-thumb-check">
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   </div>
                 </div>
                 <div className="power-thumb power-thumb--violet">
-                  <svg className="power-thumb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  <span className="power-thumb-label">Video 2</span>
+                  <div className="power-thumb-source-icon">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  </div>
+                  <span className="power-thumb-title">Huberman Lab #312</span>
+                  <span className="power-thumb-source">YouTube</span>
+                  <span className="power-thumb-duration power-thumb-duration--violet">1h 30m</span>
                   <div className="power-thumb-check">
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   </div>
                 </div>
                 <div className="power-thumb power-thumb--emerald">
-                  <svg className="power-thumb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  <span className="power-thumb-label">Video 3</span>
+                  <div className="power-thumb-source-icon">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  </div>
+                  <span className="power-thumb-title">Tim Ferriss #702</span>
+                  <span className="power-thumb-source">YouTube</span>
+                  <span className="power-thumb-duration power-thumb-duration--emerald">45m</span>
                   <div className="power-thumb-check">
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   </div>
                 </div>
               </motion.div>
 
-              {/* Duration selector */}
+              {/* Total input label */}
+              <div className="power-input-total">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Total Input: <strong>4h 30m of content</strong>
+              </div>
+
+              {/* Time compression visualizer */}
               <motion.div
-                className="power-duration"
+                className="compression-visualizer"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.85, duration: 0.4 }}
+                transition={{ delay: 0.75, duration: 0.5 }}
               >
-                <svg className="power-duration-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                <span className="power-duration-label">Duration:</span>
-                <span className="power-duration-value">10 min</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                <div className={`funnel-wrap ${compressionDone ? 'funnel-wrap--pulse' : ''}`}>
+                  <div className="funnel-streams">
+                    <div className="stream stream--left">
+                      <div className="stream-dot" />
+                      <div className="stream-dot stream-dot--delay1" />
+                      <div className="stream-dot stream-dot--delay2" />
+                    </div>
+                    <div className="stream stream--center">
+                      <div className="stream-dot" />
+                      <div className="stream-dot stream-dot--delay1" />
+                      <div className="stream-dot stream-dot--delay2" />
+                    </div>
+                    <div className="stream stream--right">
+                      <div className="stream-dot" />
+                      <div className="stream-dot stream-dot--delay1" />
+                      <div className="stream-dot stream-dot--delay2" />
+                    </div>
+                  </div>
+                  <svg className="funnel-svg" width="100" height="40" viewBox="0 0 100 40" fill="none">
+                    <line x1="20" y1="0" x2="50" y2="36" stroke="rgba(71,139,224,0.3)" strokeWidth="1.5"/>
+                    <line x1="50" y1="0" x2="50" y2="36" stroke="rgba(71,139,224,0.4)" strokeWidth="1.5"/>
+                    <line x1="80" y1="0" x2="50" y2="36" stroke="rgba(71,139,224,0.3)" strokeWidth="1.5"/>
+                    <circle cx="50" cy="38" r="3" fill="#478BE0"/>
+                  </svg>
+                </div>
+
+                <div className="compression-time-display">
+                  <span className="compression-time-from">4h 30m</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                  <span className={`compression-time-to ${compressionDone ? 'compression-time-to--done' : ''}`}>
+                    {compressionDone ? '12 min' : '· · ·'}
+                  </span>
+                </div>
+
+                <div className={`compression-badge ${compressionDone ? 'compression-badge--active' : ''}`}>
+                  {compressionDone ? '⚡ You save 4h 18m' : '⚙ Processing...'}
+                </div>
               </motion.div>
 
               {/* Processing Pipeline */}
               <motion.div
-                className="power-pipeline"
+                className="power-pipeline-wrap"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 1.0, duration: 0.5 }}
               >
-                {PIPELINE_STAGES.map((stage, i) => {
-                  const status = i < activeStage ? 'complete'
-                               : i === activeStage ? 'active'
-                               : 'pending';
-                  return (
-                    <React.Fragment key={stage.key}>
-                      <div className={`pipeline-stage pipeline-stage--${status}`}>
-                        <div className="pipeline-dot">
-                          {status === 'complete' ? (
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                          ) : (
-                            <span className="pipeline-dot-text">{stage.icon}</span>
-                          )}
+                <div className="pipeline-progress-track">
+                  <div
+                    className="pipeline-progress-fill"
+                    style={{ width: `${(activeStage / (PIPELINE_STAGES.length - 1)) * 100}%` }}
+                  />
+                </div>
+                <div className="power-pipeline">
+                  {PIPELINE_STAGES.map((stage, i) => {
+                    const status = i < activeStage ? 'complete'
+                                 : i === activeStage ? 'active'
+                                 : 'pending';
+                    return (
+                      <React.Fragment key={stage.key}>
+                        <div className={`pipeline-stage pipeline-stage--${status}`}>
+                          <div className="pipeline-dot">
+                            {status === 'complete' ? (
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            ) : (
+                              <span className="pipeline-dot-text">{stage.icon}</span>
+                            )}
+                          </div>
+                          <span className="pipeline-label">{stage.label}</span>
                         </div>
-                        <span className="pipeline-label">{stage.label}</span>
-                      </div>
-                      {i < PIPELINE_STAGES.length - 1 && (
-                        <div className={`pipeline-connector pipeline-connector--${i < activeStage ? 'complete' : 'pending'}`} />
-                      )}
-                    </React.Fragment>
-                  );
-                })}
+                        {i < PIPELINE_STAGES.length - 1 && (
+                          <div className={`pipeline-connector pipeline-connector--${i < activeStage ? 'complete' : 'pending'}`} />
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
               </motion.div>
 
               {/* Output — one cohesive video */}
               <motion.div
-                className={`power-output ${activeStage === PIPELINE_STAGES.length - 1 ? 'power-output--done' : ''}`}
+                className={`power-output ${compressionDone ? 'power-output--done' : ''}`}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 1.4, duration: 0.5 }}
@@ -318,8 +385,17 @@ const ChoicePage = () => {
                 <div className="power-output-header">
                   <div className="power-output-dot" />
                   <span className="power-output-label">1 Cohesive Video</span>
-                  <span className="power-output-time">10:00</span>
+                  {compressionDone && (
+                    <span className="power-output-distilled">4h 30m distilled</span>
+                  )}
+                  <span className="power-output-time">{compressionDone ? '12:00' : '10:00'}</span>
                 </div>
+                {compressionDone && (
+                  <div className="power-knowledge-score">
+                    <span className="knowledge-score-icon">⚡</span>
+                    <span className="knowledge-score-text">94% shorter · same insights</span>
+                  </div>
+                )}
                 <div className="power-mini-waveform">
                   {Array.from({ length: 24 }).map((_, i) => (
                     <motion.div
@@ -338,10 +414,10 @@ const ChoicePage = () => {
                   ))}
                 </div>
                 <div className="power-pills">
-                  <span className="power-pill">Chapters</span>
-                  <span className="power-pill">Key Takeaways</span>
-                  <span className="power-pill">Narration</span>
-                  <span className="power-pill">Highlights</span>
+                  <span className="power-pill">📍 Chapters</span>
+                  <span className="power-pill">💡 Key Takeaways</span>
+                  <span className="power-pill">🎙 Narration</span>
+                  <span className="power-pill">⭐ Highlights</span>
                 </div>
               </motion.div>
             </div>

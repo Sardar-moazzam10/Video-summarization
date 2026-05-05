@@ -60,17 +60,30 @@ class Settings(BaseSettings):
     # =====================================================
     ELEVEN_API_KEY: str = ""
     YOUTUBE_API_KEY: str = ""
-    GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
-    GEMINI_VIDEO_MODEL: str = "gemini-3-pro-preview"
-    GEMINI_FALLBACK_TO_BART: bool = True
+
+    # =====================================================
+    # LOCAL LLM (Ollama — free, no API key needed)
+    # Install: https://ollama.com | then: ollama pull llama3.2:3b
+    # =====================================================
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3.2:3b"      # 2 GB RAM; swap to mistral:7b or ministral:8b for better quality
+    OLLAMA_TIMEOUT_SECONDS: float = 360.0  # Generous timeout for CPU inference
 
     # =====================================================
     # AI/ML SETTINGS
     # =====================================================
-    SUMMARIZATION_MODEL: str = "facebook/bart-large-cnn"
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    SUMMARIZATION_MODEL: str = "sshleifer/distilbart-cnn-12-6"  # 306 MB vs 1.6 GB BART-large, 95% quality
+    EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"              # #1 MTEB 2024, 768-dim, replaces all-MiniLM
+    CLIP_MODEL: str = "openai/clip-vit-base-patch16"            # ViT-B/16: 17% better than B/32, same API
     WHISPER_MODEL: str = "base"
+
+    # =====================================================
+    # FRAME CAPTIONING (LLMVS-inspired — optional)
+    # Requires: ollama pull llava:7b
+    # Blends VLM caption-SBERT score with CLIP for richer highlight selection
+    # =====================================================
+    ENABLE_FRAME_CAPTIONS: bool = False   # Set True after: ollama pull llava:7b
+    CAPTION_MODEL: str = "llava:7b"       # Ollama multimodal model for keyframe descriptions
 
     # =====================================================
     # CACHE SETTINGS

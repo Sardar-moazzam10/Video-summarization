@@ -284,12 +284,13 @@
 
 .power-thumb {
   flex: 1;
-  height: 80px;
+  min-height: 88px;
   border-radius: 10px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 12px;
+  gap: 3px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   position: relative;
   overflow: hidden;
@@ -774,6 +775,293 @@
 }
 
 /* ============================================
+   THUMBNAIL INTERNALS (enhanced cards)
+   ============================================ */
+
+.power-thumb-source-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+
+.power-thumb-title {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.power-thumb-source {
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.3);
+  font-weight: 500;
+}
+
+.power-thumb-duration {
+  margin-top: auto;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.power-thumb-duration--blue {
+  background: rgba(71, 139, 224, 0.15);
+  color: #58adff;
+  border: 1px solid rgba(71, 139, 224, 0.2);
+}
+
+.power-thumb-duration--violet {
+  background: rgba(139, 92, 246, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.power-thumb-duration--emerald {
+  background: rgba(16, 185, 129, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.power-input-total {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  align-self: flex-start;
+}
+
+.power-input-total svg {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.power-input-total strong {
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 600;
+}
+
+/* ============================================
+   TIME COMPRESSION VISUALIZER
+   ============================================ */
+
+.compression-visualizer {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(71, 139, 224, 0.04);
+  border: 1px solid rgba(71, 139, 224, 0.1);
+  border-radius: 12px;
+  position: relative;
+  overflow: hidden;
+}
+
+.funnel-wrap {
+  position: relative;
+  width: 100px;
+  height: 48px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.funnel-wrap--pulse {
+  animation: compressionPulse 0.8s ease-out;
+}
+
+@keyframes compressionPulse {
+  0%   { filter: drop-shadow(0 0 0px rgba(71, 139, 224, 0)); }
+  40%  { filter: drop-shadow(0 0 12px rgba(71, 139, 224, 0.7)); }
+  100% { filter: drop-shadow(0 0 0px rgba(71, 139, 224, 0)); }
+}
+
+.funnel-svg {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+}
+
+.funnel-streams {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 10px;
+}
+
+.stream {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  height: 100%;
+}
+
+.stream-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #478BE0;
+  opacity: 0;
+  animation: streamFlow 1.4s ease-in infinite;
+}
+
+.stream--left .stream-dot,
+.stream--right .stream-dot {
+  background: rgba(71, 139, 224, 0.6);
+}
+
+.stream-dot--delay1 { animation-delay: 0.45s; }
+.stream-dot--delay2 { animation-delay: 0.9s; }
+
+@keyframes streamFlow {
+  0%   { opacity: 0;   transform: translateY(0px); }
+  20%  { opacity: 0.9; transform: translateY(4px); }
+  80%  { opacity: 0.7; transform: translateY(28px); }
+  100% { opacity: 0;   transform: translateY(40px); }
+}
+
+.compression-time-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-weight: 700;
+}
+
+.compression-time-from {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.35);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.15);
+}
+
+.compression-time-display svg {
+  color: rgba(71, 139, 224, 0.5);
+  flex-shrink: 0;
+}
+
+.compression-time-to {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.3);
+  letter-spacing: -0.02em;
+  transition: color 0.5s ease, text-shadow 0.5s ease;
+}
+
+.compression-time-to--done {
+  color: #58adff;
+  text-shadow: 0 0 16px rgba(71, 139, 224, 0.5);
+  animation: timeReveal 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes timeReveal {
+  from { opacity: 0; transform: scale(0.85) translateY(4px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+.compression-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.3);
+  transition: background 0.5s ease, color 0.5s ease, border-color 0.5s ease;
+}
+
+.compression-badge--active {
+  background: rgba(71, 139, 224, 0.12);
+  border-color: rgba(71, 139, 224, 0.25);
+  color: #58adff;
+}
+
+/* ============================================
+   PIPELINE PROGRESS BAR
+   ============================================ */
+
+.power-pipeline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.pipeline-progress-track {
+  width: 100%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.pipeline-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #478BE0, #8ecaff);
+  border-radius: 1px;
+  transition: width 1.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 6px rgba(71, 139, 224, 0.5);
+}
+
+/* ============================================
+   OUTPUT CARD ENHANCEMENTS
+   ============================================ */
+
+.power-output-distilled {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(34, 197, 94, 0.8);
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.15);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  animation: fadeReveal 0.4s ease-out both;
+}
+
+.power-knowledge-score {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  animation: fadeReveal 0.4s ease-out both;
+}
+
+.knowledge-score-icon {
+  font-size: 11px;
+}
+
+.knowledge-score-text {
+  color: rgba(88, 173, 255, 0.8);
+  font-weight: 500;
+}
+
+@keyframes fadeReveal {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
    RESPONSIVE
    ============================================ */
 @media (max-width: 900px) {
@@ -811,16 +1099,33 @@
   }
 
   .power-thumb {
-    height: 55px;
+    min-height: 72px;
+    padding: 8px 10px;
   }
 
-  .power-thumb-icon {
-    width: 16px;
-    height: 16px;
+  .power-thumb-title {
+    font-size: 8px;
   }
 
-  .power-thumb-label {
-    font-size: 9px;
+  .power-thumb-duration {
+    font-size: 7px;
+  }
+
+  .compression-visualizer {
+    padding: 10px 12px;
+  }
+
+  .funnel-wrap {
+    width: 80px;
+    height: 38px;
+  }
+
+  .compression-time-from {
+    font-size: 11px;
+  }
+
+  .compression-time-to {
+    font-size: 14px;
   }
 
   .power-terminal {

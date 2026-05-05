@@ -23,8 +23,6 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 
 from youtube_transcript_api import YouTubeTranscriptApi
-from transformers import pipeline
-from deep_translator import GoogleTranslator
 
 # Lazy-loaded models
 _summarizer = None
@@ -33,6 +31,7 @@ _summarizer = None
 def get_summarizer():
     global _summarizer
     if _summarizer is None:
+        from transformers import pipeline
         _summarizer = pipeline("summarization", model="t5-small", tokenizer="t5-small")
     return _summarizer
 
@@ -168,9 +167,10 @@ class TranscriptService:
           3. Any transcript translated to English
           4. Any transcript in original language
         """
+        _ytt = YouTubeTranscriptApi()  # v1.x requires instance, not static methods
         for attempt in range(max_retries + 1):
             try:
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                transcript_list = _ytt.list(video_id)
 
                 # Strategy 1: Manual English
                 try:
@@ -433,49 +433,21 @@ class TranscriptService:
     @staticmethod
     def _translate_transcript_to_english(transcript: list) -> list:
         """
-        Translate transcript segments to English using Google Translate (free).
-        Batches text to stay within API limits (5000 chars per request).
+        Translate transcript segments to English via NLLB-200 (local, 200 languages).
+        Falls back to deep-translator if NLLB is unavailable.
         """
         try:
-            translator = GoogleTranslator(source="auto", target="en")
-            # Batch segments to translate efficiently
-            batch_texts = []
-            batch_indices = []
-            current_batch = ""
-            current_indices = []
+            from langdetect import detect
+            combined = " ".join(seg.get("text", "") for seg in transcript if seg.get("text"))
+            src_lang = detect(combined[:3000]) if combined.strip() else "en"
+        except Exception:
+            src_lang = "auto"
 
-            for i, seg in enumerate(transcript):
-                text = seg.get("text", "").strip()
-                if not text:
-                    continue
-                # Google Translate limit is ~5000 chars per request
-                if len(current_batch) + len(text) + 1 > 4500 and current_batch:
-                    batch_texts.append(current_batch)
-                    batch_indices.append(current_indices)
-                    current_batch = text
-                    current_indices = [i]
-                else:
-                    current_batch += ("\n" + text) if current_batch else text
-                    current_indices.append(i)
-
-            if current_batch:
-                batch_texts.append(current_batch)
-                batch_indices.append(current_indices)
-
-            # Translate each batch
-            for batch_idx, batch_text in enumerate(batch_texts):
-                translated = translator.translate(batch_text)
-                if translated:
-                    translated_lines = translated.split("\n")
-                    indices = batch_indices[batch_idx]
-                    for j, idx in enumerate(indices):
-                        if j < len(translated_lines):
-                            transcript[idx]["text"] = translated_lines[j]
-
-            print(f"[Transcript] Translated {len(transcript)} segments to English")
-            return transcript
+        try:
+            from .translation_service import translate_transcript_to_english
+            return translate_transcript_to_english(transcript, src_lang=src_lang)
         except Exception as e:
-            print(f"[Transcript] Google Translate failed: {e}, returning original")
+            print(f"[Transcript] NLLB translation failed: {e}, returning original")
             return transcript
 
     @staticmethod
