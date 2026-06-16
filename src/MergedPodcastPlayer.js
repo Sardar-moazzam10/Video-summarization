@@ -269,9 +269,9 @@ const MergedPodcastPlayer = () => {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
             Back to Search
           </button>
-          <h1 style={styles.title}>AI Video Summarizer</h1>
+          <h1 style={styles.title}>VidFusion</h1>
           <p style={styles.subtitle}>
-            {isProcessing ? 'Processing your videos...' : status === 'completed' ? 'Your summary is ready' : 'Something went wrong'}
+            {isProcessing ? 'Processing your videos...' : (status === 'completed' || status === 'partial_success') ? 'Your summary is ready' : 'Something went wrong'}
           </p>
         </motion.div>
 
@@ -337,7 +337,7 @@ const MergedPodcastPlayer = () => {
         )}
 
         {/* Completed State */}
-        {status === 'completed' && (
+        {(status === 'completed' || status === 'partial_success') && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

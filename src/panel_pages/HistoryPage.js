@@ -40,6 +40,7 @@ const HistoryPage = () => {
   const [history, setHistory] = useState([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const user = JSON.parse(localStorage.getItem('user'));
   const username = user?.username;
   const navigate = useNavigate();
@@ -54,13 +55,14 @@ const HistoryPage = () => {
   }, [username]);
 
   const handleClearHistory = async () => {
-    if (!window.confirm('Are you sure you want to delete all history?')) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/auth/user-history/delete/${username}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) setHistory([]);
     } catch (err) {
       console.error('Failed to delete history:', err);
+    } finally {
+      setShowClearConfirm(false);
     }
   };
 
@@ -170,12 +172,40 @@ const HistoryPage = () => {
               </div>
 
               {history.length > 0 && (
-                <button onClick={handleClearHistory} style={styles.clearBtn}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                  </svg>
-                  Clear All
-                </button>
+                <AnimatePresence mode="wait">
+                  {showClearConfirm ? (
+                    <motion.div
+                      key="confirm"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      style={{ display: 'flex', gap: '8px', alignItems: 'center' }}
+                    >
+                      <button onClick={handleClearHistory} style={{ ...styles.clearBtn, background: 'rgba(239,68,68,0.18)', borderColor: 'rgba(239,68,68,0.35)' }}>
+                        Confirm
+                      </button>
+                      <button onClick={() => setShowClearConfirm(false)} style={styles.cancelBtn}>
+                        Cancel
+                      </button>
+                    </motion.div>
+                  ) : (
+                    <motion.button
+                      key="clear"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      onClick={() => setShowClearConfirm(true)}
+                      style={styles.clearBtn}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                      </svg>
+                      Clear All
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               )}
             </div>
 
@@ -346,6 +376,20 @@ const styles = {
     border: '1px solid rgba(239, 68, 68, 0.15)',
     borderRadius: '9px',
     color: '#f87171',
+    fontSize: '13px',
+    fontWeight: 500,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    transition: 'all 0.15s',
+  },
+  cancelBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '7px 14px',
+    background: 'rgba(255, 255, 255, 0.05)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '9px',
+    color: 'rgba(255, 255, 255, 0.55)',
     fontSize: '13px',
     fontWeight: 500,
     cursor: 'pointer',

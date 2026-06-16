@@ -16,6 +16,7 @@ No DB calls, no API calls, no global state.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -73,6 +74,13 @@ def extract_keyframes(
 
     out_dir = (output_root or KEYFRAMES_ROOT) / video_id
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Return cached keyframes if they already exist — avoids re-running
+    # scene detection (20-60 min on long videos) on every merge job.
+    cached = _load_cached_keyframes(out_dir)
+    if cached:
+        print(f"[Keyframes] {video_id}: reusing {len(cached)} cached keyframes from {out_dir}")
+        return cached
 
     try:
         scenes = _detect_scenes(video_path, scene_threshold, min_scene_seconds)
@@ -161,6 +169,38 @@ def _detect_scenes(
     return scenes
 
 
+def _ffmpeg_extract_frame(video_path: str, timestamp_s: float, out_dir: Path, scene_idx: int) -> Optional[Path]:
+    """
+    Extract a single frame at timestamp_s using FFmpeg fast keyframe seeking.
+    -ss before -i uses keyframe-aligned seeking (millisecond seek, not full decode),
+    making this ~100x faster than OpenCV cap.set(POS_MSEC) for large files.
+    """
+    import subprocess
+
+    filename = f"scene_{scene_idx:03d}_t{timestamp_s:07.2f}.jpg"
+    out_path = out_dir / filename
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", f"{timestamp_s:.3f}",
+                "-i", video_path,
+                "-vframes", "1",
+                "-q:v", "4",
+                "-f", "image2",
+                str(out_path),
+            ],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+            return out_path
+    except Exception as e:
+        print(f"[Keyframes] FFmpeg frame extract failed at {timestamp_s:.1f}s: {e}")
+    return None
+
+
 def _save_frame(cap, timestamp_s: float, out_dir: Path, scene_idx: int) -> Optional[Path]:
     """Seek to timestamp, save JPEG. Returns path on success, None on failure."""
     import cv2
@@ -226,3 +266,110 @@ def _normalize_scores(keyframes: List[Dict]) -> None:
     span = hi - lo
     for k in keyframes:
         k["visual_score"] = round((k["visual_score"] - lo) / span, 4)
+
+
+def extract_keyframes_for_segments(
+    video_id: str,
+    video_path: str,
+    transcript_groups: List[Dict],
+    output_root: Optional[Path] = None,
+) -> List[Dict]:
+    """
+    Fast keyframe extraction: seeks directly to the midpoint of each
+    pre-grouped transcript segment instead of scanning every video frame.
+
+    PySceneDetect scans all 244k frames of a 2h49m video (20-60 min).
+    This function does N direct seeks (one per segment) — takes seconds.
+    The transcript already tells us where spoken content is, so we don't
+    need scene detection to discover "interesting moments".
+    """
+    if not os.path.isfile(video_path) or not transcript_groups:
+        return []
+
+    out_dir = (output_root or KEYFRAMES_ROOT) / video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cached = _load_cached_keyframes(out_dir)
+    if cached:
+        print(f"[Keyframes] {video_id}: reusing {len(cached)} cached segment-keyframes")
+        return cached
+
+    results: List[Dict] = []
+    for idx, seg in enumerate(transcript_groups):
+        start_s = float(seg.get("start_time", seg.get("start", 0)))
+        end_s   = float(seg.get("end_time",   start_s + float(seg.get("duration", 0))))
+        mid_s   = (start_s + end_s) / 2.0
+
+        frame_path = _ffmpeg_extract_frame(video_path, mid_s, out_dir, idx)
+        if frame_path is None:
+            continue
+
+        results.append({
+            "scene_id":   idx,
+            "timestamp":  round(mid_s,   3),
+            "start_time": round(start_s, 3),
+            "end_time":   round(end_s,   3),
+            "visual_score": 0.5,
+            "frame_path": str(frame_path),
+        })
+
+    if not results:
+        return []
+
+    try:
+        from .temporal_scorer import augment_keyframes_with_temporal
+        augment_keyframes_with_temporal(results)
+    except Exception:
+        for kf in results:
+            kf.setdefault("temporal_score", 0.5)
+
+    print(f"[Keyframes] {video_id}: {len(results)} segment-keyframes extracted (fast path)")
+    return results
+
+
+def _load_cached_keyframes(out_dir: Path) -> List[Dict]:
+    """
+    Reload previously extracted keyframes from disk JPEGs.
+
+    Parses timestamp from filenames written by _save_frame:
+      scene_{idx:03d}_t{timestamp:07.2f}.jpg
+
+    Returns an empty list if no valid keyframes are found,
+    so the caller falls through to full scene detection.
+    """
+    jpegs = sorted(out_dir.glob("scene_*.jpg"))
+    if not jpegs:
+        return []
+
+    results: List[Dict] = []
+    for jpeg in jpegs:
+        try:
+            # Filename: scene_000_t0003.50.jpg  →  timestamp = 3.50
+            parts = jpeg.stem.split("_t")
+            if len(parts) != 2:
+                continue
+            scene_id = int(parts[0].replace("scene_", ""))
+            timestamp = float(parts[1])
+            results.append({
+                "scene_id": scene_id,
+                "timestamp": timestamp,
+                "start_time": max(0.0, timestamp - 1.0),
+                "end_time": timestamp + 1.0,
+                "visual_score": 0.5,   # re-scored by temporal_scorer below
+                "frame_path": str(jpeg),
+            })
+        except (ValueError, IndexError):
+            continue
+
+    if not results:
+        return []
+
+    # Re-apply temporal scoring on the cached embeddings/frames
+    try:
+        from .temporal_scorer import augment_keyframes_with_temporal
+        augment_keyframes_with_temporal(results)
+    except Exception:
+        for kf in results:
+            kf.setdefault("temporal_score", 0.5)
+
+    return results

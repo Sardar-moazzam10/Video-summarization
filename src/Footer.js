@@ -11,12 +11,12 @@ const Footer = () => {
           {/* Brand */}
           <div style={styles.brand}>
             <div style={styles.logoRow}>
-              <div style={styles.logoIcon}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polygon points="5 3 19 12 5 21 5 3" fill="rgba(71,139,224,0.3)" stroke="#478BE0"/>
-                </svg>
-              </div>
-              <span style={styles.logoText}>VideoAI</span>
+              <img
+                src={`${process.env.PUBLIC_URL}/video_summarizer_icon.png`}
+                alt="VidFusion"
+                style={{ width: 34, height: 34, borderRadius: 10, objectFit: 'contain' }}
+              />
+              <span style={styles.logoText}>VidFusion</span>
             </div>
             <p style={styles.tagline}>Transform hours of video into minutes of knowledge. Powered by AI.</p>
           </div>
@@ -40,8 +40,8 @@ const Footer = () => {
         <div style={styles.divider} />
 
         <div style={styles.bottom}>
-          <span style={styles.copyright}>2025 VideoAI. All rights reserved.</span>
-          <span style={styles.version}>v2.0</span>
+          <span style={styles.copyright}>2025 VidFusion. All rights reserved.</span>
+          <span style={styles.version}>v1.0</span>
         </div>
       </div>
     </footer>

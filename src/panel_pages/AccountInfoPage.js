@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import './PanelStyles.css';
 import { API_BASE_URL } from '../config/api.js';
 
@@ -15,6 +15,7 @@ const AccountInfoPage = () => {
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState('');
   const [msgType, setMsgType] = useState('success');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const username = JSON.parse(localStorage.getItem('user'))?.username;
   const navigate = useNavigate();
   const location = useLocation();
@@ -49,20 +50,15 @@ const AccountInfoPage = () => {
   };
 
   const handleDelete = () => {
-    if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      fetch(`${API_BASE_URL}/api/v1/auth/user/delete/${username}`, {
-        method: 'DELETE'
+    fetch(`${API_BASE_URL}/api/v1/auth/user/delete/${username}`, { method: 'DELETE' })
+      .then(res => res.json())
+      .then(data => {
+        localStorage.removeItem('user');
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        window.location.href = '/login';
       })
-        .then(res => res.json())
-        .then(data => {
-          localStorage.removeItem('user');
-          localStorage.removeItem('access_token');
-          localStorage.removeItem('refresh_token');
-          setMessage(data.message);
-          window.location.href = '/login';
-        })
-        .catch(() => { setMessage('Account deletion failed.'); setMsgType('error'); });
-    }
+      .catch(() => { setMessage('Account deletion failed.'); setMsgType('error'); setShowDeleteConfirm(false); });
   };
 
   return (
@@ -174,9 +170,28 @@ const AccountInfoPage = () => {
                 <option value="other">Other</option>
               </select>
 
-              <button className="panel-btn-danger" onClick={handleDelete}>
-                Delete My Account
-              </button>
+              <AnimatePresence>
+                {showDeleteConfirm ? (
+                  <motion.div className="panel-confirm-box"
+                    initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                    <p className="panel-confirm-text">
+                      This will permanently delete your account and all data. This cannot be undone.
+                    </p>
+                    <div className="panel-confirm-actions">
+                      <button className="panel-btn-danger" onClick={handleDelete}>
+                        Yes, Delete My Account
+                      </button>
+                      <button className="panel-btn-secondary" onClick={() => setShowDeleteConfirm(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <button className="panel-btn-danger" onClick={() => setShowDeleteConfirm(true)}>
+                    Delete My Account
+                  </button>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         </main>

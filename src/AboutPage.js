@@ -71,7 +71,7 @@ const AboutPage = () => {
               <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
             </svg>
           </div>
-          <h1 className="about-title">About VideoAI</h1>
+          <h1 className="about-title">About VidFusion</h1>
           <p className="about-subtitle">Your smart companion for discovering insightful video content</p>
         </motion.div>
 

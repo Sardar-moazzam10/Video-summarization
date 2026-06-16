@@ -1,30 +1,244 @@
-.video-card {
-    transition: all var(--transition-normal);
-    position: relative;
-    overflow: hidden;
-  }
-  
-  .video-card::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.05) 0%, transparent 50%);
-    opacity: 0;
-    transition: opacity var(--transition-normal);
-    pointer-events: none;
-    z-index: 1;
-  }
-  
-  .video-card:hover {
-    transform: scale(1.05) translateY(-4px);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7),
-                0 0 0 1px rgba(14, 165, 233, 0.2);
-  }
-  
-  .video-card:hover::after {
-    opacity: 1;
-  }
-  
+/* =============================================
+   VIDEO CARD — Recall.ai Design System
+   ============================================= */
+
+.vc-card {
+  background: rgba(17, 24, 39, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.25s, box-shadow 0.25s;
+  position: relative;
+  backdrop-filter: blur(12px);
+}
+
+.vc-card:hover {
+  border-color: rgba(71, 139, 224, 0.25);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(71, 139, 224, 0.1);
+}
+
+.vc-card--selected {
+  border-color: rgba(71, 139, 224, 0.6) !important;
+  box-shadow: 0 0 0 3px rgba(71, 139, 224, 0.15), 0 12px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Thumbnail */
+.vc-thumb {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 */
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.vc-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.vc-card:hover .vc-thumb-img {
+  transform: scale(1.04);
+}
+
+/* Play hint */
+.vc-play-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+.vc-thumb:hover .vc-play-hint {
+  opacity: 1;
+}
+
+/* Selection overlay */
+.vc-select-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(71, 139, 224, 0.2);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 10px;
+  pointer-events: none;
+}
+
+.vc-check {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #478BE0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(71, 139, 224, 0.5);
+  flex-shrink: 0;
+}
+
+/* Body */
+.vc-body {
+  padding: 14px 16px 10px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vc-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.45;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vc-channel {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vc-desc {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.3);
+  line-height: 1.5;
+  margin: 4px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Footer */
+.vc-footer {
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  margin-top: auto;
+}
+
+/* Select toggle button */
+.vc-select-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.vc-select-btn:hover {
+  border-color: rgba(71, 139, 224, 0.4);
+  color: rgba(71, 139, 224, 0.9);
+  background: rgba(71, 139, 224, 0.06);
+}
+
+.vc-select-btn--active {
+  border-style: solid;
+  border-color: rgba(71, 139, 224, 0.5);
+  background: rgba(71, 139, 224, 0.12);
+  color: #478BE0;
+}
+
+.vc-select-btn--active:hover {
+  background: rgba(71, 139, 224, 0.2);
+  border-color: rgba(71, 139, 224, 0.7);
+}
+
+/* Action buttons row */
+.vc-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.vc-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  border: none;
+  min-height: 36px;
+}
+
+.vc-btn--primary {
+  background: linear-gradient(135deg, #478BE0, #2F61A0);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(71, 139, 224, 0.25);
+}
+
+.vc-btn--primary:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(71, 139, 224, 0.4);
+  transform: translateY(-1px);
+}
+
+.vc-btn--primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.vc-btn--ghost {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.vc-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Spinner */
+.vc-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: vc-spin 0.65s linear infinite;
+}
+
+@keyframes vc-spin {
+  to { transform: rotate(360deg); }
+}

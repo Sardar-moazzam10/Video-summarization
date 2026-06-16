@@ -104,6 +104,17 @@ def extract_highlight_segments(
     )
 
 
+def group_transcript_segments(
+    raw_segments: List[Dict],
+    max_segment_duration: float = 45.0,
+    min_segment_duration: float = 5.0,
+    words_per_group: int = 40,
+) -> List[Dict]:
+    """Public wrapper — returns grouped segments as plain dicts with start_time/end_time."""
+    groups = _group_transcript_segments(raw_segments, max_segment_duration, min_segment_duration, words_per_group)
+    return [{"start_time": g.start_time, "end_time": g.end_time, "text": g.text} for g in groups]
+
+
 def _group_transcript_segments(
     raw_segments: List[Dict],
     max_segment_duration: float,
@@ -398,6 +409,7 @@ def _format_for_merge(
             "end_time": seg.end_time + context_padding,
             "importance_score": round(seg.importance_score, 4),
             "reason": seg.reason,
+            "text": seg.text,   # needed for narration-sync reordering
         }
         for seg in selected_segments
     ]
@@ -407,3 +419,219 @@ def _split_sentences(text: str) -> List[str]:
     """Split text into sentences of at least 5 words."""
     raw = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in raw if len(s.split()) >= 5]
+
+
+# ─── Narration-Driven Selection ────────────────────────────────────────────────
+
+def extract_highlights_narration_driven(
+    video_id: str,
+    transcript_segments: List[Dict],
+    srt_sentences: List[Dict],
+    context_padding_seconds: float = 1.5,
+    min_segment_duration: float = 3.0,
+    max_segment_duration: float = 60.0,
+    target_duration_seconds: int = 120,
+) -> List[Dict]:
+    """
+    Narration-driven clip selection.
+
+    Instead of scoring all segments and reordering later, each narration
+    sentence directly votes for its best-matching transcript segment via SBERT.
+    This guarantees every clip shown is thematically aligned with what is
+    being said at that moment.
+
+    Steps:
+      1. Group SRT sentences into N buckets (N = clips that fit the time budget)
+      2. SBERT-embed every bucket + every transcript group
+      3. For each bucket, pick the highest-similarity transcript segment
+      4. Deduplicate (same segment can win multiple buckets → keep once)
+      5. Return clips ordered by narration position, not by timestamp
+
+    Returns:
+        List of segment dicts ready for generate_highlight_reel(),
+        ordered so clip[i] plays while sentence bucket[i] is being narrated.
+    """
+    if not transcript_segments or not srt_sentences:
+        return []
+
+    grouped = _group_transcript_segments(
+        transcript_segments, max_segment_duration, min_segment_duration
+    )
+    if not grouped:
+        return []
+
+    try:
+        from .fusion_engine import get_sentence_transformer
+        model = get_sentence_transformer()
+    except Exception as e:
+        print(f"[NarrationDriven] SBERT unavailable ({e}) — skipping")
+        return []
+
+    # How many clips fit within the time budget?
+    avg_clip_seconds = 15.0  # conservative estimate for 1 clip with padding
+    n_clips = max(2, int(target_duration_seconds / avg_clip_seconds))
+
+    # Group SRT sentences into n_clips buckets so we get exactly that many clips
+    narr_texts = [s["text"] for s in srt_sentences]
+    bucket_size = max(1, len(narr_texts) // n_clips)
+    buckets: List[str] = []
+    for i in range(0, len(narr_texts), bucket_size):
+        buckets.append(" ".join(narr_texts[i: i + bucket_size]))
+    buckets = buckets[:n_clips]  # trim to n_clips groups
+
+    seg_texts = [g.text for g in grouped]
+
+    all_embs = model.encode(
+        buckets + seg_texts, show_progress_bar=False, batch_size=32
+    )
+    bucket_embs = all_embs[: len(buckets)]
+    seg_embs = all_embs[len(buckets):]
+
+    def _norm(v: np.ndarray) -> np.ndarray:
+        n = np.linalg.norm(v, axis=1, keepdims=True)
+        return v / np.where(n < 1e-9, 1e-9, n)
+
+    sim = _norm(bucket_embs) @ _norm(seg_embs).T  # [n_buckets, n_segs]
+
+    # Greedy assignment: each bucket claims its best segment (no repeats)
+    used: set = set()
+    result: List[Dict] = []
+
+    for bucket_idx in range(len(buckets)):
+        row = sim[bucket_idx].copy()
+        for used_idx in used:
+            row[used_idx] = -2.0
+        best_seg_idx = int(np.argmax(row))
+        score = float(sim[bucket_idx, best_seg_idx])
+
+        if best_seg_idx not in used:
+            used.add(best_seg_idx)
+            seg = grouped[best_seg_idx]
+            dur = seg.end_time - seg.start_time
+            if dur >= min_segment_duration:
+                result.append({
+                    "video_id": video_id,
+                    "start_time": max(0.0, seg.start_time - context_padding_seconds),
+                    "end_time": seg.end_time + context_padding_seconds,
+                    "importance_score": round(score, 4),
+                    "reason": f"Narration-matched bucket {bucket_idx} (score={score:.2f})",
+                    "text": seg.text,
+                })
+
+    print(
+        f"[NarrationDriven] {video_id}: {len(buckets)} narration buckets "
+        f"→ {len(result)} unique clips selected"
+    )
+    return result  # already in narration order — no reorder step needed
+
+
+# ─── Narration-Sync ────────────────────────────────────────────────────────────
+
+def reorder_clips_for_narration(
+    clips: List[Dict],
+    srt_content: str,
+) -> List[Dict]:
+    """
+    Reorder video clips so they visually match the TTS narration sentence order.
+
+    Problem without this:
+      Narrator says "lion hunts at dusk" while showing an elephant clip — wrong.
+
+    How it works:
+      1. Parse SRT → list of narration sentences
+      2. Embed each sentence + each clip's transcript text with SBERT
+      3. Greedy assignment: for each narration sentence (in order), pick the
+         clip whose text is most semantically similar to that sentence
+      4. Return clips in that narration-matched order
+
+    Result: when the narrator mentions lions, a lion-related clip plays.
+    Not frame-perfect, but the right TOPIC plays at the right MOMENT.
+    """
+    if len(clips) < 2 or not srt_content.strip():
+        return clips
+
+    sentences = _parse_srt_sentences(srt_content)
+    if not sentences:
+        return clips
+
+    clip_texts = [c.get("text", "") for c in clips]
+    sentence_texts = [s["text"] for s in sentences]
+
+    # Group sentences into N buckets matching the number of clips.
+    # This prevents the case where 30 short sentences map to only 5 clips.
+    n_clips = len(clips)
+    chunk_size = max(1, len(sentence_texts) // n_clips)
+    grouped_sentences: List[str] = []
+    for i in range(0, len(sentence_texts), chunk_size):
+        chunk = sentence_texts[i: i + chunk_size]
+        grouped_sentences.append(" ".join(chunk))
+    # Trim to n_clips groups so we have a 1:1 mapping
+    grouped_sentences = grouped_sentences[:n_clips]
+
+    try:
+        from .fusion_engine import get_sentence_transformer
+        model = get_sentence_transformer()
+
+        all_texts = grouped_sentences + clip_texts
+        all_embs = model.encode(all_texts, show_progress_bar=False, batch_size=32)
+
+        sent_embs = all_embs[:len(grouped_sentences)]
+        clip_embs = all_embs[len(grouped_sentences):]
+
+        # L2-normalize
+        def _norm(v: np.ndarray) -> np.ndarray:
+            n = np.linalg.norm(v, axis=1, keepdims=True)
+            return v / np.where(n < 1e-9, 1e-9, n)
+
+        sim = _norm(sent_embs) @ _norm(clip_embs).T  # [S, C]
+
+        # Greedy assignment: each narration group gets its best matching clip
+        used: set = set()
+        ordered: List[Dict] = []
+        for sent_idx in range(len(grouped_sentences)):
+            row = sim[sent_idx].copy()
+            for used_idx in used:
+                row[used_idx] = -2.0   # block already-assigned clips
+            best = int(np.argmax(row))
+            used.add(best)
+            ordered.append(clips[best])
+
+        # Append any clips not matched (extra clips after all sentences covered)
+        for i, clip in enumerate(clips):
+            if i not in used:
+                ordered.append(clip)
+
+        print(f"[Sync] Reordered {len(ordered)} clips to match narration sentence order")
+        return ordered
+
+    except Exception as e:
+        print(f"[Sync] Narration reorder failed ({e}), keeping original order")
+        return clips
+
+
+def _parse_srt_sentences(srt_content: str) -> List[Dict]:
+    """Parse SRT subtitle content into [{text, start_s, end_s}]."""
+    blocks = re.split(r'\n\n+', srt_content.strip())
+    results = []
+    for block in blocks:
+        lines = block.strip().splitlines()
+        if len(lines) < 3:
+            continue
+        try:
+            # line 0: index, line 1: timestamps, line 2+: text
+            ts_line = lines[1]
+            start_str, end_str = ts_line.split("-->")
+
+            def _ts(s: str) -> float:
+                s = s.strip().replace(",", ".")
+                h, m, rest = s.split(":")
+                return int(h) * 3600 + int(m) * 60 + float(rest)
+
+            results.append({
+                "start_s": _ts(start_str),
+                "end_s": _ts(end_str),
+                "text": " ".join(lines[2:]).strip(),
+            })
+        except Exception:
+            continue
+    return results

@@ -1,5 +1,6 @@
-/**
 import { API_BASE_URL } from './config/api.js';
+
+/**
  * Fetch transcript for a given YouTube video ID
  * @param {string} videoId - The YouTube video ID
  * @returns {Array} - Array of transcript entries or empty array if unavailable

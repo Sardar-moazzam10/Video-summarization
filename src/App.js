@@ -35,6 +35,7 @@ import ProtectedRoute from './ProtectedRoute.js';
 import ContactPage from './ContactPage.js';
 import AboutPage from './AboutPage.js';
 import AssistantWidget from './AssistantWidget.js';
+import { ToastProvider } from './context/ToastContext.jsx';
 
 
 // Automatically redirect based on login status
@@ -78,6 +79,7 @@ const App = () => {
   }, []);
 
   return (
+    <ToastProvider>
     <Router>
       <div
         className="ambient-glow"
@@ -165,6 +167,7 @@ const App = () => {
       <AssistantWidget />
       <Footer />
     </Router>
+    </ToastProvider>
   );
 };
 

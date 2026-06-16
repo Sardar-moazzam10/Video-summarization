@@ -15,6 +15,7 @@ const UserPanelPage = () => {
   const [showOldPassword, setShowOldPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [message, setMessage] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const username = JSON.parse(localStorage.getItem('user'))?.username;
 
@@ -46,15 +47,12 @@ const UserPanelPage = () => {
   };
 
   const handleDelete = () => {
-    if (window.confirm('Are you sure you want to delete your account?')) {
-      axios.delete(`${API_BASE_URL}/api/v1/auth/user/delete/${username}`)
-        .then(res => {
-          localStorage.removeItem('user');
-          setMessage(res.data.message);
-          window.location.href = '/login';
-        })
-        .catch(() => setMessage('Deletion failed.'));
-    }
+    axios.delete(`${API_BASE_URL}/api/v1/auth/user/delete/${username}`)
+      .then(res => {
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+      })
+      .catch(() => { setMessage('Deletion failed.'); setShowDeleteConfirm(false); });
   };
 
   return (
@@ -90,7 +88,19 @@ const UserPanelPage = () => {
         </div>
 
         <div className="delete-section">
-          <button onClick={handleDelete}>Delete Account</button>
+          {showDeleteConfirm ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.6)' }}>
+                This will permanently delete your account. This cannot be undone.
+              </p>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={handleDelete}>Confirm Delete</button>
+                <button onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowDeleteConfirm(true)}>Delete Account</button>
+          )}
         </div>
 
         {message && <p className="message">{message}</p>}

@@ -5,6 +5,11 @@ import { fetchVideos } from './youtubeApi.js';
 import { fetchTranscript, searchKeywordInTranscript } from './youtubeTranscript.mjs';
 import { API_BASE_URL } from './config/api.js';
 
+const EXAMPLE_KEYWORDS = [
+  'machine learning', 'morning routine', 'investing basics',
+  'sleep optimization', 'deep work', 'mental health tips',
+];
+
 const SearchByKeywordsPage = () => {
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState([]);
@@ -157,7 +162,27 @@ const SearchByKeywordsPage = () => {
             </svg>
           </div>
           <h1 style={styles.title}>Search by Keywords</h1>
-          <p style={styles.subtitle}>Find videos by searching inside their transcripts</p>
+          <p style={styles.subtitle}>Searches <strong style={{ color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>inside transcripts</strong> — finds exact timestamps where creators mention your topic</p>
+
+          {/* Mode distinction tip */}
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 14,
+            padding: '8px 14px', borderRadius: 9999,
+            background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.15)',
+          }}>
+            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>💡 Not what you need?</span>
+            <button
+              onClick={() => navigate('/search-by-title')}
+              style={{
+                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#8b5cf6',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              Search by video title
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </button>
+          </div>
         </motion.div>
 
         {/* Search bar */}
@@ -174,7 +199,7 @@ const SearchByKeywordsPage = () => {
               </svg>
               <input
                 type="text"
-                placeholder="Enter keyword to search transcripts..."
+                placeholder="e.g. machine learning, morning routine..."
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -185,6 +210,45 @@ const SearchByKeywordsPage = () => {
               {loading ? <span style={styles.spinner} /> : 'Search'}
             </button>
           </div>
+
+          {/* Example keyword chips */}
+          {results.length === 0 && !loading && (
+            <div style={{ marginTop: 14 }}>
+              <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)' }}>
+                Try these keywords
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {EXAMPLE_KEYWORDS.map((kw) => (
+                  <button
+                    key={kw}
+                    onClick={() => { setKeyword(kw); runSearch(kw); }}
+                    style={{
+                      padding: '6px 14px',
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: 9999,
+                      color: 'rgba(255,255,255,0.5)',
+                      fontSize: 12.5, fontWeight: 500,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(139,92,246,0.1)';
+                      e.currentTarget.style.borderColor = 'rgba(139,92,246,0.25)';
+                      e.currentTarget.style.color = '#c084fc';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                      e.currentTarget.style.color = 'rgba(255,255,255,0.5)';
+                    }}
+                  >
+                    {kw}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </motion.div>
 
         {/* Loading */}
@@ -214,7 +278,17 @@ const SearchByKeywordsPage = () => {
               transition={{ duration: 0.3, delay: 0.1 + index * 0.06 }}
               style={styles.resultCard}
             >
-              <h3 style={styles.resultTitle}>{result.video.snippet.title}</h3>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+                <h3 style={{ ...styles.resultTitle, margin: 0, flex: 1 }}>{result.video.snippet.title}</h3>
+                <span style={{
+                  flexShrink: 0, fontSize: 11, fontWeight: 700, padding: '3px 9px',
+                  borderRadius: 9999, whiteSpace: 'nowrap',
+                  background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.2)',
+                  color: '#c084fc',
+                }}>
+                  {result.matches.length} match{result.matches.length !== 1 ? 'es' : ''} in transcript
+                </span>
+              </div>
               <div style={styles.resultBody}>
                 <img
                   src={result.video.snippet.thumbnails.medium.url}
@@ -291,36 +365,48 @@ const SearchByKeywordsPage = () => {
           );
         })}
 
-        {/* Bottom actions */}
-        {results.length >= 3 && (
+        {/* Bottom action bar — merge takes priority when videos are selected */}
+        {selectedVideos.length >= 2 ? (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             style={styles.bottomBar}
           >
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.35)' }}>
+                {selectedVideos.length} videos selected
+              </span>
+              <button onClick={handleOpenMergePreview} style={styles.mergeBtn}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>
+                </svg>
+                Preview & Merge
+              </button>
+              {results.length >= 3 && (
+                <button onClick={handleSummarize} style={styles.primaryBtn}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polygon points="5 3 19 12 5 21 5 3" fill="rgba(255,255,255,0.2)"/>
+                  </svg>
+                  Best Moments
+                </button>
+              )}
+            </div>
+          </motion.div>
+        ) : results.length >= 3 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ ...styles.bottomBar, flexDirection: 'column', gap: 6 }}
+          >
+            <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Select 2+ videos to merge, or use auto-select:</p>
             <button onClick={handleSummarize} style={styles.primaryBtn}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <polygon points="5 3 19 12 5 21 5 3" fill="rgba(255,255,255,0.2)"/>
               </svg>
-              Best Moments
+              Auto-select Best Moments
             </button>
           </motion.div>
-        )}
-
-        {selectedVideos.length >= 2 && (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            style={styles.bottomBar}
-          >
-            <button onClick={handleOpenMergePreview} style={styles.mergeBtn}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>
-              </svg>
-              Preview & Merge ({selectedVideos.length} videos)
-            </button>
-          </motion.div>
-        )}
+        ) : null}
 
         {/* Empty state */}
         {!loading && results.length === 0 && (

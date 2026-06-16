@@ -85,6 +85,8 @@ def _load_nllb() -> Optional[Tuple]:
         _nllb_tokenizer = AutoTokenizer.from_pretrained(NLLB_MODEL_ID)
         _nllb_model = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL_ID)
         _nllb_model.eval()
+        # Clear the model's baked-in max_length=200 so max_new_tokens is the sole limit
+        _nllb_model.generation_config.max_length = None
         print(f"[Translation] NLLB-200 loaded: {NLLB_MODEL_ID}")
         return _nllb_tokenizer, _nllb_model
     except Exception as e:
@@ -155,15 +157,15 @@ def _translate_with_nllb(
                 truncation=True,
                 max_length=512,
             )
-            target_id = tokenizer.lang_code_to_id[TARGET_FLORES]
+            # lang_code_to_id was removed in newer transformers; convert_tokens_to_ids is universal
+            target_id = tokenizer.convert_tokens_to_ids(TARGET_FLORES)
 
             with torch.no_grad():
                 output_ids = model.generate(
                     **inputs,
                     forced_bos_token_id=target_id,
-                    max_new_tokens=512,
-                    num_beams=4,
-                    early_stopping=True,
+                    max_new_tokens=128,   # short sentences only need ~50 tokens; 128 is plenty
+                    num_beams=1,          # greedy decode — 4x faster than beam=4, fine for transcript translation
                 )
 
             decoded = tokenizer.batch_decode(output_ids, skip_special_tokens=True)

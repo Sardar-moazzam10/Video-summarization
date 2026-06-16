@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # =====================================================
     # APP SETTINGS
     # =====================================================
-    APP_NAME: str = "AI Video Summarizer"
+    APP_NAME: str = "VidFusion"
     APP_VERSION: str = "2.0.0"
     DEBUG: bool = False
     API_PREFIX: str = "/api/v1"
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     # =====================================================
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.2:3b"      # 2 GB RAM; swap to mistral:7b or ministral:8b for better quality
-    OLLAMA_TIMEOUT_SECONDS: float = 360.0  # Generous timeout for CPU inference
+    OLLAMA_TIMEOUT_SECONDS: float = 100.0  # httpx hard limit — must be < the 120s asyncio wrapper in merge.py so background threads terminate before the asyncio cancel fires
 
     # =====================================================
     # AI/ML SETTINGS

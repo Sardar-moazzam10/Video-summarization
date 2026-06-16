@@ -197,21 +197,50 @@
   overflow: hidden;
 }
 
-/* Merge checkbox */
-.suggested-merge-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: rgba(255,255,255,0.5);
-  cursor: pointer;
-  margin-bottom: 12px;
+/* Card selected state */
+.suggested-card--selected {
+  border-color: rgba(71,139,224,0.6) !important;
+  box-shadow: 0 0 0 3px rgba(71,139,224,0.15), 0 8px 30px rgba(0,0,0,0.5) !important;
 }
 
-.suggested-merge-label input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: #478BE0;
+/* Selection overlay on thumbnail */
+.suggested-select-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(71,139,224,0.18);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 10px;
+  pointer-events: none;
+}
+
+.suggested-check {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #478BE0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(71,139,224,0.5);
+}
+
+/* Channel subtitle */
+.suggested-card-channel {
+  font-size: 11.5px;
+  color: rgba(255,255,255,0.35);
+  margin: 0 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Bottom selected strip */
+.suggested-card-strip {
+  height: 3px;
+  background: linear-gradient(90deg, #478BE0, #2F61A0);
 }
 
 /* Button group */

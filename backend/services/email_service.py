@@ -13,8 +13,8 @@ from ..core.config import get_settings
 def _build_verification_email(to_email: str, code: str) -> MIMEMultipart:
     settings = get_settings()
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Your VideoAI Verification Code: {code}"
-    msg["From"] = f"VideoAI <{settings.MAIL_USERNAME}>"
+    msg["Subject"] = f"Your VidFusion Verification Code: {code}"
+    msg["From"] = f"VidFusion <{settings.MAIL_USERNAME}>"
     msg["To"] = to_email
 
     plain = f"Your verification code is: {code}\n\nThis code expires in 10 minutes. If you didn't request this, ignore this email."
@@ -33,7 +33,7 @@ def _build_verification_email(to_email: str, code: str) -> MIMEMultipart:
         <p style="color: rgba(255,255,255,0.35); font-size: 13px; margin: 0;">This code expires in <strong style="color: rgba(255,255,255,0.6);">10 minutes</strong>. If you didn't request this, you can safely ignore this email.</p>
       </div>
       <div style="background: rgba(255,255,255,0.02); padding: 16px 28px; text-align: center; border-top: 1px solid rgba(255,255,255,0.04);">
-        <p style="color: rgba(255,255,255,0.25); font-size: 12px; margin: 0;">VideoAI — AI Video Summarizer</p>
+        <p style="color: rgba(255,255,255,0.25); font-size: 12px; margin: 0;">VidFusion — VidFusion</p>
       </div>
     </div>"""
 

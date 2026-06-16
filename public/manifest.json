@@ -1,6 +1,6 @@
 {
-  "short_name": "Video Summarizer",
-  "name": "Video Summarizer - AI Video Discovery",
+  "short_name": "VidFusion",
+  "name": "VidFusion — AI Multi-Video Fusion & Summarization",
   "icons": [
     {
       "src": "video_summarizer_icon.png",

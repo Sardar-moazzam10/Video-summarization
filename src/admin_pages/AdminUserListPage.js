@@ -23,6 +23,7 @@ const AdminUserListPage = () => {
   const [msgType, setMsgType] = useState('success');
   const [showAddForm, setShowAddForm] = useState(false);
   const [userData, setUserData] = useState({});
+  const [confirmDeleteUsername, setConfirmDeleteUsername] = useState(null);
   const [newUser, setNewUser] = useState({
     firstName: '', lastName: '', username: '', email: '', password: '', role: 'user'
   });
@@ -84,16 +85,20 @@ const AdminUserListPage = () => {
   };
 
   const handleDelete = (username) => {
-    if (window.confirm(`Delete user '${username}'?`)) {
-      fetch(`${API_BASE_URL}/api/v1/auth/user/delete/${username}`, { method: 'DELETE' })
-        .then(res => res.json())
-        .then(data => {
-          setMessage(data.success ? 'User deleted.' : 'Delete failed.');
-          setMsgType(data.success ? 'success' : 'error');
-          fetchUsers();
-        })
-        .catch(() => { setMessage('Error occurred.'); setMsgType('error'); });
-    }
+    setConfirmDeleteUsername(username);
+  };
+
+  const handleConfirmDelete = () => {
+    const target = confirmDeleteUsername;
+    setConfirmDeleteUsername(null);
+    fetch(`${API_BASE_URL}/api/v1/auth/user/delete/${target}`, { method: 'DELETE' })
+      .then(res => res.json())
+      .then(data => {
+        setMessage(data.success ? 'User deleted.' : 'Delete failed.');
+        setMsgType(data.success ? 'success' : 'error');
+        fetchUsers();
+      })
+      .catch(() => { setMessage('Error occurred.'); setMsgType('error'); });
   };
 
   const handleAddUser = () => {
@@ -238,6 +243,27 @@ const AdminUserListPage = () => {
                 {message}
               </div>
             )}
+
+            <AnimatePresence>
+              {confirmDeleteUsername && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap',
+                    padding: '14px 18px', marginBottom: '16px',
+                    background: 'rgba(239,68,68,0.08)',
+                    border: '1px solid rgba(239,68,68,0.2)',
+                    borderRadius: '12px',
+                  }}
+                >
+                  <span style={{ fontSize: '13.5px', color: 'rgba(255,255,255,0.7)', flex: 1 }}>
+                    Delete user <strong style={{ color: '#fff' }}>{confirmDeleteUsername}</strong>? This cannot be undone.
+                  </span>
+                  <button className="admin-btn-danger admin-btn-sm" onClick={handleConfirmDelete}>Confirm Delete</button>
+                  <button className="admin-btn-secondary admin-btn-sm" onClick={() => setConfirmDeleteUsername(null)}>Cancel</button>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="admin-table-wrap">
               <table className="admin-table">

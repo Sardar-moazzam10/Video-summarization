@@ -356,7 +356,7 @@ async def export_job(job_id: str, format: str = "text"):
     from ..services.export_service import format_as_text, generate_pdf
 
     if format == "pdf":
-        pdf_bytes = generate_pdf(summary_text, rich_output)
+        pdf_bytes = bytes(generate_pdf(summary_text, rich_output))
         return StreamingResponse(
             iter([pdf_bytes]),
             media_type="application/pdf",
@@ -536,8 +536,15 @@ async def process_merge_job(job_id: str):
                 try:
                     from ..services.translation_service import translate_to_english as _nllb_translate
                     for vid, lang in non_english.items():
-                        transcripts[vid] = _nllb_translate(transcripts[vid], src_lang=lang)
-                        print(f"[Transcript] NLLB translation: {vid} ({lang} → en)")
+                        try:
+                            translated = await asyncio.wait_for(
+                                asyncio.to_thread(_nllb_translate, transcripts[vid], lang),
+                                timeout=120.0,
+                            )
+                            transcripts[vid] = translated
+                            print(f"[Transcript] NLLB translation: {vid} ({lang} → en)")
+                        except asyncio.TimeoutError:
+                            print(f"[WARN] NLLB translation timed out for {vid} — proceeding with original")
                 except Exception as e:
                     print(f"[WARN] NLLB translation failed: {e}")
 
@@ -656,6 +663,7 @@ async def process_merge_job(job_id: str):
 
         # STAGE 4.5: Ollama AI Enrichment (80-90%)
         rich_output = None
+        _OLLAMA_WALL_TIMEOUT = 120  # hard cap so job never blocks >2 min on this stage
         try:
             from ..services.ollama_service import get_ollama_service
             ollama = get_ollama_service()
@@ -668,11 +676,14 @@ async def process_merge_job(job_id: str):
                 )
 
                 video_titles = ", ".join(job.video_ids)
-                rich_output = await ollama.generate_rich_summary(
-                    narrative=fusion_result.narrative,
-                    target_words=target_words,
-                    style=job.style,
-                    video_titles=video_titles,
+                rich_output = await asyncio.wait_for(
+                    ollama.generate_rich_summary(
+                        narrative=fusion_result.narrative,
+                        target_words=target_words,
+                        style=job.style,
+                        video_titles=video_titles,
+                    ),
+                    timeout=_OLLAMA_WALL_TIMEOUT,
                 )
 
                 if rich_output:
@@ -692,6 +703,9 @@ async def process_merge_job(job_id: str):
             else:
                 print(f"[Ollama] Not available. Run: ollama pull {settings.OLLAMA_MODEL}")
 
+        except asyncio.TimeoutError:
+            print(f"[Ollama] Hard timeout ({_OLLAMA_WALL_TIMEOUT}s) — using local TF-IDF fallback")
+            rich_output = None
         except Exception as e:
             print(f"[WARN] Ollama enrichment failed: {e}")
 
@@ -717,8 +731,18 @@ async def process_merge_job(job_id: str):
                 # Use the specified voice or default
                 voice_key = job.voice_id or "aria"
 
-                # Format text for better narration
-                narration_text = voice_service.format_for_narration(summary_text)
+                # When BART produced a very short summary (e.g., source transcript was
+                # non-English and translation failed), use the fusion narrative directly
+                # so the narration is substantial enough for a real video.
+                tts_source = summary_text
+                if len(summary_text.split()) < 80:
+                    narrative_words = fusion_result.narrative.split()
+                    if len(narrative_words) > len(summary_text.split()):
+                        tts_source = " ".join(narrative_words[:350])
+                        print(f"[TTS] Short BART summary ({len(summary_text.split())}w) — "
+                              f"using fusion narrative for narration ({len(tts_source.split())}w)")
+
+                narration_text = voice_service.format_for_narration(tts_source)
 
                 # Generate audio + subtitles
                 audio_dir = "audio_cache"
@@ -742,6 +766,31 @@ async def process_merge_job(job_id: str):
                         output_path=audio_path,
                         voice_key=voice_key
                     )
+
+                # Measure actual TTS duration so video clip length matches it exactly.
+                # Without this, -shortest cuts the narration when video is shorter,
+                # losing key points at the end of the summary.
+                if audio_path and os.path.exists(audio_path):
+                    try:
+                        import subprocess as _sp
+                        _probe = _sp.run(
+                            ["ffprobe", "-v", "quiet", "-show_entries",
+                             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+                             audio_path],
+                            capture_output=True, text=True, timeout=15,
+                        )
+                        tts_duration = float(_probe.stdout.strip())
+                        if tts_duration > 10:
+                            # Enforce a floor so the video is always watchable,
+                            # even when the narration is unexpectedly short.
+                            MIN_HIGHLIGHT_SECONDS = 30
+                            job.highlight_duration_seconds = max(
+                                MIN_HIGHLIGHT_SECONDS, int(tts_duration) + 2
+                            )
+                            print(f"[Audio] TTS duration={tts_duration:.1f}s → "
+                                  f"video target set to {job.highlight_duration_seconds}s")
+                    except Exception as dur_err:
+                        print(f"[Audio] Could not measure TTS duration: {dur_err}")
 
             except Exception as e:
                 print(f"[WARN] Voice generation failed (continuing without audio): {e}")
@@ -769,9 +818,9 @@ async def process_merge_job(job_id: str):
 
             try:
                 from ..services.video_service import get_video_service
-                from ..services.visual_keyframe_extractor import extract_keyframes
+                from ..services.visual_keyframe_extractor import extract_keyframes_for_segments
                 from ..services.clip_feature_extractor import augment_keyframes_with_clip
-                from ..services.segment_extractor import extract_highlight_segments
+                from ..services.segment_extractor import extract_highlight_segments, group_transcript_segments
 
                 video_svc = get_video_service()
 
@@ -785,9 +834,15 @@ async def process_merge_job(job_id: str):
                 async def video_progress(msg):
                     await update_status(JobStatus.GENERATING_VIDEO, 98, msg)
 
-                video_paths = await video_svc.download_videos(
-                    unique_video_ids, job_id=job_id, progress_callback=video_progress
-                )
+                try:
+                    video_paths = await asyncio.wait_for(
+                        video_svc.download_videos(
+                            unique_video_ids, job_id=job_id, progress_callback=video_progress
+                        ),
+                        timeout=300.0,
+                    )
+                except asyncio.TimeoutError:
+                    raise Exception("Video download timed out after 5 minutes — skipping video generation")
 
                 if not video_paths:
                     raise Exception("Could not download any source videos")
@@ -800,48 +855,121 @@ async def process_merge_job(job_id: str):
                     if not segs:
                         continue
 
-                    # Step 2a: Extract keyframes + temporal scores (PySceneDetect + PGL-SUM)
+                    # Step 2a: Group transcript segments, then extract ONE frame per group.
+                    # This replaces the old PySceneDetect full-video scan (20-60 min) with
+                    # N direct seeks — one per segment midpoint — completing in seconds.
                     await update_status(
                         JobStatus.GENERATING_VIDEO, 98,
-                        f"Extracting keyframes + temporal attention for {vid}..."
+                        f"Extracting keyframes for {vid} (fast: 1 frame per segment)..."
                     )
-                    visual_keyframes = await asyncio.to_thread(
-                        extract_keyframes, vid, vid_path
-                    )
+                    transcript_groups = group_transcript_segments(segs)
+                    try:
+                        visual_keyframes = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                extract_keyframes_for_segments, vid, vid_path, transcript_groups
+                            ),
+                            timeout=90.0,
+                        )
+                    except asyncio.TimeoutError:
+                        print(f"[Video] Keyframe extraction timed out for {vid} — skipping visual stage")
+                        visual_keyframes = []
                     keyframes_extracted[vid] = len(visual_keyframes)
 
                     # Step 2b: Add CLIP cross-modal scores (requires summary_text, available now)
                     if visual_keyframes:
-                        await asyncio.to_thread(
-                            augment_keyframes_with_clip, visual_keyframes, summary_text
-                        )
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    augment_keyframes_with_clip, visual_keyframes, summary_text
+                                ),
+                                timeout=120.0,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"[Video] CLIP scoring timed out for {vid} — using default scores")
                         print(
                             f"[Video] {vid}: {len(visual_keyframes)} keyframes "
                             f"→ CLIP + temporal scores ready"
                         )
 
-                    # Step 2c: Score and select highlight segments (4-signal blend)
-                    highlights = extract_highlight_segments(
-                        video_id=vid,
-                        transcript_segments=segs,
-                        summary_text=summary_text,
-                        target_duration_seconds=per_video_seconds,
-                        context_padding_seconds=2.0,
-                        visual_keyframes=visual_keyframes or None,
-                    )
+                    # Step 2c: Narration-driven clip selection (primary path).
+                    # Each narration sentence directly picks its best-matching
+                    # transcript segment via SBERT — clips are selected AND ordered
+                    # in one pass so what you see matches what is being said.
+                    # Falls back to importance-score selection when SRT is absent.
+                    highlights = []
+                    _used_narration_driven = False
+
+                    if subtitle_path and os.path.exists(subtitle_path):
+                        try:
+                            from ..services.segment_extractor import (
+                                extract_highlights_narration_driven,
+                                _parse_srt_sentences,
+                            )
+                            srt_content = open(subtitle_path, encoding="utf-8").read()
+                            srt_sentences = _parse_srt_sentences(srt_content)
+                            if srt_sentences:
+                                highlights = await asyncio.to_thread(
+                                    extract_highlights_narration_driven,
+                                    vid,
+                                    segs,
+                                    srt_sentences,
+                                    1.5,              # context_padding_seconds
+                                    3.0,              # min_segment_duration
+                                    60.0,             # max_segment_duration
+                                    per_video_seconds,
+                                )
+                                _used_narration_driven = bool(highlights)
+                        except Exception as nd_err:
+                            print(f"[Video] Narration-driven selection failed: {nd_err} "
+                                  f"— falling back to score-based")
+
+                    if not _used_narration_driven:
+                        # Fallback: 4-signal hybrid scoring (SBERT + TF-IDF + CLIP + temporal)
+                        highlights = extract_highlight_segments(
+                            video_id=vid,
+                            transcript_segments=segs,
+                            summary_text=summary_text,
+                            target_duration_seconds=per_video_seconds,
+                            context_padding_seconds=1.5,
+                            min_segment_duration=3.0,
+                            max_segment_duration=60.0,
+                            visual_keyframes=visual_keyframes or None,
+                        )
+
                     all_highlights.extend(highlights)
 
                 if all_highlights:
-                    # Sort by importance, trim to duration budget, then sort chronologically
-                    all_highlights.sort(
-                        key=lambda h: h.get("importance_score", 0), reverse=True
-                    )
-                    highlight_segments_result = _fit_to_duration(
-                        all_highlights, job.highlight_duration_seconds
-                    )
-                    highlight_segments_result.sort(
-                        key=lambda h: (h["video_id"], h["start_time"])
-                    )
+                    if any(h.get("reason", "").startswith("Narration-matched") for h in all_highlights):
+                        # Narration-driven path: clips are already in narration order.
+                        # Only trim to budget — do NOT re-sort chronologically, that
+                        # would destroy the narration alignment we just computed.
+                        highlight_segments_result = _fit_to_duration(
+                            all_highlights, job.highlight_duration_seconds
+                        )
+                        print(f"[Video] Narration-driven: {len(highlight_segments_result)} clips "
+                              f"kept after budget trim")
+                    else:
+                        # Fallback path: sort by importance, trim, sort chronologically,
+                        # then reorder to match narration as a best-effort step.
+                        all_highlights.sort(
+                            key=lambda h: h.get("importance_score", 0), reverse=True
+                        )
+                        highlight_segments_result = _fit_to_duration(
+                            all_highlights, job.highlight_duration_seconds
+                        )
+                        highlight_segments_result.sort(
+                            key=lambda h: (h["video_id"], h["start_time"])
+                        )
+                        if subtitle_path and os.path.exists(subtitle_path):
+                            try:
+                                from ..services.segment_extractor import reorder_clips_for_narration
+                                srt_content = open(subtitle_path, encoding="utf-8").read()
+                                if srt_content.strip():
+                                    highlight_segments_result = reorder_clips_for_narration(
+                                        highlight_segments_result, srt_content
+                                    )
+                            except Exception as sync_err:
+                                print(f"[Sync] Fallback reorder skipped: {sync_err}")
 
                     # Step 3: Generate the highlight reel
                     await update_status(

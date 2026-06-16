@@ -64,10 +64,10 @@ const ResetPasswordPage = () => {
         <div className="auth-logo" onClick={() => navigate('/')}>
           <img
             src={`${process.env.PUBLIC_URL}/video_summarizer_icon.png`}
-            alt="VideoAI"
+            alt="VidFusion"
             className="auth-logo-img"
           />
-          <span className="auth-logo-text">VideoAI</span>
+          <span className="auth-logo-text">VidFusion</span>
         </div>
 
         <h1 className="auth-heading">Set new password</h1>

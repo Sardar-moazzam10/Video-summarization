@@ -14,29 +14,57 @@ Pipeline:
 
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from transformers import pipeline as hf_pipeline
 from ..core.config import get_settings
 from .duration_profiles import DurationProfile, get_summarization_config
 
 settings = get_settings()
 
-# Lazy-loaded model
-_summarization_pipeline = None
+# Lazy-loaded model + tokenizer (direct API — transformers 5.x removed "summarization" pipeline task)
+_model = None
+_tokenizer = None
 
 
 def _get_pipeline():
-    """Lazy load BART-large-CNN summarization pipeline."""
-    global _summarization_pipeline
-    if _summarization_pipeline is None:
+    """Lazy-load BART model and tokenizer for summarization."""
+    global _model, _tokenizer
+    if _model is None:
+        import warnings
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
         model_name = settings.SUMMARIZATION_MODEL  # "facebook/bart-large-cnn"
         print(f"[Summarizer] Loading model: {model_name}")
-        _summarization_pipeline = hf_pipeline(
-            "summarization",
-            model=model_name,
-            tokenizer=model_name,
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _tokenizer = AutoTokenizer.from_pretrained(model_name)
+            _model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        _model.eval()
+        # Fix BART generation config warning: forced_bos_token_id must be 0 for BART
+        if hasattr(_model, "generation_config"):
+            _model.generation_config.forced_bos_token_id = 0
+        print(f"[Summarizer] Model loaded: {model_name}")
+
+    # Return a callable that mimics the old pipeline interface:
+    # pipeline(text, max_length=..., min_length=..., ...) → [{"summary_text": "..."}]
+    def _summarize(text: str, max_length: int = 150, min_length: int = 40,
+                   do_sample: bool = False, **kwargs):
+        import torch
+        inputs = _tokenizer(
+            text, return_tensors="pt",
+            max_length=1024, truncation=True, padding=True,
         )
-        print(f"[Summarizer] Model loaded successfully")
-    return _summarization_pipeline
+        with torch.no_grad():
+            ids = _model.generate(
+                inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                max_length=max_length,
+                min_length=min_length,
+                num_beams=4,
+                early_stopping=True,
+                no_repeat_ngram_size=3,
+            )
+        summary = _tokenizer.decode(ids[0], skip_special_tokens=True)
+        return [{"summary_text": summary}]
+
+    return _summarize
 
 
 class SummarizationService:

@@ -47,6 +47,7 @@ const AdminHistoryPage = () => {
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState({});
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const username = JSON.parse(localStorage.getItem('user'))?.username;
   const navigate = useNavigate();
   const location = useLocation();
@@ -66,12 +67,14 @@ const AdminHistoryPage = () => {
   }, [username]);
 
   const handleClear = async () => {
-    if (!window.confirm('Delete all history?')) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/auth/user-history/delete/${username}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) setHistory([]);
-    } catch {}
+    } catch {
+    } finally {
+      setShowClearConfirm(false);
+    }
   };
 
   const handleDeleteOne = async (timestamp, e) => {
@@ -164,9 +167,36 @@ const AdminHistoryPage = () => {
 
             {history.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
-                <button className="admin-btn-danger admin-btn-sm" onClick={handleClear}>
-                  Clear All History
-                </button>
+                <AnimatePresence mode="wait">
+                  {showClearConfirm ? (
+                    <motion.div
+                      key="confirm"
+                      initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+                        padding: '12px 14px',
+                        background: 'rgba(239,68,68,0.06)',
+                        border: '1px solid rgba(239,68,68,0.2)',
+                        borderRadius: '10px',
+                      }}
+                    >
+                      <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)', flex: 1 }}>
+                        Delete all history? This cannot be undone.
+                      </span>
+                      <button className="admin-btn-danger admin-btn-sm" onClick={handleClear}>Confirm</button>
+                      <button className="admin-btn-secondary admin-btn-sm" onClick={() => setShowClearConfirm(false)}>Cancel</button>
+                    </motion.div>
+                  ) : (
+                    <motion.button
+                      key="clear"
+                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                      className="admin-btn-danger admin-btn-sm"
+                      onClick={() => setShowClearConfirm(true)}
+                    >
+                      Clear All History
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               </div>
             )}
 

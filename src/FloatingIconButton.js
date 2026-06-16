@@ -20,12 +20,12 @@ const FloatingIconButton = () => {
             <div className="floating-icon-button">
                 <img
                     src={`${process.env.PUBLIC_URL}/video_summarizer_icon.png`}
-                    alt="Video Summarizer"
+                    alt="VidFusion"
                 />
             </div>
             {showTooltip && (
                 <div className="floating-tooltip">
-                    Video Summarizer
+                    VidFusion
                 </div>
             )}
         </div>

@@ -189,9 +189,8 @@ def score_keyframes_vs_summary(
     """
     Compute CLIP cross-modal scores for a list of keyframes against summary text.
 
-    Args:
-        keyframes:    List of keyframe dicts with a "frame_path" key.
-        summary_text: Summarized text used as the text query.
+    Processes all valid frames in a single batched forward pass — much faster
+    than one-at-a-time when there are many keyframes (e.g. 26 from a long video).
 
     Returns:
         List of float scores in [0, 1], one per keyframe.
@@ -203,26 +202,61 @@ def score_keyframes_vs_summary(
     if not keyframes or not summary_text:
         return default
 
+    loaded = _load_clip()
+    if loaded is None:
+        return default
+    model, processor, device = loaded
+
     text_emb = get_text_embedding(summary_text)
     if text_emb is None:
         return default
 
-    scores: List[float] = []
-    for kf in keyframes:
-        frame_path = kf.get("frame_path", "")
-        if not frame_path or not Path(frame_path).exists():
-            scores.append(0.5)
-            continue
+    # Separate valid frames from missing ones
+    valid_indices: List[int] = []
+    valid_paths: List[str] = []
+    for i, kf in enumerate(keyframes):
+        fp = kf.get("frame_path", "")
+        if fp and Path(fp).exists():
+            valid_indices.append(i)
+            valid_paths.append(fp)
 
-        img_emb = get_frame_embedding(frame_path)
-        if img_emb is None:
-            scores.append(0.5)
-            continue
+    if not valid_paths:
+        return default
 
-        # Both vectors are L2-normalized → dot product = cosine similarity
-        cosine = float(np.dot(img_emb, text_emb))
-        scores.append(_cosine_to_score(cosine))
+    # Batch all frames in one forward pass
+    try:
+        import torch
+        from PIL import Image
 
+        images = [Image.open(p).convert("RGB") for p in valid_paths]
+        inputs = processor(images=images, return_tensors="pt", padding=True).to(device)
+
+        with torch.no_grad():
+            vision_out = model.vision_model(pixel_values=inputs["pixel_values"])
+            pooled = vision_out.pooler_output
+            image_features = model.visual_projection(pooled)  # [B, 512]
+
+        # L2-normalize each row
+        norms = image_features.norm(dim=1, keepdim=True).clamp(min=1e-8)
+        img_embs = (image_features / norms).cpu().numpy()  # [B, 512]
+
+        # Dot product with text embedding → cosine similarity
+        cosines = img_embs @ text_emb  # [B]
+
+        scores: List[float] = [0.5] * n
+        for rank, idx in enumerate(valid_indices):
+            scores[idx] = _cosine_to_score(float(cosines[rank]))
+        return scores
+
+    except Exception as e:
+        print(f"[CLIP] Batch scoring failed, falling back to per-frame: {e}")
+
+    # Per-frame fallback
+    scores = [0.5] * n
+    for i, fp in zip(valid_indices, valid_paths):
+        img_emb = get_frame_embedding(fp)
+        if img_emb is not None:
+            scores[i] = _cosine_to_score(float(np.dot(img_emb, text_emb)))
     return scores
 
 

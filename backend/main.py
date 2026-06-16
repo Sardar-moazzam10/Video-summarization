@@ -1,5 +1,11 @@
+import os
+# Suppress HuggingFace Hub "unauthenticated requests" warning — models are cached locally
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+
 """
-Video Summarizer API - FastAPI Main Application
+VidFusion API - FastAPI Main Application
 
 Single unified backend replacing:
 - auth_backend.py (port 5000)
