@@ -92,6 +92,7 @@ const SearchPage = () => {
           video_ids: selectedForMerge,
           target_duration_minutes: durationMinutes,
           generate_audio: true,
+          generate_video: true,
         }),
       });
       const data = await res.json();

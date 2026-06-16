@@ -66,15 +66,17 @@ const SuggestedPage = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          selectedSegments: selectedForMerge.map((id) => ({ videoId: id })),
-          targetDuration: parseInt(mergeDuration, 10) || 300,
+          video_ids: selectedForMerge,
+          target_duration_minutes: Math.max(5, Math.min(20, parseInt(mergeDuration, 10) / 60 || 10)),
+          generate_audio: true,
+          generate_video: true,
         }),
       });
       const data = await res.json();
-      if (data.mergeId) {
-        navigate(`/merged-player/${data.mergeId}`);
+      if (data.job_id) {
+        navigate(`/merged-player/${data.job_id}`);
       } else {
-        alert('Server error during merge.');
+        alert(data.detail || 'Server error during merge.');
       }
     } catch (err) {
       console.error('Merge failed:', err);

@@ -228,7 +228,7 @@ class VoiceService:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 audio_chunks.append(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
+            elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
                 submaker.feed(chunk)
 
         # Write audio
