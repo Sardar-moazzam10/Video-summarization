@@ -29,6 +29,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-download ML models during build (avoids first-run delay)
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-en-v1.5')"
 RUN python -c "from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; AutoTokenizer.from_pretrained('sshleifer/distilbart-cnn-12-6'); AutoModelForSeq2SeqLM.from_pretrained('sshleifer/distilbart-cnn-12-6')"
+# Verify librosa + ffmpeg work (audio energy scorer — replaces CLIP)
+RUN python -c "import librosa; import numpy as np; print('librosa OK:', librosa.__version__)"
 
 # Backend code
 COPY backend/ ./backend/

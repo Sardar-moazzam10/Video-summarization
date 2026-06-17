@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     CAPTION_MODEL: str = "llava:7b"       # Ollama multimodal model for keyframe descriptions
 
     # =====================================================
+    # EXTERNAL TOOLS
+    # =====================================================
+    YTDLP_PATH: str = ""   # Leave empty to use system PATH; set to full path if in venv only
+    FFMPEG_PATH: str = ""
+    NODE_PATH: str = ""
+
+    # =====================================================
     # CACHE SETTINGS
     # =====================================================
     VIDEO_CACHE_ENABLED: bool = True

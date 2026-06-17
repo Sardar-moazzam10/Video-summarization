@@ -30,9 +30,14 @@ from pathlib import Path
 
 
 def _resolve_binary(env_name: str, default_name: str) -> str:
-    override = os.getenv(env_name)
-    if override:
-        return override
+    # Read from pydantic settings first (loaded from .env), fall back to raw os.getenv
+    try:
+        from ..core.config import get_settings
+        val = getattr(get_settings(), env_name, "") or os.getenv(env_name, "")
+    except Exception:
+        val = os.getenv(env_name, "")
+    if val and os.path.isfile(val):
+        return val
     return shutil.which(default_name) or default_name
 
 
@@ -91,12 +96,12 @@ class VideoService:
             if progress_callback:
                 await progress_callback("Cutting highlight clips (precise seek)...")
 
+            if progress_callback:
+                await progress_callback(
+                    f"Cutting {len(highlight_segments)} clips..."
+                )
             clips = []
             for i, seg in enumerate(highlight_segments):
-                if progress_callback:
-                    await progress_callback(
-                        f"Encoding clip {i + 1}/{len(highlight_segments)} ..."
-                    )
                 clip = await self._trim_and_normalize_segment(
                     seg, video_paths, work_dir, i
                 )
@@ -283,7 +288,7 @@ class VideoService:
             "-i", src,
             "-ss", f"{precise_offset:.3f}",   # precise offset from keyframe
             "-t",  f"{duration:.3f}",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
             "-r", "30",
             "-vf", vf,

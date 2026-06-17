@@ -84,15 +84,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARN] Ollama check failed: {e}")
 
-    # Check CLIP availability
-    try:
-        from .services.clip_feature_extractor import is_clip_available
-        if is_clip_available():
-            print(f"[OK] CLIP: transformers available — {settings.CLIP_MODEL} loads on first video job")
-        else:
-            print("[INFO] CLIP: transformers unavailable — visual scoring uses motion only")
-    except Exception as e:
-        print(f"[WARN] CLIP check failed: {e}")
+    # Audio energy scorer uses ffmpeg + librosa — no model download, no pre-load needed.
 
     yield
     # Shutdown

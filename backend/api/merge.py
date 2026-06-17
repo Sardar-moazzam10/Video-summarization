@@ -875,20 +875,31 @@ async def process_merge_job(job_id: str):
                         visual_keyframes = []
                     keyframes_extracted[vid] = len(visual_keyframes)
 
-                    # Step 2b: Add CLIP cross-modal scores (requires summary_text, available now)
+                    # Step 2b: Audio energy scoring (replaces CLIP for podcast content).
+                    # CLIP scores are nearly flat for talking-head videos (diff < 0.005
+                    # measured on real data). Audio energy gives 250x more variance by
+                    # scoring RMS loudness + spectral flux + ZCR — capturing emphasis
+                    # and speaking pace, which are the real signals of importance in a
+                    # single-speaker podcast. Populates the same "clip_score" field so
+                    # _score_segments_hybrid() needs no changes.
                     if visual_keyframes:
                         try:
+                            from ..services.audio_energy_scorer import augment_keyframes_with_audio_energy
                             await asyncio.wait_for(
                                 asyncio.to_thread(
-                                    augment_keyframes_with_clip, visual_keyframes, summary_text
+                                    augment_keyframes_with_audio_energy,
+                                    visual_keyframes,
+                                    vid_path,
                                 ),
                                 timeout=120.0,
                             )
                         except asyncio.TimeoutError:
-                            print(f"[Video] CLIP scoring timed out for {vid} — using default scores")
+                            print(f"[Video] Audio energy scoring timed out for {vid} — using default scores")
+                        except Exception as ae_err:
+                            print(f"[Video] Audio energy scoring failed: {ae_err} — using default scores")
                         print(
                             f"[Video] {vid}: {len(visual_keyframes)} keyframes "
-                            f"→ CLIP + temporal scores ready"
+                            f"→ audio energy + temporal scores ready"
                         )
 
                     # Step 2c: Narration-driven clip selection (primary path).
@@ -924,15 +935,17 @@ async def process_merge_job(job_id: str):
                                   f"— falling back to score-based")
 
                     if not _used_narration_driven:
-                        # Fallback: 4-signal hybrid scoring (SBERT + TF-IDF + CLIP + temporal)
+                        # Fallback: 4-signal hybrid scoring (SBERT + TF-IDF + audio + temporal)
+                        # min_segment_duration=20s ensures clips are long enough to be coherent
+                        # — short choppy clips feel like channel surfing, not a highlight reel.
                         highlights = extract_highlight_segments(
                             video_id=vid,
                             transcript_segments=segs,
                             summary_text=summary_text,
                             target_duration_seconds=per_video_seconds,
                             context_padding_seconds=1.5,
-                            min_segment_duration=3.0,
-                            max_segment_duration=60.0,
+                            min_segment_duration=20.0,
+                            max_segment_duration=90.0,
                             visual_keyframes=visual_keyframes or None,
                         )
 

@@ -17,14 +17,12 @@ export const fetchVideos = async (searchQuery, videoDuration = 'long') => {
       },
     });
 
-    // Further filter results on the client side
+    // Filter: at least one word from the query must appear in title or description
+    const queryWords = searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 2);
     const relevantVideos = response.data.items.filter((video) => {
       const title = video.snippet.title.toLowerCase();
       const description = video.snippet.description.toLowerCase();
-      const queryLower = searchQuery.toLowerCase();
-
-      // Check if the query is in the title or description
-      return title.includes(queryLower) || description.includes(queryLower);
+      return queryWords.some(word => title.includes(word) || description.includes(word));
     });
 
     return relevantVideos;

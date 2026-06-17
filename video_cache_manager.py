@@ -32,11 +32,17 @@ VIDEO_CACHE_MAX_AGE_DAYS = int(os.getenv("VIDEO_CACHE_MAX_AGE_DAYS", "30"))
 MAX_PARALLEL_DOWNLOADS = int(os.getenv("MAX_PARALLEL_DOWNLOADS", "2"))
 DOWNLOAD_RETRY_ATTEMPTS = int(os.getenv("DOWNLOAD_RETRY_ATTEMPTS", "3"))
 
-# Resolve binaries
+# Resolve binaries — checks .env via pydantic settings, then PATH
 def _resolve_binary(env_name: str, default_name: str) -> str:
-    override = os.getenv(env_name)
-    if override:
-        return override
+    try:
+        import sys
+        sys.path.insert(0, BASE_DIR)
+        from backend.core.config import get_settings
+        val = getattr(get_settings(), env_name, "") or os.getenv(env_name, "")
+    except Exception:
+        val = os.getenv(env_name, "")
+    if val and os.path.isfile(val):
+        return val
     return shutil.which(default_name) or default_name
 
 YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")

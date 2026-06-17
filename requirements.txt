@@ -38,6 +38,9 @@ langdetect>=1.0.9
 # --- Voice (FREE) ---
 edge-tts>=6.1.0
 
+# --- Audio Analysis (podcast highlight scoring) ---
+librosa>=0.10.0        # audio energy scoring: replaces CLIP for single-speaker podcast content
+
 # --- Auth & Security ---
 python-jose[cryptography]
 passlib[bcrypt]>=1.7.4
