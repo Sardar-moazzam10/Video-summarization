@@ -36,7 +36,7 @@ const getStrength = (pwd) => {
 
 const SignupPage = () => {
   const [formData, setFormData] = useState({
-    firstName: '', lastName: '', email: '', username: '', password: '', role: 'user',
+    name: '', email: '', password: '', role: 'user',
   });
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState('');
@@ -84,7 +84,7 @@ const SignupPage = () => {
       <div className="auth-bg-gradient" />
       <div className="auth-bg-grid" />
 
-      <motion.div className="auth-card auth-card-wide"
+      <motion.div className="auth-card"
         initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
 
         <div className="auth-logo" onClick={() => navigate('/')}>
@@ -96,21 +96,16 @@ const SignupPage = () => {
         <p className="auth-subheading">Start summarizing videos for free</p>
 
         <form className="auth-form" onSubmit={handleSubmit}>
-          {/* Name row */}
-          <div className="auth-row">
-            <div className="auth-field">
-              <label className="auth-label">First Name</label>
-              <div className="auth-input-wrap">
-                <input type="text" name="firstName" placeholder="John"
-                  value={formData.firstName} onChange={handleChange} required />
-              </div>
-            </div>
-            <div className="auth-field">
-              <label className="auth-label">Last Name</label>
-              <div className="auth-input-wrap">
-                <input type="text" name="lastName" placeholder="Doe"
-                  value={formData.lastName} onChange={handleChange} required />
-              </div>
+          {/* Full name (optional) */}
+          <div className="auth-field">
+            <label className="auth-label">Full Name <span className="auth-optional">(optional)</span></label>
+            <div className="auth-input-wrap">
+              <svg className="auth-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+              <input type="text" name="name" placeholder="John Doe"
+                value={formData.name} onChange={handleChange} />
             </div>
           </div>
 
@@ -125,19 +120,6 @@ const SignupPage = () => {
               </svg>
               <input type="email" name="email" placeholder="john@example.com"
                 value={formData.email} onChange={handleChange} required />
-            </div>
-          </div>
-
-          {/* Username */}
-          <div className="auth-field">
-            <label className="auth-label">Username</label>
-            <div className="auth-input-wrap">
-              <svg className="auth-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-              </svg>
-              <input type="text" name="username" placeholder="johndoe"
-                value={formData.username} onChange={handleChange} required />
             </div>
           </div>
 

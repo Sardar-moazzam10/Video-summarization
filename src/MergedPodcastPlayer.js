@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import axios from 'axios';
 import { API_BASE_URL } from './config/api.js';
+import QualityPanel from './QualityPanel.js';
 
 const STAGES = [
   { key: 'transcribing', label: 'Transcribing', icon: '01' },
@@ -365,6 +366,9 @@ const MergedPodcastPlayer = () => {
                 ))}
               </div>
             )}
+
+            {/* Quality Check — two scores: summary vs video, and video vs summary */}
+            <QualityPanel mergeId={mergeId} delay={0.18} />
 
             {/* Audio Player */}
             {audioUrl && (

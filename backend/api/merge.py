@@ -269,6 +269,77 @@ async def get_job_result(job_id: str):
     }
 
 
+@router.get("/{job_id}/evaluate")
+async def evaluate_job_quality(job_id: str, llm: bool = False):
+    """
+    Quality scorecard for a completed job — two separate scores:
+
+      check_a (summary side): is the AI summary a faithful summary of the
+          original video(s)?  (summary vs original transcript)
+      check_b (video side): do the generated highlight clips represent the
+          summary?  (clip transcripts vs summary) — expected to be high.
+
+    Query params:
+        llm=false (default): FAST — keyword + SBERT coverage only (<1s).
+                             Safe to call automatically on every video.
+        llm=true           : FULL — also runs the Ollama judge (30-90s).
+                             Use for an on-demand "detailed analysis" button.
+    """
+    jobs_collection = await get_jobs_collection()
+    job_data = await jobs_collection.find_one({"job_id": job_id})
+
+    if not job_data:
+        raise HTTPException(404, "Job not found")
+
+    if job_data["status"] not in {JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value}:
+        raise HTTPException(400, f"Job not completed. Current status: {job_data['status']}")
+
+    summary_text = job_data.get("summary_text", "")
+    if not summary_text.strip():
+        raise HTTPException(400, "Job has no summary to evaluate")
+
+    # Reuse the same transcript fetch the pipeline uses (cached in MongoDB)
+    video_ids = job_data.get("video_ids", [])
+    transcript_text_map, segments_map = await fetch_transcripts_with_segments(video_ids)
+    transcript_segments = []
+    for segs in segments_map.values():
+        transcript_segments.extend(segs)
+
+    if not transcript_segments:
+        raise HTTPException(400, "Original transcript unavailable — cannot evaluate")
+
+    # The selected highlight clips carry their transcript text (Check B input)
+    clips = job_data.get("highlight_segments", []) or []
+
+    # Import the standalone evaluator's scoring logic (single source of truth)
+    import sys as _sys
+    import os as _os
+    _root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    from evaluate_summary import evaluate as _evaluate
+
+    report = await _evaluate(
+        transcript_segments=transcript_segments,
+        summary_text=summary_text,
+        clips=clips,
+        use_llm=bool(llm),
+    )
+
+    # Return a frontend-friendly shape: two scores + the detail blocks
+    return {
+        "job_id": job_id,
+        "llm_used": bool(llm),
+        "summary_score": report["check_a"]["score"],
+        "video_score": report["check_b"]["score"],
+        "check_a": report["check_a"],
+        "check_b": report["check_b"],
+        "source_words": report["source_words"],
+        "summary_words": report["summary_words"],
+        "num_clips": report["num_clips"],
+    }
+
+
 @router.get("/{job_id}/audio")
 async def get_job_audio(job_id: str):
     """

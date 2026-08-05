@@ -35,9 +35,51 @@ class AuthService:
         self.users = db["users"]
         self.history = db["history"]
 
+    async def _generate_unique_username(self, email: str) -> str:
+        """
+        Derive a unique username from the email local-part so users never have
+        to pick one. e.g. john.doe@x.com -> 'johndoe', with a numeric suffix if
+        that is already taken ('johndoe1', 'johndoe2', ...).
+        """
+        import re
+        base = re.sub(r'[^a-z0-9]', '', email.split('@')[0].lower()) or 'user'
+        if len(base) < 3:
+            base = f"{base}user"  # satisfy the 3-char minimum
+        candidate = base
+        suffix = 0
+        while await self.users.find_one({"username": candidate}):
+            suffix += 1
+            candidate = f"{base}{suffix}"
+        return candidate
+
     async def create_user(self, user_data: dict) -> dict:
-        """Create new user"""
-        # Check existing
+        """Create new user.
+
+        Signup now only requires email + password (+ optional name). This method
+        fills in the legacy identity fields the rest of the app relies on:
+          - username: auto-generated from the email if not supplied
+          - firstName/lastName: split from the single `name` field, or derived
+            from the email local-part when no name is given.
+        """
+        email = (user_data.get("email") or "").strip()
+
+        # Derive firstName / lastName from the single optional `name` field
+        name = (user_data.pop("name", "") or "").strip()
+        if not user_data.get("firstName"):
+            if name:
+                parts = name.split()
+                user_data["firstName"] = parts[0]
+                user_data["lastName"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+            else:
+                user_data["firstName"] = email.split("@")[0] if email else "User"
+        if not user_data.get("lastName"):
+            user_data["lastName"] = ""
+
+        # Auto-generate a unique username when the client didn't send one
+        if not user_data.get("username"):
+            user_data["username"] = await self._generate_unique_username(email)
+
+        # Check existing (by email or the resolved username)
         existing = await self.users.find_one({
             "$or": [
                 {"email": user_data["email"]},

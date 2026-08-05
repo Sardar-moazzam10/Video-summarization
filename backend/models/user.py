@@ -7,11 +7,15 @@ from datetime import datetime
 
 
 class UserCreate(BaseModel):
-    firstName: str = Field(..., min_length=1, max_length=50)
-    lastName: str = Field(..., min_length=1, max_length=50)
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=30)
     password: str = Field(..., min_length=6)
+    # Single optional display name — split into firstName/lastName server-side.
+    name: Optional[str] = Field(default="", max_length=100)
+    # Legacy identity fields — now optional and auto-filled by the auth service
+    # (username is generated from the email) so signup only needs email+password+name.
+    firstName: Optional[str] = Field(default=None, max_length=50)
+    lastName: Optional[str] = Field(default=None, max_length=50)
+    username: Optional[str] = Field(default=None, min_length=3, max_length=30)
     role: Literal["user", "admin"] = "user"
 
 

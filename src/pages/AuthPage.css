@@ -126,6 +126,11 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
+.auth-optional {
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.3);
+}
+
 .auth-label-row {
   display: flex;
   justify-content: space-between;
@@ -187,6 +192,24 @@
   box-shadow: 0 0 0 3px rgba(71, 139, 224, 0.1);
 }
 
+/* Browser autofill override — Chrome/Edge force a light background and dark
+   text on saved/autofilled fields, which broke the dark theme and made the
+   eye toggle nearly invisible. The inset box-shadow trick repaints the field
+   with a solid dark color (autofill ignores `background`), and
+   -webkit-text-fill-color keeps the typed text white. */
+.auth-input-wrap input:-webkit-autofill,
+.auth-input-wrap input:-webkit-autofill:hover,
+.auth-input-wrap input:-webkit-autofill:focus,
+.auth-input-wrap input:-webkit-autofill:active {
+  -webkit-text-fill-color: #fff;
+  caret-color: #fff;
+  -webkit-box-shadow: 0 0 0 1000px #1b2333 inset;
+  box-shadow: 0 0 0 1000px #1b2333 inset;
+  /* Delay the autofill background swap effectively forever so it never
+     flashes the light color. */
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 /* Eye toggle button */
 .auth-eye-btn {
   position: absolute;
@@ -196,7 +219,7 @@
   justify-content: center;
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.55);
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
@@ -205,7 +228,7 @@
   z-index: 1;
 }
 .auth-eye-btn:hover {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 /* When eye button is present, add right padding to input */
