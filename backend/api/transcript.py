@@ -2,10 +2,9 @@
 Transcript API routes
 """
 from typing import List
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from ..services.transcript_service import (
-    TranscriptService,
     get_transcript_service,
     extract_video_id,
 )

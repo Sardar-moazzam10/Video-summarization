@@ -9,7 +9,7 @@ Features:
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
 import uuid
@@ -105,7 +105,8 @@ class RichOutput(BaseModel):
 class MergeJobCreate(BaseModel):
     """Request to create a new merge job"""
     video_ids: List[str] = Field(..., min_length=1, max_length=10)
-    target_duration_minutes: int = Field(default=10, ge=5, le=20)
+    # ge=2 allows the fast 2-minute "Quick" demo profile (was ge=5).
+    target_duration_minutes: int = Field(default=10, ge=2, le=20)
     voice_id: Optional[str] = None
     generate_audio: bool = True
     generate_video: bool = False
@@ -202,37 +203,8 @@ def get_duration_style(minutes: int) -> DurationStyle:
         return DurationStyle.COMPREHENSIVE
 
 
-DURATION_CONFIGS = {
-    DurationStyle.HEADLINE: {
-        "target_words": 750,
-        "words_per_minute": 160,
-        "include_examples": False,
-        "include_transitions": False,
-        "include_sources": False,
-        "max_topics": 5
-    },
-    DurationStyle.BRIEF: {
-        "target_words": 1500,
-        "words_per_minute": 150,
-        "include_examples": True,
-        "include_transitions": True,
-        "include_sources": False,
-        "max_topics": 8
-    },
-    DurationStyle.STANDARD: {
-        "target_words": 2200,
-        "words_per_minute": 145,
-        "include_examples": True,
-        "include_transitions": True,
-        "include_sources": True,
-        "max_topics": 12
-    },
-    DurationStyle.COMPREHENSIVE: {
-        "target_words": 2800,
-        "words_per_minute": 140,
-        "include_examples": True,
-        "include_transitions": True,
-        "include_sources": True,
-        "max_topics": 15
-    }
-}
+# NOTE: the former DURATION_CONFIGS dict lived here. It duplicated the profile
+# table in backend/services/duration_profiles.py (DURATION_PROFILES) and was
+# never read, so it was a divergence hazard — it had no 2-minute entry after the
+# Express profile was added. duration_profiles.get_profile() is the single
+# source of truth for target_words and related generation settings.

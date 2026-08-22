@@ -31,7 +31,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 

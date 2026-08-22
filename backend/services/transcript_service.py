@@ -15,14 +15,35 @@ Also handles:
 
 import re
 import os
+import sys
 import json
+import shutil
+import importlib.util
 import subprocess
 import tempfile
 import time
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List
 
 from youtube_transcript_api import YouTubeTranscriptApi
+
+
+def _ytdlp_cmd() -> Optional[List[str]]:
+    """
+    Command prefix for invoking yt-dlp, or None if it is unavailable.
+
+    Prefers `<current interpreter> -m yt_dlp` so the venv's installed package is
+    used regardless of whether venv/bin is on the server process's PATH — the
+    console script is only reachable when the venv is activated, the module is
+    always reachable from the interpreter that imported this file.
+    Falls back to a PATH lookup for environments where yt-dlp is installed as a
+    standalone binary (e.g. the Docker image, which curls it into /usr/local/bin).
+    """
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
+    exe = shutil.which("yt-dlp")
+    return [exe] if exe else None
+
 
 # Lazy-loaded models
 _summarizer = None
@@ -230,10 +251,9 @@ class TranscriptService:
         Fallback: Download subtitles via yt-dlp.
         Tries auto-subs in multiple languages.
         """
-        import shutil
-
-        if not shutil.which("yt-dlp"):
-            print("[Transcript] yt-dlp not found in PATH, skipping tier 2")
+        ytdlp = _ytdlp_cmd()
+        if ytdlp is None:
+            print("[Transcript] yt-dlp not installed (pip install yt-dlp), skipping tier 2")
             return None
 
         url = f"https://www.youtube.com/watch?v={video_id}"
@@ -244,7 +264,7 @@ class TranscriptService:
                 try:
                     out_template = os.path.join(tmpdir, "sub")
                     cmd = [
-                        "yt-dlp",
+                        *ytdlp,
                         "--write-auto-sub",
                         "--skip-download",
                         "--sub-lang", sub_lang,
@@ -290,7 +310,7 @@ class TranscriptService:
         # Approach 2: Try --print subtitle (older yt-dlp fallback)
         try:
             cmd = [
-                "yt-dlp",
+                *ytdlp,
                 "--write-auto-sub", "--skip-download",
                 "--sub-lang", "en", "--sub-format", "json3",
                 "--no-warnings", "--quiet", "--print", "subtitle",
@@ -319,9 +339,8 @@ class TranscriptService:
         Last resort: Download audio and transcribe with OpenAI Whisper.
         Slower but works for any video with audio.
         """
-        import shutil
-
-        if not shutil.which("yt-dlp"):
+        ytdlp = _ytdlp_cmd()
+        if ytdlp is None:
             print("[Transcript] yt-dlp needed for audio download, skipping Whisper")
             return None
 
@@ -339,7 +358,7 @@ class TranscriptService:
             # Download audio only
             try:
                 cmd = [
-                    "yt-dlp",
+                    *ytdlp,
                     "--extract-audio",
                     "--audio-format", "mp3",
                     "--audio-quality", "5",  # Medium quality (faster download)

@@ -16,7 +16,6 @@ No DB calls, no API calls, no global state.
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional
 

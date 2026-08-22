@@ -10,7 +10,6 @@ Available voices: https://github.com/rany2/edge-tts
 import edge_tts
 import asyncio
 import hashlib
-import os
 from typing import Optional
 from pathlib import Path
 

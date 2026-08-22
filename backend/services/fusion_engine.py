@@ -16,7 +16,7 @@ Pipeline:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 import numpy as np
 import re
@@ -158,9 +158,18 @@ class FusionEngine:
         deduplicated = self._deduplicate_clusters(clusters)
         print(f"[Fusion] After dedup: {sum(len(c.sentences) for c in deduplicated)} sentences")
 
-        # Step 5: Detect conflicts
-        conflicts = self._detect_conflicts(deduplicated)
-        print(f"[Fusion] Found {len(conflicts)} potential conflicts")
+        # Step 5: Detect conflicts (cross-source disagreements).
+        # Only meaningful with 2+ sources — the feature exists to surface where
+        # videos contradict each other. With a single transcript it loads a
+        # 140 MB NLI model for little return, so we skip it there. Multi-video
+        # jobs still run the full NLI detection unchanged.
+        if len(transcripts) > 1:
+            conflicts = self._detect_conflicts(deduplicated)
+            print(f"[Fusion] Found {len(conflicts)} potential conflicts")
+        else:
+            conflicts = []
+            print("[Fusion] Single source — skipping NLI conflict detection "
+                  "(cross-source conflicts require 2+ videos)")
 
         # Step 6: Synthesize narrative
         narrative = self._synthesize_narrative(

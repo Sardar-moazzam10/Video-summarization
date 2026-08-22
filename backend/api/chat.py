@@ -8,7 +8,7 @@ Endpoints:
 - POST /api/v1/chat - Ask a question about processed video content
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from typing import Optional, List
 

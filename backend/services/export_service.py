@@ -4,7 +4,6 @@ Export Service — Generate PDF and text exports from rich summary output.
 Uses fpdf2 (pure Python, free, no system dependencies).
 """
 
-import io
 from typing import Optional
 
 

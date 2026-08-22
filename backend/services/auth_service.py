@@ -5,7 +5,6 @@ Includes backward compatibility for SHA256 -> bcrypt migration
 import random
 import hashlib
 from typing import Optional
-from datetime import datetime
 
 from ..core.security import hash_password, verify_password, create_token_response
 

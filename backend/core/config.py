@@ -14,9 +14,6 @@ class Settings(BaseSettings):
     # APP SETTINGS
     # =====================================================
     APP_NAME: str = "VidFusion"
-    APP_VERSION: str = "2.0.0"
-    DEBUG: bool = False
-    API_PREFIX: str = "/api/v1"
 
     # =====================================================
     # SECURITY (CRITICAL)
@@ -27,11 +24,9 @@ class Settings(BaseSettings):
     )
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 24
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
-    RATE_LIMIT_BURST: int = 10
 
     # CORS
     ALLOWED_ORIGINS: List[str] = [
@@ -51,15 +46,8 @@ class Settings(BaseSettings):
     # =====================================================
     MAIL_SERVER: str = "smtp.gmail.com"
     MAIL_PORT: int = 587
-    MAIL_USE_TLS: bool = True
     MAIL_USERNAME: str = ""
     MAIL_PASSWORD: str = ""
-
-    # =====================================================
-    # EXTERNAL APIs
-    # =====================================================
-    ELEVEN_API_KEY: str = ""
-    YOUTUBE_API_KEY: str = ""
 
     # =====================================================
     # LOCAL LLM (Ollama — free, no API key needed)
@@ -69,13 +57,22 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.2:3b"      # 2 GB RAM; swap to mistral:7b or ministral:8b for better quality
     OLLAMA_TIMEOUT_SECONDS: float = 100.0  # httpx hard limit — must be < the 120s asyncio wrapper in merge.py so background threads terminate before the asyncio cancel fires
 
+    # Ollama enrichment inside the MERGE pipeline only.
+    # Disabled by default: on CPU, llama3.2:3b consistently exceeds the timeout
+    # and returns nothing, so the job pays ~100s and then falls back to the local
+    # TF-IDF enrichment anyway (see _generate_local_enrichment in api/merge.py).
+    # Turning this off removes that dead time with no change to job output.
+    # This flag does NOT affect the Quality Panel's LLM judge (/merge/{id}/evaluate
+    # → evaluate_summary.ollama_judge), which calls Ollama directly and still works.
+    # Set ENABLE_OLLAMA_ENRICHMENT=true in .env to re-enable (e.g. on a GPU machine).
+    ENABLE_OLLAMA_ENRICHMENT: bool = False
+
     # =====================================================
     # AI/ML SETTINGS
     # =====================================================
     SUMMARIZATION_MODEL: str = "sshleifer/distilbart-cnn-12-6"  # 306 MB vs 1.6 GB BART-large, 95% quality
     EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"              # #1 MTEB 2024, 768-dim, replaces all-MiniLM
     CLIP_MODEL: str = "openai/clip-vit-base-patch16"            # ViT-B/16: 17% better than B/32, same API
-    WHISPER_MODEL: str = "base"
 
     # =====================================================
     # FRAME CAPTIONING (LLMVS-inspired — optional)
@@ -98,14 +95,12 @@ class Settings(BaseSettings):
     VIDEO_CACHE_ENABLED: bool = True
     VIDEO_CACHE_MAX_SIZE_GB: float = 10.0
     VIDEO_CACHE_MAX_AGE_DAYS: int = 30
-    TRANSCRIPT_CACHE_ENABLED: bool = True
-    AUDIO_CACHE_ENABLED: bool = True
 
     # =====================================================
     # DURATION PROFILES
     # =====================================================
     DEFAULT_DURATION_MINUTES: int = 10
-    MIN_DURATION_MINUTES: int = 5
+    MIN_DURATION_MINUTES: int = 2   # 2-minute "Quick" demo profile
     MAX_DURATION_MINUTES: int = 20
 
     class Config:

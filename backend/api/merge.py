@@ -12,9 +12,9 @@ Endpoints:
 - GET /api/v1/merge/profiles - Get available duration profiles
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
-from typing import Optional, Dict, Any
+from typing import Dict
 import asyncio
 import json
 from datetime import datetime
@@ -24,12 +24,10 @@ from ..models.job import (
     MergeJobCreate,
     MergeJob,
     MergeJobResponse,
-    MergeJobResult,
     JobStatus,
     FusionMetadata,
     RichOutput,
     get_duration_style,
-    DURATION_CONFIGS,
 )
 from ..services.duration_profiles import get_all_profiles, get_profile
 from ..services.fusion_engine import get_fusion_engine
@@ -739,7 +737,15 @@ async def process_merge_job(job_id: str):
             from ..services.ollama_service import get_ollama_service
             ollama = get_ollama_service()
 
-            if ollama.is_available():
+            if not settings.ENABLE_OLLAMA_ENRICHMENT:
+                # Skipped by default — on CPU this stage times out (~100s) and
+                # returns None, after which the local TF-IDF enrichment below
+                # produces the TLDR/takeaways/chapters anyway. Skipping removes
+                # the dead time without changing the job's output.
+                # The Quality Panel's LLM judge is unaffected and still uses Ollama.
+                print("[Ollama] Merge-path enrichment disabled "
+                      "(ENABLE_OLLAMA_ENRICHMENT=false) — using local TF-IDF enrichment")
+            elif ollama.is_available():
                 await update_status(
                     JobStatus.ENRICHING,
                     82,
@@ -890,7 +896,6 @@ async def process_merge_job(job_id: str):
             try:
                 from ..services.video_service import get_video_service
                 from ..services.visual_keyframe_extractor import extract_keyframes_for_segments
-                from ..services.clip_feature_extractor import augment_keyframes_with_clip
                 from ..services.segment_extractor import extract_highlight_segments, group_transcript_segments
 
                 video_svc = get_video_service()
@@ -933,17 +938,42 @@ async def process_merge_job(job_id: str):
                         JobStatus.GENERATING_VIDEO, 98,
                         f"Extracting keyframes for {vid} (fast: 1 frame per segment)..."
                     )
-                    transcript_groups = group_transcript_segments(segs)
-                    try:
-                        visual_keyframes = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                extract_keyframes_for_segments, vid, vid_path, transcript_groups
-                            ),
-                            timeout=90.0,
-                        )
-                    except asyncio.TimeoutError:
-                        print(f"[Video] Keyframe extraction timed out for {vid} — skipping visual stage")
+                    # GUARD: skip the visual stage entirely when the narration-driven
+                    # path will be used. That path (extract_highlights_narration_driven)
+                    # matches narration sentences to transcript segments with SBERT and
+                    # never reads visual_keyframes — so extracting them is pure cost.
+                    #
+                    # The cost is significant: keyframe extraction calls
+                    # augment_keyframes_with_temporal(), which loads CLIP to embed frames
+                    # when no clip_embedding is present. Worse, asyncio.wait_for() cannot
+                    # kill a thread started by asyncio.to_thread() — so on timeout the
+                    # job continued while that thread kept loading CLIP and embedding
+                    # frames in the background, stealing CPU from every later stage.
+                    #
+                    # Trade-off: if narration-driven selection later returns nothing
+                    # (e.g. SBERT unavailable), the fallback scorer runs without visual
+                    # signal and degrades to its SBERT+TF-IDF weighting — still correct,
+                    # just without the audio/temporal blend.
+                    narration_path_available = bool(
+                        subtitle_path and os.path.exists(subtitle_path)
+                    )
+
+                    if narration_path_available:
                         visual_keyframes = []
+                        print(f"[Video] {vid}: narration-driven selection available "
+                              f"— skipping keyframe/CLIP visual stage (scores unused)")
+                    else:
+                        transcript_groups = group_transcript_segments(segs)
+                        try:
+                            visual_keyframes = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    extract_keyframes_for_segments, vid, vid_path, transcript_groups
+                                ),
+                                timeout=90.0,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"[Video] Keyframe extraction timed out for {vid} — skipping visual stage")
+                            visual_keyframes = []
                     keyframes_extracted[vid] = len(visual_keyframes)
 
                     # Step 2b: Audio energy scoring (replaces CLIP for podcast content).

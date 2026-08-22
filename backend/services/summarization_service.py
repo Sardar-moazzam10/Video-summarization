@@ -12,7 +12,6 @@ Pipeline:
   5. Return final text matching the duration profile's target_words
 """
 
-from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..core.config import get_settings
 from .duration_profiles import DurationProfile, get_summarization_config

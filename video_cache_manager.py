@@ -14,8 +14,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Tuple
-from pathlib import Path
+from typing import Dict, Any, Optional
 # File locking is handled by threading locks instead of OS-level locks for cross-platform compatibility
 
 # === Configuration ===
@@ -45,7 +44,23 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
         return val
     return shutil.which(default_name) or default_name
 
-YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")
+def _resolve_ytdlp_cmd():
+    """
+    yt-dlp as a command prefix. Prefers `<current interpreter> -m yt_dlp` so the
+    venv's package is used even when venv/bin is not on PATH.
+    """
+    import sys
+    import importlib.util
+
+    val = _resolve_binary("YTDLP_PATH", "")
+    if val and os.path.isfile(val):
+        return [val]
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
+    return [shutil.which("yt-dlp") or "yt-dlp"]
+
+YTDLP_CMD = _resolve_ytdlp_cmd()
+YTDLP_BIN = YTDLP_CMD[0]  # retained for logging / back-compat
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
 FFPROBE_BIN = _resolve_binary("FFPROBE_PATH", "ffprobe")
 COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
@@ -93,18 +108,87 @@ class VideoCacheManager:
 
     def _update_metadata(self, video_id: str, file_size: int):
         """Update or create metadata for a cached video."""
+        metadata_path = self._get_metadata_path(video_id)
+
+        # Preserve the pin flag across re-downloads — this method rewrites the
+        # whole file, so reading it back first is what keeps a pinned video
+        # pinned if it is ever re-fetched.
+        pinned = False
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r') as f:
+                    pinned = bool(json.load(f).get("pinned", False))
+            except Exception:
+                pass
+
         metadata = {
             "video_id": video_id,
             "file_size": file_size,
             "last_accessed": datetime.now().isoformat(),
-            "downloaded_at": datetime.now().isoformat()
+            "downloaded_at": datetime.now().isoformat(),
+            "pinned": pinned
         }
 
-        metadata_path = self._get_metadata_path(video_id)
         os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
 
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
+
+    # =====================================================
+    # PINNING — protect demo videos from LRU eviction
+    # =====================================================
+
+    def set_pinned(self, video_id: str, pinned: bool = True) -> bool:
+        """
+        Mark a cached video as pinned (or unpin it).
+
+        Pinned videos are skipped by cleanup_old_cache() for BOTH eviction
+        triggers — the age limit and the size limit — so they survive until
+        explicitly unpinned. Used to protect demo videos.
+
+        Returns True on success, False if the video is not cached.
+        """
+        metadata_path = self._get_metadata_path(video_id)
+        if not os.path.exists(self._get_video_path(video_id)):
+            return False
+
+        metadata = {}
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+            except Exception:
+                metadata = {}
+
+        metadata.setdefault("video_id", video_id)
+        metadata.setdefault("downloaded_at", datetime.now().isoformat())
+        metadata["last_accessed"] = datetime.now().isoformat()
+        metadata["pinned"] = bool(pinned)
+
+        os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        return True
+
+    def is_pinned(self, video_id: str) -> bool:
+        """True if this cached video is protected from eviction."""
+        metadata_path = self._get_metadata_path(video_id)
+        if not os.path.exists(metadata_path):
+            return False
+        try:
+            with open(metadata_path, 'r') as f:
+                return bool(json.load(f).get("pinned", False))
+        except Exception:
+            return False
+
+    def list_pinned(self) -> list:
+        """List video_ids currently pinned in the cache."""
+        if not os.path.isdir(self.cache_dir):
+            return []
+        return [
+            vid for vid in os.listdir(self.cache_dir)
+            if os.path.isdir(self._get_video_dir(vid)) and self.is_pinned(vid)
+        ]
 
     def _touch_access_time(self, video_id: str):
         """Update last accessed time for cache hit."""
@@ -195,7 +279,7 @@ class VideoCacheManager:
         for attempt in range(1, DOWNLOAD_RETRY_ATTEMPTS + 1):
             try:
                 cmd = [
-                    YTDLP_BIN,
+                    *YTDLP_CMD,
                     "--ffmpeg-location", FFMPEG_BIN,
                     "--js-runtimes", f"node:{NODE_BIN}",
                     "--remote-components", "ejs:github",
@@ -320,7 +404,7 @@ class VideoCacheManager:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
         cmd = [
-            YTDLP_BIN,
+            *YTDLP_CMD,
             "--ffmpeg-location", FFMPEG_BIN,
             "--js-runtimes", f"node:{NODE_BIN}",
             "--remote-components", "ejs:github",
@@ -395,7 +479,8 @@ class VideoCacheManager:
                 "video_id": video_id,
                 "video_dir": video_dir,
                 "file_size": file_size,
-                "last_accessed": last_accessed
+                "last_accessed": last_accessed,
+                "pinned": self.is_pinned(video_id)
             })
 
         # Sort by last accessed (oldest first)
@@ -407,9 +492,18 @@ class VideoCacheManager:
         age_cutoff = datetime.now() - timedelta(days=VIDEO_CACHE_MAX_AGE_DAYS)
 
         # Remove old entries
+        pinned_count = 0
         for entry in cache_entries:
             should_remove = False
             reason = ""
+
+            # Pinned videos are never evicted — not by age, not by size.
+            # Their bytes still count toward total_size, so an over-limit cache
+            # keeps evicting unpinned entries around them.
+            if entry["pinned"]:
+                pinned_count += 1
+                print(f"📌 Keeping {entry['video_id']} (pinned)")
+                continue
 
             # Check age limit
             if entry["last_accessed"] < age_cutoff:
@@ -435,7 +529,8 @@ class VideoCacheManager:
             "removed_count": removed_count,
             "freed_space_mb": freed_space / (1024 * 1024),
             "remaining_size_mb": total_size / (1024 * 1024),
-            "remaining_count": len(cache_entries) - removed_count
+            "remaining_count": len(cache_entries) - removed_count,
+            "pinned_count": pinned_count
         }
 
         print(f"✅ Cleanup complete: removed {removed_count} videos, freed {result['freed_space_mb']:.1f} MB")

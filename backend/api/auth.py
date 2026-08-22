@@ -4,7 +4,7 @@ Auth API routes - FastAPI router
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any
 from ..models.user import (
-    UserCreate, UserLogin, UserResponse, UserUpdate,
+    UserCreate, UserLogin, UserUpdate,
     PasswordUpdate, PasswordReset, VerificationCode, HistoryItem
 )
 from ..services.auth_service import AuthService
