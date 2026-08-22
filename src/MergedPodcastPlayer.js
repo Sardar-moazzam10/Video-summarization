@@ -35,6 +35,9 @@ const MergedPodcastPlayer = () => {
   const [videoIds, setVideoIds] = useState([]);
   const [isCompiling, setIsCompiling] = useState(false);
   const [compileError, setCompileError] = useState('');
+  // This job's own settings, echoed back by /result. Carried into the
+  // highlight-reel job so it reproduces THIS summary instead of a new one.
+  const [jobSettings, setJobSettings] = useState({});
   const pollIntervalRef = useRef(null);
   const lastStatusRef = useRef('');
 
@@ -66,6 +69,10 @@ const MergedPodcastPlayer = () => {
         setRichOutput(resultRes.data.rich_output || null);
         setVideoId(resultRes.data.highlight_segments?.[0]?.video_id || resultRes.data.video_ids?.[0] || '');
         setVideoIds(resultRes.data.video_ids || []);
+        setJobSettings({
+          target_duration_minutes: resultRes.data.target_duration_minutes,
+          style: resultRes.data.rich_output?.style_applied,
+        });
         setWarning(resultRes.data.warning || res.data.warning || '');
         if (resultRes.data.audio_url) {
           setAudioUrl(`${API_BASE_URL}${resultRes.data.audio_url}`);
@@ -124,6 +131,10 @@ const MergedPodcastPlayer = () => {
                 setRichOutput(res.data.rich_output || null);
                 setVideoId(res.data.highlight_segments?.[0]?.video_id || res.data.video_ids?.[0] || '');
                 setVideoIds(res.data.video_ids || []);
+                setJobSettings({
+                  target_duration_minutes: res.data.target_duration_minutes,
+                  style: res.data.rich_output?.style_applied,
+                });
                 setWarning(res.data.warning || data.warning || '');
                 if (res.data.audio_url) {
                   setAudioUrl(`${API_BASE_URL}${res.data.audio_url}`);
@@ -220,33 +231,40 @@ const MergedPodcastPlayer = () => {
     }
   };
 
+  /**
+   * Re-run THIS job with generate_video enabled, to get a highlight reel.
+   *
+   * Every setting is carried over from the current job, so the summarizer —
+   * which is deterministic (do_sample=False) — reproduces the same summary
+   * rather than an unrelated one. The old POST to /transcript/compile was
+   * removed: MergeJobCreate has no field for segment boundaries, so its
+   * response could never be forwarded and was discarded on arrival.
+   */
   const handleAutoCompile = async () => {
-    if (!videoId) {
+    // All sources, not just the first — a 3-video summary gets a 3-video reel.
+    const sourceIds = videoIds.length > 0 ? videoIds : (videoId ? [videoId] : []);
+    if (sourceIds.length === 0) {
       setCompileError('No video ID found. Please re-process the video.');
       return;
     }
     setIsCompiling(true);
     setCompileError('');
     try {
-      await axios.post(`${API_BASE_URL}/api/v1/transcript/compile`, {
-        video_id: videoId,
-        summary_text: summary,
-        highlight_duration_seconds: 120,
-      });
       const mergeRes = await axios.post(`${API_BASE_URL}/api/v1/merge`, {
-        video_ids: [videoId],
+        video_ids: sourceIds,
         generate_video: true,
         generate_audio: true,
         highlight_duration_seconds: 120,
-        target_duration_minutes: 5,
-        style: 'educational',
+        // Fall back to the previous hardcoded values only if /result omitted them.
+        target_duration_minutes: jobSettings.target_duration_minutes || 5,
+        style: jobSettings.style || 'educational',
       });
       if (mergeRes.data.job_id) {
         window.open(`/merged-player/${mergeRes.data.job_id}`, '_blank');
       }
     } catch (err) {
-      console.error('Auto-compile failed:', err);
-      const msg = err.response?.data?.detail || 'Could not compile highlights. Please try again.';
+      console.error('Highlight reel request failed:', err);
+      const msg = err.response?.data?.detail || 'Could not generate highlights. Please try again.';
       setCompileError(msg);
     } finally {
       setIsCompiling(false);
@@ -380,7 +398,7 @@ const MergedPodcastPlayer = () => {
               >
                 <div style={styles.audioHeader}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#478BE0" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-                  <span style={styles.audioTitle}>AI Voice Narration</span>
+                  <span style={styles.audioTitle}>Summary Audio</span>
                 </div>
                 <audio controls style={styles.audioPlayer}>
                   <source src={audioUrl} type="audio/mpeg" />
@@ -688,21 +706,26 @@ const MergedPodcastPlayer = () => {
               <button style={styles.btnPrimary} onClick={handleBack}>
                 Create Another Summary
               </button>
-              <button
-                style={{
-                  ...styles.btnPrimary,
-                  background: isCompiling
-                    ? 'rgba(168, 85, 247, 0.3)'
-                    : 'linear-gradient(135deg, #a855f7, #7c3aed)',
-                  boxShadow: '0 4px 20px rgba(168,85,247,0.3)',
-                  opacity: isCompiling ? 0.7 : 1,
-                  cursor: isCompiling ? 'not-allowed' : 'pointer',
-                }}
-                onClick={handleAutoCompile}
-                disabled={isCompiling}
-              >
-                {isCompiling ? 'Compiling...' : 'Auto-Compile Highlights'}
-              </button>
+              {/* Only offered when this job has no video yet — with one, the
+                  button would just re-do work the page is already showing. */}
+              {!videoUrl && (
+                <button
+                  style={{
+                    ...styles.btnPrimary,
+                    background: isCompiling
+                      ? 'rgba(168, 85, 247, 0.3)'
+                      : 'linear-gradient(135deg, #a855f7, #7c3aed)',
+                    boxShadow: '0 4px 20px rgba(168,85,247,0.3)',
+                    opacity: isCompiling ? 0.7 : 1,
+                    cursor: isCompiling ? 'not-allowed' : 'pointer',
+                  }}
+                  onClick={handleAutoCompile}
+                  disabled={isCompiling}
+                  title={`Generate a video highlight reel from ${videoIds.length || 1} source video${videoIds.length > 1 ? 's' : ''}`}
+                >
+                  {isCompiling ? 'Generating...' : 'Generate Video Highlights'}
+                </button>
+              )}
             </motion.div>
             {compileError && (
               <p style={{ color: '#ef4444', fontSize: '13px', textAlign: 'center', marginTop: '8px' }}>

@@ -130,8 +130,8 @@ def extract_keyframes(
         print(f"[Keyframes] Temporal augmentation skipped: {e}")
         for kf in results:
             kf.setdefault("temporal_score", 0.5)
-    # Note: clip_score is NOT computed here — requires summary_text (unknown at this stage).
-    # clip_score is added in merge.py Stage 6 via augment_keyframes_with_clip(summary_text).
+    # Note: clip_score is added later in merge.py via
+    # audio_energy_scorer.augment_keyframes_with_audio_energy().
 
     print(f"[Keyframes] {video_id}: extracted {len(results)} keyframes -> {out_dir}")
     return results

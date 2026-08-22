@@ -45,16 +45,91 @@ def _ytdlp_cmd() -> Optional[List[str]]:
     return [exe] if exe else None
 
 
-# Lazy-loaded models
-_summarizer = None
+# =====================================================
+# SUMMARIZER (T5-small)
+# =====================================================
+#
+# transformers 5.x removed the "summarization" pipeline task — SUPPORTED_TASKS
+# no longer contains it, so pipeline("summarization", ...) raises
+# `KeyError: Unknown task summarization`. The model is therefore driven directly
+# through AutoModelForSeq2SeqLM.generate(), which behaves identically on
+# transformers 4.x and 5.x and bypasses task-registry validation entirely.
+# Mirrors the approach already used in services/summarization_service.py.
+
+_summarizer_model = None
+_summarizer_tokenizer = None
+
+_SUMMARIZER_MODEL_NAME = "t5-small"
+_SUMMARIZER_PREFIX = "summarize: "   # T5 is prefix-conditioned; without this it copies input
+_SUMMARIZER_MAX_INPUT_TOKENS = 512   # t5-small's encoder window
+
+
+def _load_summarizer():
+    """Lazy-load the T5 tokenizer + model once per process."""
+    global _summarizer_model, _summarizer_tokenizer
+
+    if _summarizer_model is None:
+        import warnings
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+        from ..core.config import get_hf_token
+
+        hf_token = get_hf_token()  # None when unset → anonymous, same as before
+        print(f"[Transcript] Loading summarizer: {_SUMMARIZER_MODEL_NAME}")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _summarizer_tokenizer = AutoTokenizer.from_pretrained(_SUMMARIZER_MODEL_NAME, token=hf_token)
+            _summarizer_model = AutoModelForSeq2SeqLM.from_pretrained(_SUMMARIZER_MODEL_NAME, token=hf_token)
+        _summarizer_model.eval()
+        print(f"[Transcript] Summarizer loaded: {_SUMMARIZER_MODEL_NAME}")
+
+    return _summarizer_tokenizer, _summarizer_model
 
 
 def get_summarizer():
-    global _summarizer
-    if _summarizer is None:
-        from transformers import pipeline
-        _summarizer = pipeline("summarization", model="t5-small", tokenizer="t5-small")
-    return _summarizer
+    """
+    Return a callable with the old pipeline signature:
+
+        summarizer(text, max_length=..., min_length=...) -> [{"summary_text": ...}]
+
+    Kept shape-compatible so existing callers need no changes.
+    """
+    tokenizer, model = _load_summarizer()
+
+    def _summarize(
+        text: str,
+        max_length: int = 150,
+        min_length: int = 50,
+        do_sample: bool = False,
+        **kwargs,
+    ):
+        import torch
+
+        # A caller passing min > max would make generate() hang on the constraint.
+        min_length = min(min_length, max(1, max_length - 1))
+
+        inputs = tokenizer(
+            _SUMMARIZER_PREFIX + text,
+            return_tensors="pt",
+            max_length=_SUMMARIZER_MAX_INPUT_TOKENS,
+            truncation=True,
+        )
+
+        with torch.no_grad():
+            ids = model.generate(
+                inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                max_length=max_length,
+                min_length=min_length,
+                num_beams=4,
+                length_penalty=2.0,
+                no_repeat_ngram_size=3,
+                early_stopping=True,
+                do_sample=do_sample,
+            )
+
+        return [{"summary_text": tokenizer.decode(ids[0], skip_special_tokens=True)}]
+
+    return _summarize
 
 
 # =====================================================
@@ -75,6 +150,15 @@ _YT_PATTERNS = [
 ]
 
 _BARE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{11}$')
+
+
+def _whisper_model_name() -> str:
+    """Whisper size from settings (WHISPER_MODEL in .env), defaulting to base."""
+    try:
+        from ..core.config import get_settings
+        return getattr(get_settings(), "WHISPER_MODEL", "") or "base"
+    except Exception:
+        return "base"
 
 
 def extract_video_id(video_id_or_url: str) -> str:
@@ -135,14 +219,20 @@ class TranscriptService:
         # Extract clean video ID from URL if needed
         video_id = extract_video_id(video_id)
 
-        # Check cache first
+        # Check cache first. A cached transcript is only reusable if it still
+        # holds a plausible timeline — see _transcript_is_sane(). Entries written
+        # by the old newline-realignment translator do not, and reusing them
+        # silently reproduces the original corruption on every later run.
         cached = await self.transcripts.find_one({"video_id": video_id})
         if cached:
-            return {
-                "transcript": cached["transcript"],
-                "source": cached.get("source", "cache"),
-                "cached": True,
-            }
+            if self._transcript_is_sane(cached.get("transcript")):
+                return {
+                    "transcript": cached["transcript"],
+                    "source": cached.get("source", "cache"),
+                    "cached": True,
+                }
+            print(f"[Transcript] Cached transcript for {video_id} failed the sanity "
+                  f"check — refetching instead of reusing it")
 
         # Tier 1: YouTube Transcript API (fastest)
         transcript = self._fetch_youtube_api(video_id)
@@ -153,6 +243,50 @@ class TranscriptService:
             transcript = self._fetch_ytdlp(video_id)
             source = "yt_dlp"
 
+        # Language gate.
+        #
+        # Captions come back in whatever language the uploader published. The rest
+        # of the pipeline is English-only: BGE embeddings, BART, the TF-IDF scorer
+        # and the FAISS index are all English models, and a summary written in the
+        # source language is not what the user asked for.
+        #
+        # Two paths, cheapest first, because this runs inside a user-facing job:
+        #
+        #   1. Translate the captions in place (~30s for a 630-segment
+        #      transcript — batched, see translation_service).
+        #   2. Re-transcribe the audio with Whisper's translate task (~7 minutes
+        #      for a 25-minute video at 3.4x realtime on CPU).
+        #
+        # Whisper produces better text — its segments end on sentence boundaries
+        # and are punctuated, where translated captions keep YouTube's arbitrary
+        # mid-sentence cuts. But that is the same fragmentation every English
+        # video already goes through, so the fast path lands a non-English video
+        # at parity with an English one, and 7 minutes of extra job latency is
+        # not worth buying more than parity by default.
+        #
+        # Whisper therefore runs only when the fast path did not actually produce
+        # English — no network, a rate limit, or a translator that passed the text
+        # through unchanged. The result is verified rather than assumed.
+        if transcript:
+            lang = self._detect_transcript_language(transcript)
+            if lang != "en":
+                print(f"[Transcript] {video_id} captions are '{lang}' — translating captions")
+                transcript = self._translate_transcript_to_english(transcript, lang)
+
+                if self._detect_transcript_language(transcript) == "en":
+                    source = f"{source}+translated"
+                else:
+                    print("[Transcript] Caption translation did not yield English — "
+                          "re-transcribing with Whisper (task=translate)")
+                    whisper_transcript = self._fetch_whisper(video_id)
+                    if whisper_transcript:
+                        transcript = whisper_transcript
+                        source = "whisper_translate"
+                    else:
+                        print("[Transcript] Whisper unavailable too — keeping the "
+                              "best-effort translation")
+                        source = f"{source}+partial"
+
         # Tier 3: Whisper speech-to-text (last resort)
         if not transcript:
             transcript = self._fetch_whisper(video_id)
@@ -160,6 +294,10 @@ class TranscriptService:
 
         if not transcript:
             return None
+
+        if not self._transcript_is_sane(transcript):
+            print(f"[Transcript] WARNING: transcript for {video_id} looks malformed "
+                  f"(source={source}); caching it anyway but downstream quality will suffer")
 
         # Cache in MongoDB
         await self.transcripts.update_one(
@@ -227,8 +365,12 @@ class TranscriptService:
                         fetched = transcript.fetch()
                         normalized = self._normalize_transcript(fetched)
                         if normalized:
-                            print(f"[Transcript] Fetched {transcript.language_code}, translating to English for {video_id}")
-                            return self._translate_transcript_to_english(normalized)
+                            # Returned in its ORIGINAL language on purpose. get_transcript()
+                            # owns the language decision now, because the good answer for a
+                            # non-English video is Whisper's translate task, not a
+                            # post-hoc translation of caption fragments.
+                            print(f"[Transcript] Fetched {transcript.language_code} captions for {video_id}")
+                            return normalized
                 except Exception:
                     pass
 
@@ -295,9 +437,7 @@ class TranscriptService:
                             transcript = self._parse_json3_subtitles(data)
                             if transcript:
                                 print(f"[Transcript] yt-dlp got subs (lang={sub_lang}) for {video_id}")
-                                if sub_lang not in ("en", "en.*"):
-                                    print(f"[Transcript] Translating yt-dlp {sub_lang} subs to English")
-                                    transcript = self._translate_transcript_to_english(transcript)
+                                # Original language kept — get_transcript() decides.
                                 return transcript
 
                 except subprocess.TimeoutExpired:
@@ -396,8 +536,9 @@ class TranscriptService:
             # Transcribe with Whisper
             try:
                 if self._whisper_model is None:
-                    self._whisper_model = whisper.load_model("base")
-                    print("[Transcript] Loaded Whisper base model")
+                    model_name = _whisper_model_name()
+                    self._whisper_model = whisper.load_model(model_name)
+                    print(f"[Transcript] Loaded Whisper {model_name} model")
 
                 result = self._whisper_model.transcribe(
                     actual_audio,
@@ -449,18 +590,71 @@ class TranscriptService:
                 })
         return result if result else None
 
+    # A segment cannot carry more words than its duration allows. Fast human
+    # speech tops out near 5 words/second; 12 leaves generous headroom for
+    # timing jitter while still catching a segment that swallowed the whole
+    # transcript (the old translator produced 1557 words in a 2.5s segment).
+    _MAX_WORDS_PER_SECOND = 12.0
+
+    @classmethod
+    def _transcript_is_sane(cls, transcript) -> bool:
+        """
+        True when the transcript's text plausibly fits its own timeline.
+
+        Guards against the corruption mode where a translation step collapses
+        every segment's text into one entry: that entry then holds thousands of
+        words against a duration of a second or two, and every clip timestamp
+        derived from it is wrong.
+        """
+        if not transcript or not isinstance(transcript, list):
+            return False
+        for seg in transcript:
+            if not isinstance(seg, dict):
+                return False
+            words = len(str(seg.get("text", "")).split())
+            duration = float(seg.get("duration", 0) or 0)
+            if words > 30 and duration > 0 and (words / duration) > cls._MAX_WORDS_PER_SECOND:
+                return False
+        return True
+
     @staticmethod
-    def _translate_transcript_to_english(transcript: list) -> list:
+    def _detect_transcript_language(transcript: list) -> str:
+        """
+        ISO 639-1 language of the transcript, or "en" when undetectable.
+
+        Sampled across the whole transcript rather than the first N characters:
+        a mixed-language transcript whose opening happens to be English would
+        otherwise be misread as English and skip translation entirely.
+        """
+        try:
+            from langdetect import detect
+            texts = [str(s.get("text", "")) for s in transcript if s.get("text")]
+            if not texts:
+                return "en"
+            # Each sampled segment is truncated before joining. Without that, one
+            # oversized segment fills the whole sample and decides the answer on
+            # its own — which is how a transcript whose first entry had swallowed
+            # an English translation still read as English while 630 Hindi
+            # segments followed it.
+            step = max(1, len(texts) // 40)
+            sample = " ".join(t[:120] for t in texts[::step])[:3000]
+            return detect(sample) if sample.strip() else "en"
+        except Exception:
+            return "en"
+
+    @staticmethod
+    def _translate_transcript_to_english(transcript: list, src_lang: str = "") -> list:
         """
         Translate transcript segments to English via NLLB-200 (local, 200 languages).
         Falls back to deep-translator if NLLB is unavailable.
         """
-        try:
-            from langdetect import detect
-            combined = " ".join(seg.get("text", "") for seg in transcript if seg.get("text"))
-            src_lang = detect(combined[:3000]) if combined.strip() else "en"
-        except Exception:
-            src_lang = "auto"
+        if not src_lang:
+            try:
+                from langdetect import detect
+                combined = " ".join(seg.get("text", "") for seg in transcript if seg.get("text"))
+                src_lang = detect(combined[:3000]) if combined.strip() else "en"
+            except Exception:
+                src_lang = "auto"
 
         try:
             from .translation_service import translate_transcript_to_english
@@ -504,7 +698,10 @@ class TranscriptService:
             )
             return result[0]["summary_text"]
         except Exception as e:
-            print(f"[ERROR] Summarization failed: {e}")
+            # Degrade to a truncated excerpt rather than failing the request —
+            # but name the exception type, since a silent fallback here is what
+            # masked the pipeline("summarization") failure for so long.
+            print(f"[ERROR] Summarization failed ({type(e).__name__}): {e}")
             return text[:500] + "..."
 
 

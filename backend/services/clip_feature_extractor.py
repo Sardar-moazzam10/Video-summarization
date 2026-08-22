@@ -12,15 +12,14 @@ Pipeline role (Step 2 — Feature Extraction):
     Summary text  → get_text_embedding()   → 512-dim vector
     cosine sim    → rescaled [0, 1]         → clip_score per keyframe
 
-Called from merge.py Stage 6 after summary text is finalized.
-(temporal_scorer.py is called earlier, from visual_keyframe_extractor.py,
- because it requires no summary text.)
+get_frame_embedding() / is_clip_available() are used as a fallback by
+temporal_scorer.py's _collect_embeddings() whenever the narration path
+is unavailable (audio_energy_scorer covers the primary path).
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -50,16 +49,17 @@ def _load_clip() -> Optional[Tuple]:
     try:
         import torch
         from transformers import CLIPModel, CLIPProcessor
-        from ..core.config import get_settings
+        from ..core.config import get_settings, get_hf_token
 
         settings = get_settings()
         model_id = settings.CLIP_MODEL  # "openai/clip-vit-base-patch16"
+        hf_token = get_hf_token()  # None when unset → anonymous, same as before
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"[CLIP] Loading {model_id} on {device}...")
 
-        _clip_processor = CLIPProcessor.from_pretrained(model_id)
-        _clip_model = CLIPModel.from_pretrained(model_id).to(device)
+        _clip_processor = CLIPProcessor.from_pretrained(model_id, token=hf_token)
+        _clip_model = CLIPModel.from_pretrained(model_id, token=hf_token).to(device)
         _clip_model.eval()
         _clip_device = device
 
@@ -171,153 +171,3 @@ def get_text_embedding(text: str) -> Optional[np.ndarray]:
     except Exception as e:
         print(f"[CLIP] Text embedding failed: {e}")
         return None
-
-
-# =====================================================
-# SCORING
-# =====================================================
-
-def _cosine_to_score(similarity: float) -> float:
-    """Rescale cosine similarity from [-1, 1] to [0, 1]."""
-    return float(max(0.0, min(1.0, (similarity + 1.0) / 2.0)))
-
-
-def score_keyframes_vs_summary(
-    keyframes: List[dict],
-    summary_text: str,
-) -> List[float]:
-    """
-    Compute CLIP cross-modal scores for a list of keyframes against summary text.
-
-    Processes all valid frames in a single batched forward pass — much faster
-    than one-at-a-time when there are many keyframes (e.g. 26 from a long video).
-
-    Returns:
-        List of float scores in [0, 1], one per keyframe.
-        Returns [0.5, ...] on any failure so downstream scoring degrades gracefully.
-    """
-    n = len(keyframes)
-    default = [0.5] * n
-
-    if not keyframes or not summary_text:
-        return default
-
-    loaded = _load_clip()
-    if loaded is None:
-        return default
-    model, processor, device = loaded
-
-    text_emb = get_text_embedding(summary_text)
-    if text_emb is None:
-        return default
-
-    # Separate valid frames from missing ones
-    valid_indices: List[int] = []
-    valid_paths: List[str] = []
-    for i, kf in enumerate(keyframes):
-        fp = kf.get("frame_path", "")
-        if fp and Path(fp).exists():
-            valid_indices.append(i)
-            valid_paths.append(fp)
-
-    if not valid_paths:
-        return default
-
-    # Batch all frames in one forward pass
-    try:
-        import torch
-        from PIL import Image
-
-        images = [Image.open(p).convert("RGB") for p in valid_paths]
-        inputs = processor(images=images, return_tensors="pt", padding=True).to(device)
-
-        with torch.no_grad():
-            vision_out = model.vision_model(pixel_values=inputs["pixel_values"])
-            pooled = vision_out.pooler_output
-            image_features = model.visual_projection(pooled)  # [B, 512]
-
-        # L2-normalize each row
-        norms = image_features.norm(dim=1, keepdim=True).clamp(min=1e-8)
-        img_embs = (image_features / norms).cpu().numpy()  # [B, 512]
-
-        # Dot product with text embedding → cosine similarity
-        cosines = img_embs @ text_emb  # [B]
-
-        scores: List[float] = [0.5] * n
-        for rank, idx in enumerate(valid_indices):
-            scores[idx] = _cosine_to_score(float(cosines[rank]))
-        return scores
-
-    except Exception as e:
-        print(f"[CLIP] Batch scoring failed, falling back to per-frame: {e}")
-
-    # Per-frame fallback
-    scores = [0.5] * n
-    for i, fp in zip(valid_indices, valid_paths):
-        img_emb = get_frame_embedding(fp)
-        if img_emb is not None:
-            scores[i] = _cosine_to_score(float(np.dot(img_emb, text_emb)))
-    return scores
-
-
-# =====================================================
-# KEYFRAME AUGMENTATION
-# =====================================================
-
-def augment_keyframes_with_clip(
-    keyframes: List[dict],
-    summary_text: str,
-) -> List[dict]:
-    """
-    Add a "clip_score" field to each keyframe dict (in-place).
-
-    Called from merge.py Stage 6 after summary_text is finalized.
-    Skips gracefully if CLIP is unavailable.
-
-    When ENABLE_FRAME_CAPTIONS=True (in config), also calls
-    frame_caption_service.augment_keyframes_with_captions() and blends
-    the LLaVA caption-SBERT score into the final clip_score:
-        clip_score = 0.6 * raw_clip_score + 0.4 * caption_score
-
-    This LLMVS-inspired blending improves highlight selection for
-    visually ambiguous frames (e.g., talking-head shots).
-
-    Args:
-        keyframes:    List of keyframe dicts (modified in-place).
-        summary_text: Final summary text for cross-modal matching.
-
-    Returns:
-        Same list with clip_score added.
-    """
-    if not keyframes:
-        return keyframes
-
-    if not is_clip_available():
-        print("[CLIP] Not available — setting clip_score=0.5 for all keyframes")
-        for kf in keyframes:
-            kf.setdefault("clip_score", 0.5)
-    else:
-        print(f"[CLIP] Scoring {len(keyframes)} keyframes against summary...")
-        scores = score_keyframes_vs_summary(keyframes, summary_text)
-        for kf, score in zip(keyframes, scores):
-            kf["clip_score"] = score
-        scored = sum(1 for s in scores if s != 0.5)
-        print(f"[CLIP] Done: {scored}/{len(keyframes)} keyframes scored")
-
-    # Optional: blend in LLaVA caption-based semantic score (LLMVS-inspired)
-    try:
-        from ..core.config import get_settings
-        if get_settings().ENABLE_FRAME_CAPTIONS:
-            from .frame_caption_service import augment_keyframes_with_captions
-            augment_keyframes_with_captions(keyframes, summary_text)
-            # Blend: final_clip_score = 0.6 * clip + 0.4 * caption
-            for kf in keyframes:
-                clip_s = kf.get("clip_score", 0.5)
-                cap_s = kf.pop("caption_score", None)
-                if cap_s is not None:
-                    kf["clip_score"] = round(0.6 * clip_s + 0.4 * cap_s, 4)
-            print("[CLIP] Blended CLIP + caption scores")
-    except Exception as e:
-        print(f"[CLIP] Caption blend skipped: {e}")
-
-    return keyframes

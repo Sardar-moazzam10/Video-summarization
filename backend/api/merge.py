@@ -14,7 +14,7 @@ Endpoints:
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
-from typing import Dict
+from typing import Dict, Optional
 import asyncio
 import json
 from datetime import datetime
@@ -160,15 +160,23 @@ async def create_merge_job(
     if len(request.video_ids) > 10:
         raise HTTPException(400, "Maximum 10 videos allowed")
 
+    # The reel IS the output, so the user's chosen length drives it directly.
+    # Previously target_duration_minutes only sized the TTS script and the reel
+    # inherited whatever length that narration happened to be; with TTS gone the
+    # two settings collapse into one. An explicit highlight_duration_seconds is
+    # still honoured for callers that want the reel to differ from the summary.
+    reel_seconds = request.highlight_duration_seconds
+    if reel_seconds == 120:  # untouched default → follow the duration picker
+        reel_seconds = min(request.target_duration_minutes * 60, 1200)
+
     # Create job
     job = MergeJob(
         video_ids=request.video_ids,
         target_duration_minutes=request.target_duration_minutes,
         duration_style=get_duration_style(request.target_duration_minutes),
-        voice_id=request.voice_id,
         generate_audio=request.generate_audio,
         generate_video=request.generate_video,
-        highlight_duration_seconds=request.highlight_duration_seconds,
+        highlight_duration_seconds=reel_seconds,
         style=request.style,
     )
 
@@ -257,6 +265,9 @@ async def get_job_result(job_id: str):
         "video_url": f"/api/v1/merge/{job_id}/video" if job_data.get("video_path") else None,
         "subtitle_url": f"/api/v1/merge/{job_id}/subtitles" if job_data.get("subtitle_path") else None,
         "video_ids": job_data.get("video_ids", []),
+        # Echoed back so a follow-up job (e.g. the highlight re-compile on the
+        # player page) can reuse this job's settings instead of hardcoding them.
+        "target_duration_minutes": job_data.get("target_duration_minutes"),
         "highlight_segments": job_data.get("highlight_segments", []),
         "keyframes_extracted": job_data.get("keyframes_extracted", {}),
         "warning": job_data.get("warning"),
@@ -277,11 +288,17 @@ async def evaluate_job_quality(job_id: str, llm: bool = False):
       check_b (video side): do the generated highlight clips represent the
           summary?  (clip transcripts vs summary) — expected to be high.
 
+    The result is cached on the job document, and the pipeline precomputes the
+    llm=false scorecard as soon as a job completes, so this is normally a read.
+
     Query params:
-        llm=false (default): FAST — keyword + SBERT coverage only (<1s).
-                             Safe to call automatically on every video.
-        llm=true           : FULL — also runs the Ollama judge (30-90s).
-                             Use for an on-demand "detailed analysis" button.
+        llm=false (default): keyword + SBERT coverage. Roughly 100s to compute
+                             for a 25-minute video — the earlier "<1s" here was
+                             wrong by two orders of magnitude, which is how the
+                             event-loop stall it caused went unnoticed. Cached
+                             after the first run.
+        llm=true           : also runs the Ollama judge (30-90s on top).
+                             Use for the on-demand "detailed analysis" button.
     """
     jobs_collection = await get_jobs_collection()
     job_data = await jobs_collection.find_one({"job_id": job_id})
@@ -292,13 +309,48 @@ async def evaluate_job_quality(job_id: str, llm: bool = False):
     if job_data["status"] not in {JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value}:
         raise HTTPException(400, f"Job not completed. Current status: {job_data['status']}")
 
+    cache_field = _QUALITY_CACHE_FIELD_LLM if llm else _QUALITY_CACHE_FIELD
+    cached = job_data.get(cache_field)
+    if cached:
+        return cached
+
+    report = await _build_quality_report(job_data, use_llm=bool(llm))
+    await jobs_collection.update_one({"job_id": job_id}, {"$set": {cache_field: report}})
+    return report
+
+
+# Where a computed scorecard is parked on the job document. A completed job is
+# immutable, so its scores are too — recomputing them per page view is pure cost.
+_QUALITY_CACHE_FIELD = "quality_report"
+_QUALITY_CACHE_FIELD_LLM = "quality_report_llm"
+
+
+def _run_coroutine_blocking(coro):
+    """Drive a coroutine to completion on its own loop. For use inside a thread."""
+    return asyncio.run(coro)
+
+
+async def _build_quality_report(job_data: dict, use_llm: bool) -> dict:
+    """
+    Score a completed job: summary-vs-transcript and clips-vs-summary.
+
+    The scoring is CPU-bound — it SBERT-embeds the transcript chunks and the
+    summary sentences twice over, measured at 103 seconds for a 25-minute
+    video. It used to run directly on the event loop, and because this is an
+    `async def` endpoint that meant the entire backend stopped answering for
+    the duration: /health, /video and /audio range requests included. Opening a
+    finished job from History therefore looked like a broken player — the reel
+    would not start until the scoring finished, whether or not the machine was
+    online. The work runs in a worker thread now so everything else keeps
+    serving while it computes.
+    """
     summary_text = job_data.get("summary_text", "")
     if not summary_text.strip():
         raise HTTPException(400, "Job has no summary to evaluate")
 
     # Reuse the same transcript fetch the pipeline uses (cached in MongoDB)
     video_ids = job_data.get("video_ids", [])
-    transcript_text_map, segments_map = await fetch_transcripts_with_segments(video_ids)
+    _, segments_map = await fetch_transcripts_with_segments(video_ids)
     transcript_segments = []
     for segs in segments_map.values():
         transcript_segments.extend(segs)
@@ -317,17 +369,20 @@ async def evaluate_job_quality(job_id: str, llm: bool = False):
         _sys.path.insert(0, _root)
     from evaluate_summary import evaluate as _evaluate
 
-    report = await _evaluate(
-        transcript_segments=transcript_segments,
-        summary_text=summary_text,
-        clips=clips,
-        use_llm=bool(llm),
+    report = await asyncio.to_thread(
+        _run_coroutine_blocking,
+        _evaluate(
+            transcript_segments=transcript_segments,
+            summary_text=summary_text,
+            clips=clips,
+            use_llm=use_llm,
+        ),
     )
 
-    # Return a frontend-friendly shape: two scores + the detail blocks
+    # Frontend-friendly shape: two scores + the detail blocks
     return {
-        "job_id": job_id,
-        "llm_used": bool(llm),
+        "job_id": job_data.get("job_id"),
+        "llm_used": use_llm,
         "summary_score": report["check_a"]["score"],
         "video_score": report["check_b"]["score"],
         "check_a": report["check_a"],
@@ -491,6 +546,45 @@ async def stream_job_progress(job_id: str):
 # =====================================================
 # HELPERS
 # =====================================================
+
+def _extract_audio_from_reel(video_path: str, job_id: str) -> Optional[str]:
+    """
+    Pull the audio track out of the finished highlight reel into an MP3.
+
+    This is what the audio player and the Download Audio button serve. Because
+    the reel carries the original speaker audio, the MP3 is the real voices from
+    the source videos — no synthesis involved. Stream copy is not used: the reel
+    is AAC, and the player expects MP3.
+
+    Returns the MP3 path, or None if extraction failed (audio is optional; a
+    failure here must not fail the job).
+    """
+    if not video_path or not os.path.exists(video_path):
+        return None
+
+    audio_dir = "audio_cache"
+    os.makedirs(audio_dir, exist_ok=True)
+    out_path = os.path.join(audio_dir, f"summary_{job_id}.mp3")
+
+    try:
+        import subprocess as _sp
+        _sp.run(
+            [
+                "ffmpeg", "-y", "-i", video_path,
+                "-vn",                      # drop the video stream
+                "-acodec", "libmp3lame", "-b:a", "192k",
+                out_path,
+            ],
+            capture_output=True, timeout=180, check=True,
+        )
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            print(f"[Audio] Extracted original audio from reel -> {out_path}")
+            return out_path
+        print("[Audio] ffmpeg produced no audio file")
+    except Exception as e:
+        print(f"[Audio] Could not extract audio from reel: {e}")
+    return None
+
 
 def _fit_to_duration(highlights: list, target_seconds: int) -> list:
     """Select highlights that fit within the time budget."""
@@ -791,94 +885,18 @@ async def process_merge_job(job_id: str):
             print("[LocalEnrich] Generating TLDR+takeaways locally (TF-IDF)...")
             rich_output = _generate_local_enrichment(summary_text, job.style)
 
-        # STAGE 5: Voice Generation (90-97%) - Optional (FREE with Edge TTS)
+        # STAGE 5: Audio (90-97%)
+        #
+        # The summary audio is the ORIGINAL speaker audio taken from the highlight
+        # reel, not synthesized narration. TTS was removed deliberately: the product
+        # promise is authentic source audio, and the reel already preserves it
+        # (see video_service.py). audio_path is therefore filled in AFTER the reel
+        # is built, by _extract_audio_from_reel() further down.
+        #
+        # subtitle_path stays None. It only ever held the TTS narration's SRT, and
+        # nothing in the UI consumes /subtitles.
         audio_path = None
         subtitle_path = None
-        if job.generate_audio:
-            await update_status(
-                JobStatus.GENERATING_VOICE,
-                92,
-                "Generating AI voice narration + subtitles (FREE Edge TTS)..."
-            )
-
-            try:
-                from ..services.voice_service import get_voice_service
-                voice_service = get_voice_service()
-
-                # Use the specified voice or default
-                voice_key = job.voice_id or "aria"
-
-                # When BART produced a very short summary (e.g., source transcript was
-                # non-English and translation failed), use the fusion narrative directly
-                # so the narration is substantial enough for a real video.
-                tts_source = summary_text
-                if len(summary_text.split()) < 80:
-                    narrative_words = fusion_result.narrative.split()
-                    if len(narrative_words) > len(summary_text.split()):
-                        tts_source = " ".join(narrative_words[:350])
-                        print(f"[TTS] Short BART summary ({len(summary_text.split())}w) — "
-                              f"using fusion narrative for narration ({len(tts_source.split())}w)")
-
-                narration_text = voice_service.format_for_narration(tts_source)
-
-                # Generate audio + subtitles
-                audio_dir = "audio_cache"
-                os.makedirs(audio_dir, exist_ok=True)
-                audio_path = os.path.join(audio_dir, f"summary_{job_id}.mp3")
-                subtitle_path = os.path.join(audio_dir, f"summary_{job_id}.srt")
-
-                try:
-                    await voice_service.generate_audio_with_subtitles(
-                        text=narration_text,
-                        audio_path=audio_path,
-                        subtitle_path=subtitle_path,
-                        voice_key=voice_key,
-                    )
-                    print(f"[OK] Generated FREE audio + subtitles for job {job_id}")
-                except Exception as sub_err:
-                    print(f"[WARN] Subtitle generation failed, falling back to audio-only: {sub_err}")
-                    subtitle_path = None
-                    await voice_service.generate_audio_file(
-                        text=narration_text,
-                        output_path=audio_path,
-                        voice_key=voice_key
-                    )
-
-                # Measure actual TTS duration so video clip length matches it exactly.
-                # Without this, -shortest cuts the narration when video is shorter,
-                # losing key points at the end of the summary.
-                if audio_path and os.path.exists(audio_path):
-                    try:
-                        import subprocess as _sp
-                        _probe = _sp.run(
-                            ["ffprobe", "-v", "quiet", "-show_entries",
-                             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
-                             audio_path],
-                            capture_output=True, text=True, timeout=15,
-                        )
-                        tts_duration = float(_probe.stdout.strip())
-                        if tts_duration > 10:
-                            # Enforce a floor so the video is always watchable,
-                            # even when the narration is unexpectedly short.
-                            MIN_HIGHLIGHT_SECONDS = 30
-                            job.highlight_duration_seconds = max(
-                                MIN_HIGHLIGHT_SECONDS, int(tts_duration) + 2
-                            )
-                            print(f"[Audio] TTS duration={tts_duration:.1f}s → "
-                                  f"video target set to {job.highlight_duration_seconds}s")
-                    except Exception as dur_err:
-                        print(f"[Audio] Could not measure TTS duration: {dur_err}")
-
-            except Exception as e:
-                print(f"[WARN] Voice generation failed (continuing without audio): {e}")
-                audio_path = None
-                subtitle_path = None
-
-            await update_status(
-                JobStatus.GENERATING_VOICE,
-                97,
-                "Voice generation complete"
-            )
 
         # STAGE 6: Video Highlight Generation (97-99%) - Optional
         # Free-only pipeline: PySceneDetect + CLIP ViT-B/16 + temporal attention
@@ -954,14 +972,17 @@ async def process_merge_job(job_id: str):
                     # (e.g. SBERT unavailable), the fallback scorer runs without visual
                     # signal and degrades to its SBERT+TF-IDF weighting — still correct,
                     # just without the audio/temporal blend.
-                    narration_path_available = bool(
-                        subtitle_path and os.path.exists(subtitle_path)
-                    )
+                    # Previously gated on the TTS subtitle file, which no longer
+                    # exists. Keyframe/CLIP extraction stays off by default: it is
+                    # the most expensive stage in the pipeline and the scorer
+                    # accepts visual_keyframes=None, falling back to SBERT+TF-IDF.
+                    # Set MERGE_ENABLE_VISUAL_SCORING=1 to opt back in.
+                    skip_visual_stage = os.getenv("MERGE_ENABLE_VISUAL_SCORING", "0") != "1"
 
-                    if narration_path_available:
+                    if skip_visual_stage:
                         visual_keyframes = []
-                        print(f"[Video] {vid}: narration-driven selection available "
-                              f"— skipping keyframe/CLIP visual stage (scores unused)")
+                        print(f"[Video] {vid}: visual scoring disabled "
+                              f"— using SBERT+TF-IDF selection")
                     else:
                         transcript_groups = group_transcript_segments(segs)
                         try:
@@ -1003,37 +1024,12 @@ async def process_merge_job(job_id: str):
                             f"→ audio energy + temporal scores ready"
                         )
 
-                    # Step 2c: Narration-driven clip selection (primary path).
-                    # Each narration sentence directly picks its best-matching
-                    # transcript segment via SBERT — clips are selected AND ordered
-                    # in one pass so what you see matches what is being said.
-                    # Falls back to importance-score selection when SRT is absent.
+                    # Clip selection is score-based. The narration-driven path was
+                    # removed with TTS: it matched each synthesized sentence to a
+                    # transcript segment, which has no meaning now that the reel
+                    # carries the speakers' own words.
                     highlights = []
                     _used_narration_driven = False
-
-                    if subtitle_path and os.path.exists(subtitle_path):
-                        try:
-                            from ..services.segment_extractor import (
-                                extract_highlights_narration_driven,
-                                _parse_srt_sentences,
-                            )
-                            srt_content = open(subtitle_path, encoding="utf-8").read()
-                            srt_sentences = _parse_srt_sentences(srt_content)
-                            if srt_sentences:
-                                highlights = await asyncio.to_thread(
-                                    extract_highlights_narration_driven,
-                                    vid,
-                                    segs,
-                                    srt_sentences,
-                                    1.5,              # context_padding_seconds
-                                    3.0,              # min_segment_duration
-                                    60.0,             # max_segment_duration
-                                    per_video_seconds,
-                                )
-                                _used_narration_driven = bool(highlights)
-                        except Exception as nd_err:
-                            print(f"[Video] Narration-driven selection failed: {nd_err} "
-                                  f"— falling back to score-based")
 
                     if not _used_narration_driven:
                         # Fallback: 4-signal hybrid scoring (SBERT + TF-IDF + audio + temporal)
@@ -1053,37 +1049,20 @@ async def process_merge_job(job_id: str):
                     all_highlights.extend(highlights)
 
                 if all_highlights:
-                    if any(h.get("reason", "").startswith("Narration-matched") for h in all_highlights):
-                        # Narration-driven path: clips are already in narration order.
-                        # Only trim to budget — do NOT re-sort chronologically, that
-                        # would destroy the narration alignment we just computed.
-                        highlight_segments_result = _fit_to_duration(
-                            all_highlights, job.highlight_duration_seconds
-                        )
-                        print(f"[Video] Narration-driven: {len(highlight_segments_result)} clips "
-                              f"kept after budget trim")
-                    else:
-                        # Fallback path: sort by importance, trim, sort chronologically,
-                        # then reorder to match narration as a best-effort step.
-                        all_highlights.sort(
-                            key=lambda h: h.get("importance_score", 0), reverse=True
-                        )
-                        highlight_segments_result = _fit_to_duration(
-                            all_highlights, job.highlight_duration_seconds
-                        )
-                        highlight_segments_result.sort(
-                            key=lambda h: (h["video_id"], h["start_time"])
-                        )
-                        if subtitle_path and os.path.exists(subtitle_path):
-                            try:
-                                from ..services.segment_extractor import reorder_clips_for_narration
-                                srt_content = open(subtitle_path, encoding="utf-8").read()
-                                if srt_content.strip():
-                                    highlight_segments_result = reorder_clips_for_narration(
-                                        highlight_segments_result, srt_content
-                                    )
-                            except Exception as sync_err:
-                                print(f"[Sync] Fallback reorder skipped: {sync_err}")
+                    # Rank by importance, keep what fits the user's time budget,
+                    # then play back in source order so each speaker's argument
+                    # runs forwards instead of jumping around.
+                    all_highlights.sort(
+                        key=lambda h: h.get("importance_score", 0), reverse=True
+                    )
+                    highlight_segments_result = _fit_to_duration(
+                        all_highlights, job.highlight_duration_seconds
+                    )
+                    highlight_segments_result.sort(
+                        key=lambda h: (h["video_id"], h["start_time"])
+                    )
+                    print(f"[Video] {len(highlight_segments_result)} clips kept "
+                          f"for a {job.highlight_duration_seconds}s reel")
 
                     # Step 3: Generate the highlight reel
                     await update_status(
@@ -1095,11 +1074,18 @@ async def process_merge_job(job_id: str):
                         job_id=job.job_id,
                         highlight_segments=highlight_segments_result,
                         video_paths=video_paths,
-                        audio_path=audio_path if job.generate_audio else None,
+                        audio_path=None,   # never overlaid; reel keeps source audio
                         progress_callback=video_progress,
                     )
 
                     print(f"[Video] Highlight reel generated: {video_path}")
+
+                    # The reel's own audio IS the summary audio. Extract it so the
+                    # player and Download Audio serve real voices, not synthesis.
+                    if job.generate_audio and video_path:
+                        audio_path = await asyncio.to_thread(
+                            _extract_audio_from_reel, video_path, job.job_id
+                        )
                 else:
                     job_warning = "Video generation skipped because no highlight segments were identified."
                     print(f"[Video] {job_warning}")
@@ -1157,6 +1143,29 @@ async def process_merge_job(job_id: str):
                 "completed_at": job.completed_at,
             }}
         )
+
+        # Precompute the quality scorecard now that the job is already marked
+        # complete. The results page requests it the moment it mounts, and
+        # computing it takes ~100s — doing it here turns that request into a
+        # cache read instead of a wait, and the user spends the interval
+        # reading the summary rather than watching a spinner.
+        #
+        # Deliberately after the status update and inside its own try: a
+        # scorecard is a nice-to-have, and a failure here must never turn a
+        # finished job into a failed one.
+        try:
+            job_doc = await jobs_collection.find_one({"job_id": job_id})
+            if job_doc:
+                quality_report = await _build_quality_report(job_doc, use_llm=False)
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": {_QUALITY_CACHE_FIELD: quality_report}},
+                )
+                print(f"[Quality] Scorecard cached for {job_id} "
+                      f"(summary={quality_report['summary_score']}%, "
+                      f"video={quality_report['video_score']}%)")
+        except Exception as quality_err:
+            print(f"[Quality] Scorecard precompute skipped: {quality_err}")
 
     except Exception as e:
         # Handle error

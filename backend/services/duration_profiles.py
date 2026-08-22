@@ -82,6 +82,26 @@ class DurationProfile:
 # =====================================================
 
 DURATION_PROFILES: Dict[int, DurationProfile] = {
+    # 2-minute "Quick" profile — added for fast demos and live runs.
+    # ~300 words → ~112s of TTS → ~2 min output video, versus 1500 words /
+    # ~8 min for the 10-minute profile. Reuses HEADLINE style, whose
+    # generation config is already the fastest (num_beams=2).
+    # NOTE: a shorter summary covers less of a long source video, so expect
+    # lower coverage scores from evaluate_summary.py at this profile — use a
+    # longer profile when producing evaluation results.
+    2: DurationProfile(
+        target_minutes=2,
+        style=SummaryStyle.HEADLINE,
+        target_words=300,
+        words_per_minute=160,
+        max_tokens_per_source=120,
+        include_examples=False,
+        include_transitions=False,
+        include_sources=False,
+        include_conflicts=False,
+        max_topics=3,
+        compression_target=0.02  # 2% of original
+    ),
     5: DurationProfile(
         target_minutes=5,
         style=SummaryStyle.HEADLINE,

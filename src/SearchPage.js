@@ -40,6 +40,7 @@ const SearchPage = () => {
     setIsLoading(true);
 
     try {
+      // Unrestricted search — exactly what the user typed, any duration.
       const fetchedVideos = await fetchVideos(query);
       setVideos(fetchedVideos);
       localStorage.setItem('searchedVideos', JSON.stringify(fetchedVideos));
@@ -325,7 +326,7 @@ const SearchPage = () => {
               {[
                 { icon: '🔍', step: '01', title: 'Search a topic or title', desc: 'Type any YouTube video title or subject — e.g. "Andrew Huberman sleep"' },
                 { icon: '☑️', step: '02', title: 'Select multiple videos', desc: 'Click any result card to add it to your selection (up to 5 sources)' },
-                { icon: '⚡', step: '03', title: 'Generate AI summary', desc: 'Get chapters, key takeaways, narration audio and a highlight reel' },
+                { icon: '⚡', step: '03', title: 'Generate AI summary', desc: 'Get chapters, key takeaways, and a highlight reel in the original voices' },
               ].map((s, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 16, textAlign: 'left', width: '100%' }}>
                   <div style={{

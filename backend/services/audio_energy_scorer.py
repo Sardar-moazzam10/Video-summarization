@@ -109,7 +109,8 @@ def augment_keyframes_with_audio_energy(
     """
     Add "clip_score" field to each keyframe dict using audio energy.
 
-    Drops in as a replacement for augment_keyframes_with_clip():
+    Primary source of "clip_score" for the narration-path pipeline
+    (CLIP itself is now only a fallback, in temporal_scorer.py):
     - Same input shape: list of keyframe dicts with "timestamp" field
     - Same output: "clip_score" added in-place to each dict
     - merge.py and segment_extractor.py need no changes

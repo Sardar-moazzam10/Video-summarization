@@ -1,6 +1,57 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { API_BASE_URL } from './config/api.js';
+import DurationSelector from './components/merge/DurationSelector.jsx';
+
+/**
+ * MergePreviewPage — confirmation + configuration gate for POST /api/v1/merge.
+ *
+ * This page CONFIGURES a merge job; it does not curate one. MergeJobCreate
+ * (backend/models/job.py) accepts `video_ids` plus output settings only — there
+ * is no request field for user-supplied segment boundaries. Highlight selection
+ * happens server-side in the fusion engine, so offering a per-moment picker here
+ * would promise control the API cannot accept.
+ */
+
+// `style` values accepted by MergeJobCreate. Labels/hints are presentational.
+const STYLES = [
+  { value: 'educational', label: 'Educational', hint: 'Structured and explanatory' },
+  { value: 'casual', label: 'Casual', hint: 'Conversational podcast tone' },
+  { value: 'executive', label: 'Executive', hint: 'Tight, decision-focused' },
+  { value: 'beginner', label: 'Beginner', hint: 'Plain language, no jargon' },
+  { value: 'detailed', label: 'Detailed', hint: 'Full depth and nuance' },
+];
+
+// Seconds — mirrors highlight_duration_seconds (backend bounds: ge=30, le=1200).
+const HIGHLIGHT_LENGTHS = [
+  { value: 60, label: '1 min' },
+  { value: 120, label: '2 min' },
+  { value: 180, label: '3 min' },
+  { value: 300, label: '5 min' },
+];
+
+// MergeJobCreate declares video_ids with max_length=10.
+const MAX_VIDEOS = 10;
+
+/** Shared pill control — used for Style and Highlight length. */
+const Pill = ({ selected, disabled, onClick, children }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    disabled={disabled}
+    className={`
+      rounded-xl border-2 px-4 py-2.5 text-left transition-all duration-200
+      ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}
+      ${
+        selected
+          ? 'border-brand-500 bg-brand-500/10 text-white shadow-lg'
+          : 'border-dark-700 bg-dark-800/50 text-dark-300 hover:border-dark-600 hover:bg-dark-800'
+      }
+    `}
+  >
+    {children}
+  </button>
+);
 
 const MergePreviewPage = () => {
   const location = useLocation();
@@ -18,344 +69,267 @@ const MergePreviewPage = () => {
 
   const initialResults = fromState.length ? fromState : fromStorage;
   const [selectedResults] = useState(initialResults);
-  const [targetDuration, setTargetDuration] = useState('300'); // seconds
+
+  // Minutes — sent verbatim as target_duration_minutes (backend: ge=2, le=20).
+  const [targetMinutes, setTargetMinutes] = useState(10);
   const [selectedStyle, setSelectedStyle] = useState('educational');
   const [generateVideo, setGenerateVideo] = useState(true);
-  const [highlightDuration, setHighlightDuration] = useState('120');
+  const [highlightSeconds, setHighlightSeconds] = useState(120);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleBack = () => {
-    navigate(-1);
-  };
+  // De-duplicated, capped at the backend's max_length. Derived, not stored.
+  const videoIds = Array.from(
+    new Set(selectedResults.map((r) => r.video?.id?.videoId).filter(Boolean))
+  );
+  const sentVideoIds = videoIds.slice(0, MAX_VIDEOS);
+  const droppedCount = videoIds.length - sentVideoIds.length;
+
+  const handleBack = () => navigate(-1);
 
   const handleConfirmMerge = async () => {
-    if (!selectedResults || selectedResults.length < 2) {
-      alert('Please select at least 2 videos to merge from the search page first.');
+    if (sentVideoIds.length < 1) {
+      setErrorMsg('Please go back and select at least one video.');
       return;
     }
 
-    const selectedSegments = selectedResults
-      .map((r) => {
-        const videoId = r.video?.id?.videoId;
-        if (!videoId || !Array.isArray(r.matches) || r.matches.length === 0) return null;
-
-        const matchTimestamps = r.matches.slice(0, 3).map((m) => Math.floor(m.timestamp));
-        if (matchTimestamps.length === 0) return null;
-
-        const start = matchTimestamps[0];
-        const end = matchTimestamps[matchTimestamps.length - 1] + 30;
-        return { videoId, start, end };
-      })
-      .filter(Boolean);
-
-    if (selectedSegments.length < 2) {
-      alert('Not enough valid segments to merge. Please go back and select other videos.');
-      return;
-    }
+    setErrorMsg('');
+    setIsSubmitting(true);
 
     try {
+      const token = localStorage.getItem('access_token') || '';
       const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
-          video_ids: selectedSegments.map(s => s.videoId),
-          target_duration_minutes: Math.round(parseInt(targetDuration, 10) / 60),
+          video_ids: sentVideoIds,
+          target_duration_minutes: targetMinutes,
           generate_audio: true,
-          style: selectedStyle,
           generate_video: generateVideo,
-          highlight_duration_seconds: parseInt(highlightDuration, 10),
+          highlight_duration_seconds: highlightSeconds,
+          style: selectedStyle,
         }),
       });
+
       const data = await res.json();
-      if (data.job_id) {
+      if (res.ok && data.job_id) {
         navigate(`/merged-player/${data.job_id}`);
       } else {
-        alert('Server error during merge.');
+        setErrorMsg(
+          typeof data.detail === 'string'
+            ? data.detail
+            : 'Server error during merge. Please retry.'
+        );
       }
     } catch (err) {
       console.error('Merge failed:', err);
-      alert('Server error during merge.');
+      setErrorMsg('Connection error. Make sure the backend is running.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  if (!selectedResults || selectedResults.length === 0) {
+  // pt-28 (112px) clears the fixed 56px navbar (Navbar.css) plus breathing room.
+  const pageClasses =
+    'min-h-screen bg-surface-base px-5 pb-16 pt-28 text-white';
+
+  if (sentVideoIds.length === 0) {
     return (
-      <div style={styles.container}>
-        <h2 style={styles.title}>Merge Preview</h2>
-        <p style={styles.info}>No videos selected. Go back to the keyword search page and add videos to merge.</p>
-        <button onClick={handleBack} style={styles.button}>⬅ Back</button>
+      <div className={pageClasses}>
+        <div className="mx-auto max-w-md text-center">
+          <h1 className="mb-3 text-2xl font-bold">Merge Configuration</h1>
+          <p className="mb-6 text-sm text-dark-400">
+            No videos selected. Go back to the search page and add at least one video.
+          </p>
+          <button
+            type="button"
+            onClick={handleBack}
+            className="rounded-xl border border-dark-700 bg-dark-800/50 px-6 py-3 text-sm font-semibold text-dark-200 transition-colors hover:bg-dark-800"
+          >
+            ← Back
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={styles.container}>
-      <br />
-      <h1 style={styles.title}>🧩 Merge Preview – Important Moments</h1>
-      <p style={styles.subtitle}>
-        Review the highlighted moments and summaries for each selected video before merging them into one combined podcast.
-      </p>
+    <div className={pageClasses}>
+      <div className="mx-auto max-w-3xl">
+        {/* Header */}
+        <header className="mb-8 text-center">
+          <h1 className="mb-2 text-3xl font-bold tracking-tight">
+            Merge Configuration
+          </h1>
+          <p className="mx-auto max-w-xl text-sm leading-relaxed text-dark-400">
+            The summarizer selects its own highlights from the full transcripts. Choose
+            the output length, tone, and whether to render a video reel — then start
+            the job.
+          </p>
+        </header>
 
-      {selectedResults.map((result, index) => {
-        const videoId = result.video?.id?.videoId;
-        const thumb = result.video?.snippet?.thumbnails?.medium?.url;
-        const title = result.video?.snippet?.title;
-        const matches = Array.isArray(result.matches) ? result.matches.slice(0, 5) : [];
+        {/* Selected videos — confirmation of scope, not a curation surface */}
+        <section className="mb-6 rounded-2xl border border-white/5 bg-dark-800/30 p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Selected Videos</h2>
+            <span className="rounded-full border border-brand-500/20 bg-brand-500/10 px-3 py-1 text-xs font-bold text-brand-400">
+              {sentVideoIds.length} of {MAX_VIDEOS} max
+            </span>
+          </div>
 
-        return (
-          <div key={index} style={styles.card}>
-            <h3 style={styles.cardTitle}>{title}</h3>
-            <div style={styles.cardContent}>
-              <img src={thumb} alt={title} style={styles.thumbnail} />
-              <div style={styles.details}>
-                <h4 style={styles.sectionTitle}>Top Moments</h4>
-                {matches.length === 0 ? (
-                  <p style={styles.muted}>No keyword matches found for this video.</p>
-                ) : (
-                  <ul style={styles.list}>
-                    {matches.map((m, i) => (
-                      <li key={i} style={styles.listItem}>
-                        <span style={styles.timestamp}>
-                          {new Date(m.timestamp * 1000).toISOString().substr(11, 8)}
-                        </span>
-                        <span style={styles.text}>{m.text}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+          <div className="flex flex-col gap-3">
+            {selectedResults
+              .filter((r) => sentVideoIds.includes(r.video?.id?.videoId))
+              .map((result) => {
+                const videoId = result.video?.id?.videoId;
+                const thumb = result.video?.snippet?.thumbnails?.medium?.url;
+                const title = result.video?.snippet?.title;
 
-                {result.summary && (
-                  <>
-                    <h4 style={styles.sectionTitle}>AI Summary</h4>
-                    <p style={styles.summaryText}>{result.summary}</p>
-                  </>
-                )}
-
-                {videoId && (
-                  <a
-                    href={`https://www.youtube.com/watch?v=${videoId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={styles.link}
+                return (
+                  <div
+                    key={videoId}
+                    className="flex items-center gap-4 rounded-xl border border-white/5 bg-dark-800/40 p-3"
                   >
-                    Watch full episode on YouTube ↗
-                  </a>
-                )}
-              </div>
+                    {thumb && (
+                      <img
+                        src={thumb}
+                        alt=""
+                        className="h-16 w-28 flex-shrink-0 rounded-lg object-cover"
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-white">{title}</p>
+                      {result.summary && (
+                        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-dark-400">
+                          {result.summary}
+                        </p>
+                      )}
+                    </div>
+                    <a
+                      href={`https://www.youtube.com/watch?v=${videoId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex-shrink-0 text-xs font-medium text-brand-400 transition-colors hover:text-brand-300"
+                    >
+                      YouTube ↗
+                    </a>
+                  </div>
+                );
+              })}
+          </div>
+
+          {droppedCount > 0 && (
+            <p className="mt-3 text-xs text-warning-400">
+              {droppedCount} extra video{droppedCount !== 1 ? 's' : ''} will not be
+              included — the API accepts at most {MAX_VIDEOS}.
+            </p>
+          )}
+        </section>
+
+        {/* Configuration */}
+        <section className="mb-6 rounded-2xl border border-white/5 bg-dark-800/30 p-5">
+          <DurationSelector
+            value={targetMinutes}
+            onChange={setTargetMinutes}
+            disabled={isSubmitting}
+            compact
+          />
+
+          <div className="mt-8">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Summary Style</h3>
+              <span className="text-sm text-dark-400">Shapes the written summary</span>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {STYLES.map((style) => (
+                <Pill
+                  key={style.value}
+                  selected={selectedStyle === style.value}
+                  disabled={isSubmitting}
+                  onClick={() => setSelectedStyle(style.value)}
+                >
+                  <span className="block text-sm font-semibold">{style.label}</span>
+                  <span className="mt-0.5 block text-xs opacity-70">{style.hint}</span>
+                </Pill>
+              ))}
             </div>
           </div>
-        );
-      })}
 
-      <div style={styles.actions}>
-        <div style={styles.durationSelector}>
-          <label style={styles.durationLabel}>Duration:</label>
-          <select
-            value={targetDuration}
-            onChange={(e) => setTargetDuration(e.target.value)}
-            style={styles.select}
+          <div className="mt-8 border-t border-dark-700 pt-6">
+            <label className="flex cursor-pointer items-center gap-3">
+              <input
+                type="checkbox"
+                checked={generateVideo}
+                onChange={(e) => setGenerateVideo(e.target.checked)}
+                disabled={isSubmitting}
+                className="h-4 w-4 cursor-pointer accent-brand-500"
+              />
+              <span className="text-lg font-semibold text-white">Video Highlights</span>
+              <span className="text-sm text-dark-400">
+                Render a visual reel alongside the audio
+              </span>
+            </label>
+
+            {generateVideo && (
+              <div className="mt-4 flex flex-wrap gap-3">
+                {HIGHLIGHT_LENGTHS.map((len) => (
+                  <Pill
+                    key={len.value}
+                    selected={highlightSeconds === len.value}
+                    disabled={isSubmitting}
+                    onClick={() => setHighlightSeconds(len.value)}
+                  >
+                    <span className="text-sm font-semibold">{len.label}</span>
+                  </Pill>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {errorMsg && (
+          <div
+            role="alert"
+            className="mb-4 rounded-xl border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-400"
           >
-            <option value="300">5 minutes</option>
-            <option value="600">10 minutes</option>
-            <option value="900">15 minutes</option>
-            <option value="1200">20 minutes</option>
-          </select>
-        </div>
-        <div style={styles.durationSelector}>
-          <label style={styles.durationLabel}>Style:</label>
-          <select
-            value={selectedStyle}
-            onChange={(e) => setSelectedStyle(e.target.value)}
-            style={styles.select}
+            {errorMsg}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={handleBack}
+            disabled={isSubmitting}
+            className="rounded-xl border border-dark-700 bg-dark-800/50 px-6 py-3 text-sm font-semibold text-dark-200 transition-colors hover:bg-dark-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <option value="educational">Educational</option>
-            <option value="casual">Casual / Podcast</option>
-            <option value="executive">Executive Briefing</option>
-            <option value="beginner">Beginner Friendly</option>
-            <option value="detailed">Detailed Analysis</option>
-          </select>
+            ← Back to Search
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirmMerge}
+            disabled={isSubmitting}
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 px-8 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:from-brand-400 hover:to-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSubmitting ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Starting job…
+              </>
+            ) : (
+              <>
+                {generateVideo ? 'Merge with Video Highlights' : 'Merge & Play Podcast'}
+              </>
+            )}
+          </button>
         </div>
-        <div style={styles.videoToggle}>
-          <label style={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={generateVideo}
-              onChange={(e) => setGenerateVideo(e.target.checked)}
-              style={styles.checkbox}
-            />
-            Video Highlights
-          </label>
-          {generateVideo && (
-            <select
-              value={highlightDuration}
-              onChange={(e) => setHighlightDuration(e.target.value)}
-              style={styles.select}
-            >
-              <option value="60">1 min</option>
-              <option value="120">2 min</option>
-              <option value="180">3 min</option>
-              <option value="300">5 min</option>
-            </select>
-          )}
-        </div>
-        <button onClick={handleBack} style={{ ...styles.button, backgroundColor: '#444' }}>
-          ⬅ Back to Search
-        </button>
-        <button onClick={handleConfirmMerge} style={{ ...styles.button, backgroundColor: '#28a745' }}>
-          {generateVideo ? '🎬 Merge with Video Highlights' : '🎧 Merge & Play Combined Podcast'}
-        </button>
       </div>
     </div>
   );
 };
 
-const styles = {
-  container: {
-    padding: '30px 20px',
-    minHeight: '100vh',
-    background: 'linear-gradient(-45deg, #0a0a23, #1a1a2e)',
-    color: '#fff',
-    fontFamily: 'Arial, sans-serif',
-  },
-  title: {
-    fontSize: '32px',
-    textAlign: 'center',
-    color: '#8B5DFF',
-    marginBottom: '10px',
-  },
-  subtitle: {
-    textAlign: 'center',
-    marginBottom: '30px',
-    color: '#ccc',
-  },
-  info: {
-    textAlign: 'center',
-    marginBottom: '20px',
-  },
-  card: {
-    backgroundColor: '#2f2f3f',
-    borderRadius: '12px',
-    padding: '20px',
-    maxWidth: '1000px',
-    margin: '0 auto 25px auto',
-  },
-  cardTitle: {
-    fontSize: '20px',
-    fontWeight: 'bold',
-    marginBottom: '12px',
-  },
-  cardContent: {
-    display: 'flex',
-    gap: '20px',
-    flexWrap: 'wrap',
-  },
-  thumbnail: {
-    width: '280px',
-    height: '170px',
-    objectFit: 'cover',
-    borderRadius: '8px',
-  },
-  details: {
-    flex: 1,
-    minWidth: '260px',
-  },
-  sectionTitle: {
-    fontSize: '16px',
-    marginBottom: '6px',
-    color: '#ffd580',
-  },
-  muted: {
-    color: '#aaa',
-    fontStyle: 'italic',
-  },
-  list: {
-    listStyle: 'none',
-    padding: 0,
-    margin: '0 0 10px 0',
-  },
-  listItem: {
-    marginBottom: '6px',
-  },
-  timestamp: {
-    display: 'inline-block',
-    minWidth: '80px',
-    fontWeight: 'bold',
-    color: '#8B5DFF',
-    marginRight: '6px',
-  },
-  text: {
-    color: '#eee',
-    fontSize: '14px',
-  },
-  summaryText: {
-    marginTop: '4px',
-    marginBottom: '8px',
-    color: '#ddd',
-    fontSize: '14px',
-  },
-  link: {
-    display: 'inline-block',
-    marginTop: '4px',
-    fontSize: '13px',
-    color: '#8B5DFF',
-    textDecoration: 'none',
-  },
-  actions: {
-    marginTop: '30px',
-    display: 'flex',
-    justifyContent: 'center',
-    gap: '12px',
-  },
-  button: {
-    padding: '10px 18px',
-    borderRadius: '8px',
-    border: 'none',
-    cursor: 'pointer',
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  durationSelector: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginRight: '20px',
-  },
-  durationLabel: {
-    fontSize: '14px',
-    color: '#ccc',
-  },
-  select: {
-    padding: '8px 12px',
-    borderRadius: '6px',
-    border: '1px solid #555',
-    backgroundColor: '#1f1f2e',
-    color: '#fff',
-    fontSize: '14px',
-  },
-  videoToggle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginRight: '20px',
-  },
-  checkboxLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '14px',
-    color: '#ccc',
-    cursor: 'pointer',
-  },
-  checkbox: {
-    width: '16px',
-    height: '16px',
-    accentColor: '#8B5DFF',
-    cursor: 'pointer',
-  },
-};
-
 export default MergePreviewPage;
-
-
-
-
-

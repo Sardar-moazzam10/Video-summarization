@@ -81,9 +81,12 @@ def _load_nllb() -> Optional[Tuple]:
 
     try:
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+        from ..core.config import get_hf_token
+
+        hf_token = get_hf_token()  # None when unset → anonymous, same as before
         print(f"[Translation] Loading NLLB-200: {NLLB_MODEL_ID} (~2.4 GB, one-time download)")
-        _nllb_tokenizer = AutoTokenizer.from_pretrained(NLLB_MODEL_ID)
-        _nllb_model = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL_ID)
+        _nllb_tokenizer = AutoTokenizer.from_pretrained(NLLB_MODEL_ID, token=hf_token)
+        _nllb_model = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL_ID, token=hf_token)
         _nllb_model.eval()
         # Clear the model's baked-in max_length=200 so max_new_tokens is the sole limit
         _nllb_model.generation_config.max_length = None
@@ -178,6 +181,195 @@ def _translate_with_nllb(
     return " ".join(translated_parts)
 
 
+def translate_segments(texts: list[str], src_lang: str) -> list[str]:
+    """
+    Translate a list of strings and return EXACTLY one output per input, in order.
+
+    This is the only safe way to translate transcript segments. The previous
+    approach joined them with "\n", translated the blob, and split the result
+    back on "\n" — which assumed the translator preserves newlines. Neither
+    backend does: the NLLB path joins its chunks with a space, and the
+    deep-translator path joins its 4500-char chunks the same way. So the split
+    returned a SINGLE line, segment[0] received the entire translation, and
+    every other segment silently kept its original-language text.
+
+    NLLB is fed the list directly instead: the tokenizer batches it and
+    batch_decode returns one string per input, so the 1:1 mapping is guaranteed
+    by the model API rather than reconstructed afterwards.
+
+    Args:
+        texts:    Segment texts, in order.
+        src_lang: ISO 639-1 source language code (e.g. "hi").
+
+    Returns:
+        A list of the same length as `texts`. Any item that could not be
+        translated is passed through unchanged.
+    """
+    if not texts:
+        return []
+    if src_lang.lower() in ("en", "en-us", "en-gb"):
+        return list(texts)
+
+    # Fast path first. Google batches ~64 segments per request and finishes a
+    # full transcript in about 30 seconds; NLLB is a local 600M model that takes
+    # minutes on CPU for the same work. NLLB stays as the offline fallback for
+    # when there is no network or Google rate-limits us.
+    google = _translate_segments_google(texts, src_lang)
+    if google is not None and len(google) == len(texts):
+        return google
+
+    flores_code = ISO_TO_FLORES.get(src_lang.lower())
+    if flores_code:
+        pair = _load_nllb()
+        if pair:
+            try:
+                print("[Translation] Falling back to local NLLB-200")
+                return _translate_segments_nllb(texts, flores_code, *pair)
+            except Exception as e:
+                print(f"[Translation] NLLB segment error: {e}")
+
+    return list(texts)
+
+
+# Measured against the free Google endpoint on a 630-segment Hindi transcript:
+# 500/1000/1500/2000-char requests all succeeded 3/3, 3000-char requests failed
+# 3/3 with RequestError. 2000 is the largest size with headroom left.
+_GOOGLE_MAX_CHARS = 2000
+_GOOGLE_PAUSE_SECONDS = 1.0   # keeps a 10-request transcript under the rate limit
+
+
+def _translate_segments_google(texts: list[str], src_lang: str) -> Optional[list[str]]:
+    """
+    Batched Google translation — the fast path, ~30s for a 630-segment transcript.
+
+    Segments are joined with newlines, translated in one request per chunk, and
+    split back apart. Google does preserve the newlines, but that is observed
+    behaviour and not a contract, so every chunk's line count is compared against
+    what was sent. A chunk that returns the wrong count is redone one segment at
+    a time instead of being written back misaligned — an off-by-one here would
+    shift every later segment's text onto the wrong timestamp, which is the exact
+    corruption this module used to ship.
+
+    Returns None when more than half the chunks fail, so the caller can fall back
+    to NLLB (offline) or Whisper rather than accept a half-translated transcript.
+    """
+    import time
+
+    try:
+        from deep_translator import GoogleTranslator
+    except Exception as e:
+        print(f"[Translation] deep-translator unavailable: {e}")
+        return None
+
+    source = src_lang.lower() if src_lang and src_lang.lower() != "auto" else "auto"
+    try:
+        translator = GoogleTranslator(source=source, target="en")
+    except Exception as e:
+        print(f"[Translation] GoogleTranslator init failed for '{source}': {e}")
+        return None
+
+    result: list[str] = []
+    chunks = 0
+    failed = 0
+    i = 0
+
+    while i < len(texts):
+        # Chunk on segment boundaries, never mid-segment: a split inside a
+        # segment cannot be reassembled into the right line afterwards.
+        j, size = i, 0
+        while j < len(texts) and size + len(texts[j]) + 1 <= _GOOGLE_MAX_CHARS:
+            size += len(texts[j]) + 1
+            j += 1
+        j = max(j, i + 1)          # always consume at least one segment
+        batch = texts[i:j]
+        chunks += 1
+
+        translated_batch = None
+        try:
+            out = translator.translate("\n".join(batch))
+            lines = (out or "").split("\n")
+            if len(lines) == len(batch):
+                translated_batch = lines
+            else:
+                print(f"[Translation] chunk {chunks}: sent {len(batch)} lines, "
+                      f"got {len(lines)} — redoing segment by segment")
+        except Exception as e:
+            print(f"[Translation] chunk {chunks} failed ({type(e).__name__}) — "
+                  f"redoing segment by segment")
+
+        if translated_batch is None:
+            per_segment = []
+            for t in batch:
+                if not t.strip():
+                    per_segment.append(t)
+                    continue
+                try:
+                    per_segment.append(translator.translate(t) or t)
+                except Exception:
+                    per_segment.append(t)     # untranslated, but in the right slot
+                    failed += 1
+            translated_batch = per_segment
+
+        result.extend(translated_batch)
+        i = j
+        if i < len(texts):
+            time.sleep(_GOOGLE_PAUSE_SECONDS)
+
+    if failed > len(texts) // 2:
+        print(f"[Translation] Google path failed for {failed}/{len(texts)} segments — giving up")
+        return None
+
+    print(f"[Translation] Google translated {len(result)} segments in {chunks} requests")
+    return result
+
+
+def _translate_segments_nllb(
+    texts: list[str],
+    src_flores: str,
+    tokenizer,
+    model,
+) -> list[str]:
+    """Batch-translate a list of segments, preserving order and length."""
+    import torch
+
+    translated: list[str] = []
+    target_id = tokenizer.convert_tokens_to_ids(TARGET_FLORES)
+
+    for batch in _chunk_list(list(texts), batch_size=8):
+        # Blank segments would waste a model slot and can confuse generation.
+        non_empty = [(i, t) for i, t in enumerate(batch) if t.strip()]
+        if not non_empty:
+            translated.extend(batch)
+            continue
+
+        try:
+            tokenizer.src_lang = src_flores
+            inputs = tokenizer(
+                [t for _, t in non_empty],
+                return_tensors="pt", padding=True,
+                truncation=True, max_length=512,
+            )
+            with torch.no_grad():
+                output_ids = model.generate(
+                    **inputs,
+                    forced_bos_token_id=target_id,
+                    max_new_tokens=128,
+                    num_beams=1,
+                )
+            decoded = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+
+            merged = list(batch)
+            for (idx, _), out in zip(non_empty, decoded):
+                merged[idx] = out
+            translated.extend(merged)
+
+        except Exception as e:
+            print(f"[Translation] NLLB batch error: {e} — passing through original")
+            translated.extend(batch)
+
+    return translated
+
+
 def _translate_with_deep_translator(text: str) -> str:
     """Fallback using deep-translator (no API key, web scraping)."""
     try:
@@ -225,19 +417,28 @@ def translate_transcript_to_english(
     if src_lang == "en":
         return transcript
 
-    # Translate all segment texts in one batched call
     all_texts = [seg.get("text", "") for seg in transcript]
-    combined = "\n".join(all_texts)
+    translated = translate_segments(all_texts, src_lang)
 
-    translated = translate_to_english(combined, src_lang)
-    translated_lines = translated.split("\n")
+    # Hard guard. A length mismatch means the 1:1 contract broke, and writing
+    # the result back would corrupt the timeline — one segment ending up with
+    # the whole transcript while the rest keep their original language. That is
+    # exactly the failure this function used to ship, so refuse instead.
+    if len(translated) != len(all_texts):
+        print(
+            f"[Translation] ABORT: got {len(translated)} translations for "
+            f"{len(all_texts)} segments — keeping the original text"
+        )
+        return transcript
 
-    # Re-assign translated lines back to segments (best-effort alignment)
-    for i, seg in enumerate(transcript):
-        if i < len(translated_lines) and translated_lines[i].strip():
-            seg["text"] = translated_lines[i].strip()
+    changed = 0
+    for seg, new_text in zip(transcript, translated):
+        if new_text.strip():
+            if new_text.strip() != seg.get("text", ""):
+                changed += 1
+            seg["text"] = new_text.strip()
 
-    print(f"[Translation] Translated {len(transcript)} segments from '{src_lang}' → en")
+    print(f"[Translation] Translated {changed}/{len(transcript)} segments from '{src_lang}' → en")
     return transcript
 
 

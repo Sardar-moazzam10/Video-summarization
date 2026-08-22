@@ -43,7 +43,23 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
 
     return shutil.which(default_name) or default_name
 
-YTDLP_BIN = _resolve_binary("YTDLP_PATH", "yt-dlp")
+def _resolve_ytdlp_cmd():
+    """
+    yt-dlp as a command prefix. Prefers `<current interpreter> -m yt_dlp`, which
+    works on any OS and without venv/bin being on PATH — unlike the Windows-only
+    Scripts/*.exe probe in _resolve_binary above.
+    """
+    import importlib.util
+
+    override = os.getenv("YTDLP_PATH")
+    if override and os.path.isfile(override):
+        return [override]
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
+    return [shutil.which("yt-dlp") or "yt-dlp"]
+
+YTDLP_CMD = _resolve_ytdlp_cmd()
+YTDLP_BIN = YTDLP_CMD[0]  # retained for check_ytdlp_path.py / back-compat
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
 COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
@@ -141,7 +157,7 @@ class TranscriptionService:
             return output_path
 
         cmd = [
-            YTDLP_BIN,
+            *YTDLP_CMD,
             "--cookies", COOKIES_FILE,
             "--js-runtimes", "node",
             "--extractor-args", "youtube:player_client=web",

@@ -33,7 +33,7 @@ const features = [
   },
   {
     title: 'Multi-Video Fusion',
-    description: 'Select multiple videos on any topic and let our AI merge them into one coherent podcast-style summary with unified voice narration.',
+    description: 'Select multiple videos on any topic and let our AI merge them into one coherent podcast-style summary using the original speakers\' audio.',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>

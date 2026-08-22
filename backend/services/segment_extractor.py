@@ -115,6 +115,15 @@ def group_transcript_segments(
     return [{"start_time": g.start_time, "end_time": g.end_time, "text": g.text} for g in groups]
 
 
+# Where a group is allowed to end, once it already satisfies both floors.
+_SENTENCE_ENDINGS = (".", "!", "?", "\u0964")   # \u0964 = Devanagari danda
+_PAUSE_SECONDS = 2.0
+# How far past the duration floor the search for a sentence ending may run
+# before the group is closed anyway. Without a cap, a transcript with no
+# punctuation would grow every group up to max_segment_duration.
+_SOFT_CAP_MULTIPLIER = 1.6
+
+
 def _group_transcript_segments(
     raw_segments: List[Dict],
     max_segment_duration: float,
@@ -122,17 +131,54 @@ def _group_transcript_segments(
     words_per_group: int = 40,
 ) -> List[ScoredSegment]:
     """
-    Groups individual transcript entries into larger coherent blocks.
+    Group individual transcript entries into blocks long enough to be clips.
 
-    Individual entries are often 1-3 seconds. We group them into
-    ~40-word blocks (15-40s) which are meaningful as video clips.
-    Natural 2-second silence gaps are used as topic boundaries.
+    A transcript entry runs 1-5 seconds; a watchable clip runs 20-40. This turns
+    one into the other.
+
+    `min_segment_duration` is a FLOOR, not a filter. The previous version chose
+    where to cut by word count and then decided whether to KEEP by duration —
+    two rules connected only through the speaker's rate, which was measured
+    across four real transcripts at 1.48 to 3.56 words/second. So 40 words spans
+    anywhere from 11 to 27 seconds, and against a 20s filter the outcome was
+    decided by how fast the speaker talked: one 14.7-minute video produced zero
+    groups, another produced a single group covering 2% of its runtime.
+
+    A group is now emitted only once it has both enough time and enough words,
+    so it cannot be born too short, and a trailing buffer that is still short is
+    merged into the previous group. Nothing is discarded.
+
+    Once both floors are met, the cut prefers a sentence ending or a real pause —
+    a clip that starts and ends mid-sentence reads as a glitch. That preference
+    is capped (see _SOFT_CAP_MULTIPLIER) so unpunctuated transcripts still
+    produce bounded clips.
     """
-    groups = []
-    buffer_text = []
+    groups: List[ScoredSegment] = []
+    buffer_text: List[str] = []
     buffer_start = None
     buffer_end = None
     prev_end = None
+
+    def flush():
+        nonlocal buffer_text, buffer_start, buffer_end
+        if buffer_text and buffer_start is not None:
+            groups.append(ScoredSegment(
+                video_id="",
+                start_time=buffer_start,
+                end_time=buffer_end,
+                text=" ".join(buffer_text),
+            ))
+        buffer_text = []
+        buffer_start = None
+        buffer_end = None
+
+    def floors_met() -> bool:
+        if buffer_start is None or buffer_end is None:
+            return False
+        return (
+            (buffer_end - buffer_start) >= min_segment_duration
+            and len(" ".join(buffer_text).split()) >= words_per_group
+        )
 
     for seg in raw_segments:
         text = seg.get("text", "").strip()
@@ -140,39 +186,50 @@ def _group_transcript_segments(
             continue
 
         start = float(seg.get("start", 0))
-        duration = float(seg.get("duration", 0))
-        end = start + duration
+        end = start + float(seg.get("duration", 0))
 
-        natural_pause = prev_end is not None and (start - prev_end) > 2.0
-        word_limit_reached = len(" ".join(buffer_text).split()) >= words_per_group
-
-        if buffer_text and (natural_pause or word_limit_reached):
-            group_duration = buffer_end - buffer_start
-            if group_duration >= min_segment_duration:
-                groups.append(ScoredSegment(
-                    video_id="",
-                    start_time=buffer_start,
-                    end_time=min(buffer_end, buffer_start + max_segment_duration),
-                    text=" ".join(buffer_text),
-                ))
-            buffer_text = []
-            buffer_start = None
+        # Silence before this entry is a topic boundary, so the cut belongs
+        # BEFORE it — but only when the group is already long enough. Closing
+        # below the floor is exactly what used to throw content away.
+        #
+        # In practice this fires rarely: caption entries overlap, so the median
+        # gap between them is negative (-2.2s on one sampled transcript) and a
+        # gap above the threshold occurs at 0.3%-1.5% of boundaries. It costs
+        # nothing to honour when it does appear.
+        if prev_end is not None and (start - prev_end) > _PAUSE_SECONDS and floors_met():
+            flush()
 
         if buffer_start is None:
             buffer_start = start
         buffer_text.append(text)
-        buffer_end = end
+        buffer_end = end if buffer_end is None else max(buffer_end, end)
         prev_end = end
 
+        span = buffer_end - buffer_start
+
+        # Ceiling: never hand back a clip longer than the caller allows. The end
+        # time is the real end of the buffered speech — the old code clamped it
+        # to buffer_start + max_segment_duration while keeping all the text, so
+        # the group described more than the clip would show.
+        if span >= max_segment_duration:
+            flush()
+            continue
+
+        if not floors_met():
+            continue
+
+        if text.endswith(_SENTENCE_ENDINGS) or span >= min_segment_duration * _SOFT_CAP_MULTIPLIER:
+            flush()
+
+    # Trailing buffer. Being too short to stand alone is not a reason to lose
+    # the words — they are the end of the previous clip.
     if buffer_text and buffer_start is not None:
-        group_duration = buffer_end - buffer_start
-        if group_duration >= min_segment_duration:
-            groups.append(ScoredSegment(
-                video_id="",
-                start_time=buffer_start,
-                end_time=min(buffer_end, buffer_start + max_segment_duration),
-                text=" ".join(buffer_text),
-            ))
+        if (buffer_end - buffer_start) >= min_segment_duration or not groups:
+            flush()
+        else:
+            tail = groups[-1]
+            tail.end_time = max(tail.end_time, buffer_end)
+            tail.text = f"{tail.text} {' '.join(buffer_text)}"
 
     return groups
 

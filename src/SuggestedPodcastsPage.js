@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchVideos } from './youtubeApi.js';
+import VideoList from './VideoList.js';
 import MultiSelectBar from './components/merge/MultiSelectBar.jsx';
 import './SuggestedPage.css';
 import { API_BASE_URL } from './config/api.js';
@@ -40,7 +41,8 @@ const SuggestedPodcastsPage = () => {
     setSelectedForMerge([]);
 
     try {
-      const fetchedVideos = await fetchVideos(topic);
+      // Preset topic buttons keep the original podcast/long-form behaviour.
+      const fetchedVideos = await fetchVideos(topic, { appendPodcast: true, duration: 'long' });
       if (fetchedVideos.length === 0) {
         setError(`No videos found for "${topic}". Try another topic.`);
       }
@@ -284,76 +286,11 @@ const SuggestedPodcastsPage = () => {
                 Click a card to select · then hit Summarize
               </span>
             </div>
-          <div className="suggested-grid">
-            {videos.map((video, index) => {
-              const videoId = video.id?.videoId || video.id;
-              const isSelected = selectedForMerge.includes(videoId);
-              const thumb = video.snippet?.thumbnails?.medium?.url || video.snippet?.thumbnails?.default?.url;
-              const title = video.snippet?.title || '';
-              const channel = video.snippet?.channelTitle || '';
-
-              return (
-                <motion.div
-                  key={videoId || index}
-                  className={`suggested-card ${isSelected ? 'suggested-card--selected' : ''}`}
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: index * 0.04 }}
-                  onClick={() => handleToggleSelect(videoId)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {/* Thumbnail */}
-                  <div className="suggested-card-thumb">
-                    <img src={thumb} alt={title} />
-                    {/* Selection checkmark */}
-                    <AnimatePresence>
-                      {isSelected && (
-                        <motion.div
-                          className="suggested-select-overlay"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                        >
-                          <div className="suggested-check">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="20 6 9 17 4 12"/>
-                            </svg>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-
-                  {/* Body */}
-                  <div className="suggested-card-body">
-                    <h3 className="suggested-card-title">{title}</h3>
-                    {channel && <p className="suggested-card-channel">{channel}</p>}
-
-                    {/* Action row — stop propagation so clicks don't toggle selection */}
-                    <div className="suggested-card-btns" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        className="suggested-btn-watch"
-                        onClick={() => navigate('/video-player', { state: { video, videosList: videos } })}
-                      >
-                        Watch Here
-                      </button>
-                      <a
-                        href={`https://www.youtube.com/watch?v=${videoId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="suggested-btn-yt"
-                      >
-                        YouTube
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Selected indicator strip at bottom */}
-                  {isSelected && <div className="suggested-card-strip" />}
-                </motion.div>
-              );
-            })}
-          </div>
+          <VideoList
+            videos={videos}
+            selectedVideoIds={selectedForMerge}
+            onToggleSelectForMerge={handleToggleSelect}
+          />
           </>
         )}
 

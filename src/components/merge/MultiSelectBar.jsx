@@ -36,6 +36,7 @@ const MultiSelectBar = ({
 
   const getDurationLabel = () => {
     const labels = {
+      2: '2 min • Express',
       5: '5 min • Quick',
       10: '10 min • Brief',
       15: '15 min • Full',

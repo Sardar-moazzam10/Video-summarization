@@ -107,10 +107,11 @@ class MergeJobCreate(BaseModel):
     video_ids: List[str] = Field(..., min_length=1, max_length=10)
     # ge=2 allows the fast 2-minute "Quick" demo profile (was ge=5).
     target_duration_minutes: int = Field(default=10, ge=2, le=20)
-    voice_id: Optional[str] = None
     generate_audio: bool = True
     generate_video: bool = False
-    highlight_duration_seconds: int = Field(default=120, ge=30, le=600)
+    # le raised from 600 so a 20-minute output is expressible: the reel is now
+    # the product itself (original audio), not a short companion to a narration.
+    highlight_duration_seconds: int = Field(default=120, ge=30, le=1200)
     style: str = "educational"
 
 
@@ -128,7 +129,6 @@ class MergeJob(BaseModel):
     video_ids: List[str]
     target_duration_minutes: int
     duration_style: DurationStyle = DurationStyle.BRIEF
-    voice_id: Optional[str] = None
     generate_audio: bool = True
     generate_video: bool = False
     highlight_duration_seconds: int = 120

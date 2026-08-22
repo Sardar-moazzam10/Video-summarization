@@ -231,7 +231,7 @@ Output ONLY valid JSON with these keys (scores are 0-100):
 {{
   "faithfulness": 0,        // are all summary claims supported by the transcript? penalize invented/guessed facts
   "coverage": 0,            // does the summary capture the transcript's most important points?
-  "key_point_recall": 0,    // of the 3-5 most important transcript points, how many appear in the summary?
+  "key_point_recall": 0,    // identify the 3-5 most important transcript points, then report WHAT PERCENTAGE of them appear in the summary, as a number from 0 to 100 (e.g. 3 of 4 points present = 75). Do NOT report a raw count.
   "hallucinations": [],     // claims in the summary NOT supported by the transcript
   "missing_key_points": [], // important transcript points the summary omitted
   "verdict": ""             // one sentence overall judgment
@@ -267,6 +267,12 @@ SELECTED CLIP TRANSCRIPTS:
 JSON output:"""
 
 
+# HTTP read timeout applied to judge requests only (see ollama_judge below).
+# Deliberately NOT settings.OLLAMA_TIMEOUT_SECONDS: that constant is shared with
+# the merge pipeline, which bounds its Ollama call at 120s.
+JUDGE_HTTP_TIMEOUT_SECONDS = 300.0
+
+
 async def ollama_judge(reference_text: str, candidate_text: str, prompt_template: str,
                        score_keys: List[str]) -> Dict:
     try:
@@ -279,7 +285,26 @@ async def ollama_judge(reference_text: str, candidate_text: str, prompt_template
         return {"score": None, "error": "Ollama not running / model not pulled — skipped"}
 
     prompt = prompt_template.format(reference=reference_text[:16000], candidate=candidate_text[:8000])
-    raw = await asyncio.to_thread(svc._generate, prompt, True)   # expect_json=True
+
+    # The judge sends a far larger prompt than normal enrichment (up to 16k chars
+    # of transcript), so generation regularly exceeds the service's default
+    # httpx timeout of settings.OLLAMA_TIMEOUT_SECONDS (100s) and the request is
+    # aborted before the model finishes — surfacing as "Ollama returned no
+    # response" rather than a timeout.
+    #
+    # The override is SCOPED and restored in `finally` rather than raising the
+    # global constant, because backend/api/merge.py wraps its Ollama call in a
+    # 120s asyncio wall timeout. A global 300s httpx limit would outlive that
+    # cancel, leaking the worker thread (asyncio cannot cancel a to_thread
+    # worker). Scoping the change keeps that invariant intact.
+    original_timeout = getattr(svc, "_timeout", None)
+    try:
+        svc._timeout = JUDGE_HTTP_TIMEOUT_SECONDS
+        raw = await asyncio.to_thread(svc._generate, prompt, True)  # expect_json=True
+    finally:
+        if original_timeout is not None:
+            svc._timeout = original_timeout
+
     if not raw:
         return {"score": None, "error": "Ollama returned no response"}
 

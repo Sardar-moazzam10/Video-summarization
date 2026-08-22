@@ -29,12 +29,14 @@ def _get_pipeline():
     if _model is None:
         import warnings
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+        from ..core.config import get_hf_token
         model_name = settings.SUMMARIZATION_MODEL  # "facebook/bart-large-cnn"
+        hf_token = get_hf_token()  # None when unset → anonymous, same as before
         print(f"[Summarizer] Loading model: {model_name}")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            _tokenizer = AutoTokenizer.from_pretrained(model_name)
-            _model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+            _tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
+            _model = AutoModelForSeq2SeqLM.from_pretrained(model_name, token=hf_token)
         _model.eval()
         # Fix BART generation config warning: forced_bos_token_id must be 0 for BART
         if hasattr(_model, "generation_config"):

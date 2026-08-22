@@ -2,7 +2,7 @@
  * DurationSelector - Professional duration picker component
  *
  * Features:
- * - Visual 4-option duration picker
+ * - Visual duration picker, one card per entry in DURATIONS
  * - Animated selection
  * - Descriptions for each option
  * - Accessibility support
@@ -12,13 +12,28 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 
+// targetWords mirrors DURATION_PROFILES in backend/services/duration_profiles.py.
+// Keep the two in sync — this drives the "Estimated output" label only; the
+// backend remains the source of truth for what is actually generated.
 const DURATIONS = [
+  {
+    value: 2,
+    label: '2 min',
+    icon: '🚀',
+    title: 'Express',
+    description: 'Fastest — ideal for a live demo',
+    targetWords: 300,
+    color: 'from-rose-500 to-pink-500',
+    bgColor: 'bg-rose-500/10',
+    borderColor: 'border-rose-500',
+  },
   {
     value: 5,
     label: '5 min',
     icon: '⚡',
     title: 'Quick Scan',
     description: 'Key highlights only',
+    targetWords: 750,
     color: 'from-amber-500 to-orange-500',
     bgColor: 'bg-amber-500/10',
     borderColor: 'border-amber-500',
@@ -29,6 +44,7 @@ const DURATIONS = [
     icon: '📝',
     title: 'Brief Summary',
     description: 'Main ideas with context',
+    targetWords: 1500,
     color: 'from-emerald-500 to-teal-500',
     bgColor: 'bg-emerald-500/10',
     borderColor: 'border-emerald-500',
@@ -39,6 +55,7 @@ const DURATIONS = [
     icon: '📚',
     title: 'Full Coverage',
     description: 'Complete with examples',
+    targetWords: 2200,
     color: 'from-blue-500 to-cyan-500',
     bgColor: 'bg-blue-500/10',
     borderColor: 'border-blue-500',
@@ -49,6 +66,7 @@ const DURATIONS = [
     icon: '🎓',
     title: 'Deep Dive',
     description: 'Comprehensive analysis',
+    targetWords: 2800,
     color: 'from-purple-500 to-pink-500',
     bgColor: 'bg-purple-500/10',
     borderColor: 'border-purple-500',
@@ -62,6 +80,10 @@ const DurationSelector = ({
   showTitle = true,
   compact = false,
 }) => {
+  // Look the estimate up from DURATIONS rather than hardcoding it, so adding a
+  // profile to the table above is the only edit required.
+  const selectedDuration = DURATIONS.find((d) => d.value === value);
+
   return (
     <div className="w-full">
       {showTitle && (
@@ -75,11 +97,10 @@ const DurationSelector = ({
         </div>
       )}
 
-      <div
-        className={`grid gap-3 ${
-          compact ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
-        }`}
-      >
+      {/* Flex-wrap rather than a fixed column count: the option list is 5 long and
+          any grid-cols-N leaves an orphan on the last row. Wrapped rows stay
+          centered, and flex-1 lets a full row share the width evenly. */}
+      <div className="flex flex-wrap justify-center gap-3">
         {DURATIONS.map((duration) => {
           const isSelected = value === duration.value;
 
@@ -91,7 +112,8 @@ const DurationSelector = ({
               className={`
                 relative overflow-hidden rounded-xl p-4 text-left
                 transition-all duration-300 ease-out
-                border-2
+                border-2 flex-1
+                ${compact ? 'basis-32 max-w-[220px]' : 'basis-40 max-w-xs'}
                 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
                 ${
                   isSelected
@@ -186,7 +208,7 @@ const DurationSelector = ({
           <div className="flex items-center justify-between text-sm">
             <span className="text-dark-400">Estimated output:</span>
             <span className="text-white font-medium">
-              ~{value === 5 ? '750' : value === 10 ? '1,500' : value === 15 ? '2,200' : '2,800'} words
+              ~{selectedDuration?.targetWords?.toLocaleString() ?? '—'} words
             </span>
           </div>
         </motion.div>

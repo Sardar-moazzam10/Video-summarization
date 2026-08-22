@@ -4,12 +4,12 @@ Video Highlight Service — FFmpeg-based video clip extraction and assembly.
 Pipeline (v2 — original-audio, precise-seek):
     1. Download source videos (via video_cache_manager.py)
     2. Trim + normalize each segment in ONE FFmpeg pass:
-         - Two-stage seek: fast keyframe seek (-ss before -i) +
-           precise sub-second offset (-ss after -i) → exact timestamp, not keyframe-aligned
+         - Single accurate input seek (-ss before -i) → exact timestamp, not
+           keyframe-aligned, and PTS reset to 0 so fade timings line up
          - Single re-encode to 1280x720 H.264 (no double encode)
          - Audio + video fade-in / fade-out at clip boundaries
-    3. Concatenate clips with 0.4s black-frame + silence separator between each
-       (visually signals topic change; preserves the "pause" feeling)
+    3. Concatenate clips back to back (no black-frame separator — the per-clip
+       fades already carry the transition; see _concat_with_transitions)
     4. Keep original speaker audio — NO TTS overlay on the video track.
        TTS narration remains as a SEPARATE audio file for the UI audio player.
 
@@ -21,7 +21,9 @@ Why original audio?
 """
 
 import os
+import sys
 import shutil
+import importlib.util
 import subprocess
 import tempfile
 import asyncio
@@ -41,8 +43,25 @@ def _resolve_binary(env_name: str, default_name: str) -> str:
     return shutil.which(default_name) or default_name
 
 
+def _resolve_ytdlp_cmd() -> List[str]:
+    """
+    yt-dlp as a command *prefix* rather than a single binary path.
+
+    Order: explicit YTDLP_PATH override → `<current interpreter> -m yt_dlp` →
+    PATH lookup. The module form makes the venv's yt-dlp reachable even when
+    venv/bin is absent from the server process's PATH.
+    """
+    explicit = _resolve_binary("YTDLP_PATH", "")
+    if explicit and os.path.isfile(explicit):
+        return [explicit]
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
+    return [shutil.which("yt-dlp") or "yt-dlp"]
+
+
 FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
-YTDLP_BIN  = _resolve_binary("YTDLP_PATH",  "yt-dlp")
+YTDLP_CMD  = _resolve_ytdlp_cmd()
+YTDLP_BIN  = YTDLP_CMD[0]  # retained for logging / back-compat
 NODE_BIN   = _resolve_binary("NODE_PATH",   "node")
 
 
@@ -52,9 +71,9 @@ class VideoService:
 
     v2 changes vs v1:
     - Trim + normalize combined into ONE FFmpeg pass (was two separate passes)
-    - Two-stage precise seeking (keyframe fast-seek + sub-second offset)
-    - Audio + video fade at clip boundaries
-    - 0.4s black-frame separator between clips
+    - Accurate single-stage input seeking (PTS-reset, fade-safe)
+    - Audio + video fade at clip boundaries (0.15s)
+    - Clips concatenated back to back (black-frame separator removed)
     - Original speaker audio preserved (TTS not overlaid on video)
     """
 
@@ -189,7 +208,7 @@ class VideoService:
         )
 
         cmd = [
-            YTDLP_BIN,
+            *YTDLP_CMD,
             "--ffmpeg-location", self.ffmpeg,
             "--js-runtimes", f"node:{NODE_BIN}",
             "--remote-components", "ejs:github",
@@ -233,12 +252,14 @@ class VideoService:
         """
         Trim + normalize in ONE FFmpeg pass with exact timestamp precision.
 
-        Two-stage seeking:
-          Stage 1: -ss {start - 2s} BEFORE -i  → fast keyframe seek
-          Stage 2: -ss {offset}     AFTER  -i  → precise sub-second correction
+        Seeking:
+          A single input-side `-ss {start}` before `-i`.  Since FFmpeg 2.1 this
+          is frame-accurate when re-encoding: FFmpeg seeks to the preceding
+          keyframe, then decodes and discards up to `start` internally.
 
-        Combined: keyframe decode (instant) + 2s forward decode (fast) =
-        clip starts exactly at `start`, not at the previous keyframe.
+          It also resets the stream PTS to 0 at `start`, so the filtergraph
+          clock and the output clock are the same clock.  That is what makes
+          the fade timings below correct — see the fade comment.
 
         Also applies:
           - Scale/pad to 1280x720 (uniform format for concat)
@@ -263,12 +284,21 @@ class VideoService:
         if duration < 0.5:
             return None
 
-        # Two-stage seek
-        pre_seek       = max(0.0, start - 2.0)
-        precise_offset = start - pre_seek   # ≤ 2.0 s
-
-        # Fade duration: 0.3s or 10% of clip, whichever is shorter
-        fade_d         = min(0.30, duration * 0.10)
+        # Fade duration: 0.15s or 10% of clip, whichever is shorter.
+        # Shortened from 0.30s — combined with the (now removed) 0.4s black
+        # separator, the old values produced ~1s of darkness between every clip
+        # (fade out 0.3 + black 0.4 + fade in 0.3), which read as a black-screen
+        # glitch across a 25-clip reel. 0.15s keeps the transition soft without
+        # the dead air.
+        #
+        # `st=` is measured on the FILTERGRAPH clock. That clock is zero-based
+        # at `start` only because the seek above is a single input-side -ss.
+        # An output-side -ss (i.e. a second -ss placed after -i) shifts the
+        # output window WITHOUT shifting the filter clock, which would move the
+        # fade-out `st` earlier than the clip's real end — and since fade=out
+        # holds frames black after the fade completes, every clip would end in
+        # a black, silent tail as long as that offset. Keep the seek single-stage.
+        fade_d         = min(0.15, duration * 0.10)
         fade_out_start = max(0.0, duration - fade_d)
 
         vf = (
@@ -284,9 +314,8 @@ class VideoService:
 
         cmd = [
             self.ffmpeg, "-y",
-            "-ss", f"{pre_seek:.3f}",         # fast keyframe seek
+            "-ss", f"{start:.3f}",            # accurate input seek; resets PTS to 0
             "-i", src,
-            "-ss", f"{precise_offset:.3f}",   # precise offset from keyframe
             "-t",  f"{duration:.3f}",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
@@ -326,21 +355,20 @@ class VideoService:
         work_dir: str,
     ) -> str:
         """
-        Concatenate clips with a 0.4s black-frame + silence separator between each.
+        Concatenate clips back to back.
 
-        The separator serves as the "pause" the user expects between topic clips:
-        when the original speaker stops one topic and starts another, you see
-        a brief black frame before the next clip begins — mirroring the natural
-        gap in the original video.
+        The 0.4s black-frame separator that used to sit between clips has been
+        removed. Each clip already carries its own fade-in/fade-out, so the
+        separator stacked on top of them: fade-out (0.3s) + black (0.4s) +
+        fade-in (0.3s) put roughly a second of darkness between every clip —
+        about 24s of a 25-clip reel — which read as a black-screen bug rather
+        than the intended "pause". The fades alone give a clean transition.
+
+        _make_separator() is retained (unused) so the behaviour can be restored
+        by re-interleaving its output here.
         """
-        separator = await self._make_separator(work_dir)
-
-        # Interleave: clip, sep, clip, sep, ..., clip  (no sep after last)
-        interleaved = []
-        for i, clip in enumerate(clip_files):
-            interleaved.append(clip)
-            if i < len(clip_files) - 1 and separator and os.path.exists(separator):
-                interleaved.append(separator)
+        # Clips concatenate directly — no separator frames.
+        interleaved = list(clip_files)
 
         list_path = os.path.join(work_dir, "concat.txt")
         with open(list_path, "w") as f:
@@ -368,8 +396,12 @@ class VideoService:
     async def _make_separator(self, work_dir: str) -> Optional[str]:
         """
         Generate a 0.4s black-frame + silence MP4.
-        Used as the visual "pause" between topic-change clips.
-        Returns path on success, None if generation fails (concat skips it).
+
+        NOT CURRENTLY CALLED — see _concat_with_transitions(). Kept so the
+        black-frame "pause" between topic clips can be restored by interleaving
+        this file back into the concat list.
+
+        Returns path on success, None if generation fails.
         """
         out = os.path.join(work_dir, "separator.mp4")
         cmd = [

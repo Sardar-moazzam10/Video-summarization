@@ -26,7 +26,7 @@ import time
 
 from .core.config import get_settings
 from .core.database import close_database
-from .api import auth, transcript, merge, voice, search, chat
+from .api import auth, transcript, merge, search, chat
 
 settings = get_settings()
 
@@ -142,7 +142,6 @@ async def rate_limit_middleware(request: Request, call_next):
 app.include_router(auth.router)
 app.include_router(transcript.router)
 app.include_router(merge.router)
-app.include_router(voice.router)  # FREE Edge TTS
 app.include_router(search.router)  # FAISS semantic search
 app.include_router(chat.router)  # Chat with video (FAISS + Ollama)
 

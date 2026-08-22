@@ -1,0 +1,28 @@
+# VidFusion evaluation corpus
+# ---------------------------------------------------------------------------
+# One video per line:   video_id_or_url[,category]
+# Blank lines and lines starting with # are ignored.
+#
+# The category column is optional but recommended — corpus_evaluation.py breaks
+# the results table down by category, and "we evaluated across three content
+# types" is a stronger claim in the thesis than a single undifferentiated mean.
+#
+# Aim for 15-30 videos, reasonably balanced across categories. Pick videos that
+# HAVE captions (the pipeline falls back to Whisper otherwise, which is slow).
+#
+# Run it with:
+#     ./venv/bin/python corpus_evaluation.py --corpus corpus.txt
+#
+# Tip: smoke-test the setup on three videos first:
+#     ./venv/bin/python corpus_evaluation.py --corpus corpus.txt --limit 3
+# ---------------------------------------------------------------------------
+
+# ---- podcast / interview (long, conversational, single or two speakers) ----
+nm1TxQj9IsQ,podcast
+# add ~9 more...
+
+# ---- lecture / educational (structured, explanatory) ----
+# VIDEO_ID_HERE,lecture
+
+# ---- news / documentary (dense, edited, multi-shot) ----
+# VIDEO_ID_HERE,news

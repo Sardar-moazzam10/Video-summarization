@@ -5,7 +5,8 @@ Production-ready settings with security
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
+import os
 import secrets
 
 
@@ -74,13 +75,11 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"              # #1 MTEB 2024, 768-dim, replaces all-MiniLM
     CLIP_MODEL: str = "openai/clip-vit-base-patch16"            # ViT-B/16: 17% better than B/32, same API
 
-    # =====================================================
-    # FRAME CAPTIONING (LLMVS-inspired — optional)
-    # Requires: ollama pull llava:7b
-    # Blends VLM caption-SBERT score with CLIP for richer highlight selection
-    # =====================================================
-    ENABLE_FRAME_CAPTIONS: bool = False   # Set True after: ollama pull llava:7b
-    CAPTION_MODEL: str = "llava:7b"       # Ollama multimodal model for keyframe descriptions
+    # Whisper size used by the transcript service, including its translate task
+    # for non-English videos. Measured on CPU: "base" runs at ~3.4x realtime,
+    # so a 25-minute video takes ~7 minutes. "small" is more accurate and about
+    # 3x slower; "tiny" is ~2x faster and noticeably worse.
+    WHISPER_MODEL: str = "base"
 
     # =====================================================
     # EXTERNAL TOOLS
@@ -103,6 +102,13 @@ class Settings(BaseSettings):
     MIN_DURATION_MINUTES: int = 2   # 2-minute "Quick" demo profile
     MAX_DURATION_MINUTES: int = 20
 
+    # =====================================================
+    # HUGGING FACE
+    # =====================================================
+    # Authenticates model downloads. Anonymous pulls share a per-IP quota and
+    # start returning 429 once it is exhausted; an authenticated pull does not.
+    HF_TOKEN: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -114,3 +120,30 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+def get_hf_token() -> Optional[str]:
+    """
+    Hugging Face access token for authenticated model downloads, or None.
+
+    Resolution order:
+      1. os.environ["HF_TOKEN"]  — token exported into the shell
+      2. Settings.HF_TOKEN       — token read from .env by pydantic-settings
+
+    The second source is not optional: pydantic-settings populates the Settings
+    object from .env but does NOT write into os.environ, and nothing under
+    backend/ calls load_dotenv(). So os.getenv("HF_TOKEN") alone returns None
+    when the server runs under uvicorn, which would silently leave every model
+    download anonymous.
+
+    None is the documented "no auth" value for the `token=` parameter in both
+    transformers and sentence-transformers, so callers can forward the result
+    unconditionally without branching.
+    """
+    token = os.getenv("HF_TOKEN")
+    if not token:
+        try:
+            token = getattr(get_settings(), "HF_TOKEN", "") or ""
+        except Exception:
+            token = ""
+    return token or None

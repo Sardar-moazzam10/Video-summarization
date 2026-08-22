@@ -32,12 +32,14 @@ def get_sentence_transformer():
     global _sentence_transformer
     if _sentence_transformer is None:
         from sentence_transformers import SentenceTransformer
+        from ..core.config import get_hf_token
         try:
             from ..core.config import get_settings
             model_name = get_settings().EMBEDDING_MODEL
         except Exception:
             model_name = "all-MiniLM-L6-v2"
-        _sentence_transformer = SentenceTransformer(model_name)
+        # None when unset → anonymous, same as before
+        _sentence_transformer = SentenceTransformer(model_name, token=get_hf_token())
         print(f"[OK] Loaded Sentence-BERT model: {model_name}")
     return _sentence_transformer
 
@@ -351,6 +353,7 @@ class FusionEngine:
         Detects actual semantic contradictions between video sources.
         """
         from transformers import pipeline as hf_pipeline
+        from ..core.config import get_hf_token
 
         # Lazy load NLI model (140MB, runs on CPU)
         if not hasattr(self, '_nli_pipeline') or self._nli_pipeline is None:
@@ -358,6 +361,7 @@ class FusionEngine:
             self._nli_pipeline = hf_pipeline(
                 "text-classification",
                 model="cross-encoder/nli-deberta-v3-small",
+                token=get_hf_token(),  # None when unset → anonymous, same as before
             )
             print("[Fusion] NLI model loaded")
 

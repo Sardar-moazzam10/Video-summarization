@@ -2,7 +2,8 @@
 
 .summary-wrapper {
     text-align: center;
-    padding: 50px 20px;
+    /* Top padding clears the fixed 56px navbar (Navbar.css) — 50px clipped it. */
+    padding: 110px 20px 60px;
     background: linear-gradient(-45deg, #0F172A, #1E293B, #0F172A, #1E293B);
     background-size: 400% 400%;
     animation: gradientAnimation 20s ease infinite, fadeIn 0.7s ease-in-out;
@@ -47,6 +48,143 @@
     z-index: 1;
   }
   
+  /* Responsive 16:9 player shell.
+     react-youtube renders <div><iframe/></div>, so both are pinned to the
+     wrapper — the iframe's own width/height attributes are then irrelevant. */
+  .player-shell {
+    position: relative;
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    aspect-ratio: 16 / 9;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: #000;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    z-index: 1;
+  }
+
+  /* aspect-ratio fallback for older engines */
+  @supports not (aspect-ratio: 16 / 9) {
+    .player-shell::after {
+      content: '';
+      display: block;
+      padding-bottom: 56.25%;
+    }
+  }
+
+  .player-shell .player-frame,
+  .player-shell > div {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+
+  .summary-subtitle {
+    max-width: 620px;
+    margin: -20px auto 32px;
+    font-size: 15px;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.5);
+    position: relative;
+    z-index: 1;
+  }
+
+  .summary-subtitle strong {
+    color: #38BDF8;
+    font-weight: 600;
+  }
+
+  /* Transcript snippet card — sits directly under the player.
+     min-height reserves the space so hovering a timestamp never shifts layout. */
+  .snippet-card {
+    max-width: 900px;
+    min-height: 96px;
+    margin: 16px auto 0;
+    padding: 18px 22px;
+    text-align: left;
+    background: rgba(30, 41, 59, 0.55);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(56, 189, 248, 0.15);
+    border-radius: 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    transition: border-color var(--transition-normal), background var(--transition-normal);
+    position: relative;
+    z-index: 1;
+  }
+
+  .snippet-card.is-filled {
+    border-color: rgba(56, 189, 248, 0.45);
+    background: rgba(30, 41, 59, 0.75);
+  }
+
+  .snippet-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .snippet-time {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: #0F172A;
+    background: linear-gradient(135deg, #0EA5E9, #38BDF8);
+    padding: 3px 10px;
+    border-radius: 6px;
+  }
+
+  .snippet-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.35);
+  }
+
+  .snippet-text {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.65;
+    color: rgba(255, 255, 255, 0.85);
+    font-style: italic;
+  }
+
+  .snippet-mark {
+    background: rgba(56, 189, 248, 0.22);
+    color: #7DD3FC;
+    padding: 0 3px;
+    border-radius: 3px;
+    font-weight: 600;
+    font-style: normal;
+  }
+
+  .snippet-placeholder {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.3);
+    font-style: normal;
+  }
+
+  .mention-count {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    vertical-align: middle;
+    color: #7DD3FC;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    border-radius: 9999px;
+  }
+
   .video-switch-buttons {
     margin: 20px 0;
     display: flex;
@@ -155,6 +293,19 @@
   .timestamp-btn:hover::before {
     left: 100%;
   }
+
+  /* Committed selection — mirrors .video-btn.active so the two rows read alike. */
+  .timestamp-btn.active {
+    background: linear-gradient(135deg, #0EA5E9, #38BDF8);
+    border-color: #38BDF8;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(14, 165, 233, 0.5);
+  }
+
+  .timestamp-btn:focus-visible {
+    outline: 2px solid #7DD3FC;
+    outline-offset: 2px;
+  }
   
   /* Animations */
   @keyframes fadeIn {
@@ -165,5 +316,54 @@
   @keyframes fadeInUp {
     from { opacity: 0; transform: translateY(20px); }
     to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Mobile */
+  @media (max-width: 640px) {
+    .summary-wrapper {
+      padding: 96px 14px 48px;
+    }
+
+    .summary-title {
+      font-size: 26px;
+      margin-bottom: 24px;
+    }
+
+    .summary-subtitle {
+      margin: -14px auto 24px;
+      font-size: 14px;
+    }
+
+    .snippet-card {
+      padding: 14px 16px;
+      min-height: 88px;
+    }
+
+    .snippet-text {
+      font-size: 15px;
+    }
+
+    .moment-title {
+      margin-top: 32px;
+      font-size: 21px;
+    }
+
+    .mention-count {
+      display: block;
+      width: fit-content;
+      margin: 8px auto 0;
+    }
+
+    .video-btn,
+    .timestamp-btn {
+      padding: 10px 16px;
+      font-size: 14px;
+    }
+
+    /* Touch devices keep hover transforms stuck after a tap */
+    .video-btn:hover,
+    .timestamp-btn:hover {
+      transform: none;
+    }
   }
   

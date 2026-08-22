@@ -159,19 +159,19 @@ const STEPS = [
   {
     num: '03', color: '#10b981', colorRgb: '16,185,129',
     title: 'Listen & Learn',
-    desc: 'Get a rich summary with Edge TTS narration in 28+ voices, BART chapters, and highlights.',
+    desc: 'Get a rich summary with the speakers\' own audio, BART chapters, and highlights.',
     icon: <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
   },
 ];
 
 const STAT_ITEMS = [
   { value: '100%', label: 'Free Stack',  icon: '⚡' },
-  { value: '28+',  label: 'AI Voices',   icon: '🎙' },
+  { value: '100%', label: 'Real Audio',  icon: '🎙' },
   { value: '15+',  label: 'Topics',      icon: '📚' },
   { value: '7',    label: 'AI Stages',   icon: '🤖' },
 ];
 
-const TECH_STACK = ['Whisper ASR', 'FAISS Vectors', 'Ollama LLM', 'Edge TTS', 'BART Model'];
+const TECH_STACK = ['Whisper ASR', 'FAISS Vectors', 'Ollama LLM', 'SBERT Ranking', 'BART Model'];
 
 const fadeUp = {
   hidden: { opacity: 0, y: 28 },
@@ -242,7 +242,7 @@ const ChoicePage = () => {
 
           <motion.p variants={fadeUp} className="cp-hero-desc">
             Search YouTube videos, merge multiple sources with AI fusion,
-            and get concise summaries with Edge TTS narration in 28+ voices.
+            and get concise summaries in the speakers' own voices.
             Powered by Whisper, Ollama, FAISS and BART — 100% free.
           </motion.p>
 
@@ -323,7 +323,7 @@ const ChoicePage = () => {
                 transition={{ delay: 1.0, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
               >
                 <div className="cp-transform-from">
-                  <span className="cp-transform-dur">4h 30m</span>
+                  <span className="cp-transform-dur">2h</span>
                   <span className="cp-transform-sub">input</span>
                 </div>
                 <div className="cp-transform-arrow-wrap">
@@ -339,7 +339,7 @@ const ChoicePage = () => {
 
               {/* Saving badge */}
               <div className={`cp-transform-badge${compressionDone ? ' cp-transform-badge--done' : ''}`}>
-                {compressionDone ? '⚡ You save 4h 18m' : '⚙ Compressing with AI...'}
+                {compressionDone ? '⚡ You save 1h 48m' : '⚙ Compressing with AI...'}
               </div>
 
               {/* Output type pills */}

@@ -1,23 +1,40 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchVideos } from './youtubeApi.js';
 import { fetchTranscript, searchKeywordInTranscript } from './youtubeTranscript.mjs';
 import { API_BASE_URL } from './config/api.js';
+import './VideoCard.css';
 
+// Concrete, spoken-aloud phrases — the kind of thing that shows up in a
+// transcript but almost never in a video title.
 const EXAMPLE_KEYWORDS = [
-  'machine learning', 'morning routine', 'investing basics',
-  'sleep optimization', 'deep work', 'mental health tips',
+  'Neural Networks',
+  'Gradient Descent',
+  'Climate Change',
+  'Inflation rate',
 ];
+
+// How many videos to fetch transcripts for at once. Transcript fetches can
+// fall back to downloading audio and running Whisper locally, which is slow
+// and CPU-heavy — high enough to feel fast, low enough not to choke the
+// backend if several fallbacks trigger at the same time.
+const TRANSCRIPT_CONCURRENCY = 4;
 
 const SearchByKeywordsPage = () => {
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState([]);
   const [expandedSummaries, setExpandedSummaries] = useState({});
+  const [summaryLoading, setSummaryLoading] = useState({});
   const [selectedVideos, setSelectedVideos] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [searchProgress, setSearchProgress] = useState({ done: 0, total: 0 });
   const navigate = useNavigate();
   const { query: urlQuery } = useParams();
+  // Guards against overlapping runSearch calls (double-click, Enter + button
+  // click racing, effects re-firing) — without it, two full 20-video batches
+  // can fire back to back and trip the backend's own rate limiter.
+  const searchInFlightRef = useRef(false);
 
   useEffect(() => {
     if (urlQuery) {
@@ -36,11 +53,17 @@ const SearchByKeywordsPage = () => {
 
   const fetchSummary = async (transcriptText) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/summarize`, {
+      // Route lives under the transcript router; its body field is `text`.
+      const response = await fetch(`${API_BASE_URL}/api/v1/transcript/summarize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: transcriptText }),
+        body: JSON.stringify({ text: transcriptText }),
       });
+      // A 404/422 still parses as JSON, so check status before reading `summary`.
+      if (!response.ok) {
+        console.error('Summary request failed:', response.status, await response.text());
+        return 'Summary generation failed.';
+      }
       const data = await response.json();
       return data.summary || 'No summary available.';
     } catch (err) {
@@ -63,29 +86,54 @@ const SearchByKeywordsPage = () => {
   const runSearch = useCallback(async (searchTerm) => {
     const term = (searchTerm || keyword).trim();
     if (!term) return;
+    if (searchInFlightRef.current) return;
+    searchInFlightRef.current = true;
     setResults([]);
     setSelectedVideos([]);
+    setExpandedSummaries({});
+    setSummaryLoading({});
     setLoading(true);
 
     try {
+      // Unrestricted search — exactly what the user typed, any duration.
       const videos = await fetchVideos(term);
-      const matches = [];
+      setSearchProgress({ done: 0, total: videos.length });
 
-      for (const video of videos) {
-        const transcript = await fetchTranscript(video.id.videoId);
-        if (transcript) {
-          const keywordMatches = searchKeywordInTranscript(transcript, term);
-          if (keywordMatches.length > 0) {
-            const transcriptText = transcript.map((e) => e.text).join(' ');
-            const summary = await fetchSummary(transcriptText);
-            matches.push({ video, matches: keywordMatches, summary, transcript });
+      const collected = [];
+
+      // Transcript fetches are independent per video and each one can be slow
+      // (a missing-captions video falls back to downloading audio and running
+      // Whisper locally). Running them one at a time meant a single slow video
+      // stalled every result behind it. A small worker pool processes several
+      // videos concurrently and pushes each match into the UI as soon as it's
+      // found, instead of waiting for all ~20 videos to finish.
+      let nextIndex = 0;
+      const worker = async () => {
+        while (nextIndex < videos.length) {
+          const video = videos[nextIndex++];
+          try {
+            const transcript = await fetchTranscript(video.id?.videoId || video.id);
+            if (transcript && transcript.length > 0) {
+              const keywordMatches = searchKeywordInTranscript(transcript, term);
+              if (keywordMatches.length > 0) {
+                const match = { video, matches: keywordMatches, transcript, summary: null };
+                collected.push(match);
+                setResults((prev) => [...prev, match]);
+              }
+            }
+          } catch (err) {
+            console.error('Transcript processing error:', err);
+          } finally {
+            setSearchProgress((prev) => ({ ...prev, done: prev.done + 1 }));
           }
         }
-      }
+      };
 
-      setResults(matches);
+      const workerCount = Math.min(TRANSCRIPT_CONCURRENCY, videos.length);
+      await Promise.all(Array.from({ length: workerCount }, worker));
+
       sessionStorage.setItem('keyword', term);
-      sessionStorage.setItem('results', JSON.stringify(matches));
+      sessionStorage.setItem('results', JSON.stringify(collected));
 
       const username = JSON.parse(localStorage.getItem('user'))?.username;
       if (username) {
@@ -104,6 +152,7 @@ const SearchByKeywordsPage = () => {
       console.error('Search error:', err);
     } finally {
       setLoading(false);
+      searchInFlightRef.current = false;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -116,14 +165,35 @@ const SearchByKeywordsPage = () => {
     );
   };
 
-  const toggleSummary = (index) => {
-    setExpandedSummaries((prev) => ({ ...prev, [index]: !prev[index] }));
+  const toggleSummary = async (index) => {
+    const willExpand = !expandedSummaries[index];
+    setExpandedSummaries((prev) => ({ ...prev, [index]: willExpand }));
+    if (!willExpand) return;
+
+    // Summary is generated on demand, the first time a card is expanded —
+    // not eagerly for every match, since most matches are never opened.
+    const result = results[index];
+    if (!result || result.summary || summaryLoading[index]) return;
+
+    setSummaryLoading((prev) => ({ ...prev, [index]: true }));
+    try {
+      const transcriptText = result.transcript.map((e) => e.text).join(' ');
+      const summary = await fetchSummary(transcriptText);
+      setResults((prev) => {
+        const next = prev.map((r, i) => (i === index ? { ...r, summary } : r));
+        sessionStorage.setItem('results', JSON.stringify(next));
+        return next;
+      });
+    } finally {
+      setSummaryLoading((prev) => ({ ...prev, [index]: false }));
+    }
   };
 
   const handleOpenMergePreview = () => {
     const selectedResults = results.filter((r) => selectedVideos.includes(r.video.id.videoId));
-    if (selectedResults.length < 2) {
-      alert('Please select at least 2 videos to merge.');
+    // Parity with SearchPage / SuggestedPodcastsPage: 1 video summarizes, 2+ merges.
+    if (selectedResults.length < 1) {
+      alert('Please select at least 1 video to summarize.');
       return;
     }
     try {
@@ -136,11 +206,18 @@ const SearchByKeywordsPage = () => {
 
   const handleSummarize = () => {
     if (results.length < 3) return alert('At least 3 results are needed to summarize!');
+    const term = keyword.trim();
     const topThree = results.slice(0, 3).map((r) => ({
       videoId: r.video.id.videoId,
-      timestamps: r.matches.slice(0, 5).map((m) => Math.floor(m.timestamp)),
+      title: r.video.snippet?.title,
+      // Each moment carries the transcript line it was matched on, so the player
+      // can show what is actually said instead of a bare timecode.
+      timestamps: r.matches.slice(0, 5).map((m) => ({
+        time: Math.floor(m.timestamp),
+        text: m.text,
+      })),
     }));
-    navigate('/summarized-player', { state: { videoData: topThree } });
+    navigate('/summarized-player', { state: { videoData: topThree, keyword: term } });
   };
 
   return (
@@ -149,41 +226,110 @@ const SearchByKeywordsPage = () => {
       <div style={styles.bgGlow} />
 
       <div style={styles.container}>
-        {/* Header */}
-        <motion.div
+        {/* Hero — explains the page before the user types anything */}
+        <motion.header
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          style={styles.header}
+          className="mb-6 text-center"
         >
-          <div style={styles.iconWrap}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#478BE0" strokeWidth="2">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/10 px-3.5 py-1.5">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#478BE0" strokeWidth="2.5">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
+            <span className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-400">
+              Transcript Search
+            </span>
           </div>
-          <h1 style={styles.title}>Search by Keywords</h1>
-          <p style={styles.subtitle}>Searches <strong style={{ color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>inside transcripts</strong> — finds exact timestamps where creators mention your topic</p>
 
-          {/* Mode distinction tip */}
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 14,
-            padding: '8px 14px', borderRadius: 9999,
-            background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.15)',
-          }}>
-            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>💡 Not what you need?</span>
-            <button
-              onClick={() => navigate('/search-by-title')}
-              style={{
-                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#8b5cf6',
-                display: 'flex', alignItems: 'center', gap: 4,
-              }}
-            >
-              Search by video title
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-            </button>
-          </div>
-        </motion.div>
+          <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+            Search Inside the Video
+          </h1>
+
+          <p className="mx-auto max-w-xl text-[15px] leading-relaxed text-white/45">
+            This searches the{' '}
+            <strong className="font-semibold text-white/75">actual spoken words</strong> in every
+            transcript — not titles, not descriptions. You get the exact timestamps where a topic is
+            discussed.
+          </p>
+        </motion.header>
+
+        {/* Onboarding: what to search, and when to use this page instead of title
+            search. Hidden once results exist — it has done its job by then. */}
+        {results.length === 0 && !loading && (
+          <motion.section
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.08 }}
+            className="mb-6 grid gap-3 md:grid-cols-2"
+          >
+            {/* What to search for */}
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5">
+              <h2 className="mb-2 flex items-center gap-2 text-sm font-bold text-white">
+                <span className="text-base">🔍</span> What to search for
+              </h2>
+              <p className="text-[13.5px] leading-relaxed text-white/45">
+                Specific technical terms, concepts, or topics — the kind of phrase a creator
+                actually says out loud mid-episode.
+              </p>
+
+              <p className="mb-2 mt-4 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/25">
+                Tap to try one
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {EXAMPLE_KEYWORDS.map((kw) => (
+                  <button
+                    key={kw}
+                    onClick={() => { setKeyword(kw); runSearch(kw); }}
+                    className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 py-1.5 text-[12.5px] font-medium text-white/50 transition-all duration-200 hover:border-accent-400/25 hover:bg-accent-400/10 hover:text-accent-400"
+                  >
+                    {kw}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Rule of thumb */}
+            <div className="rounded-2xl border border-accent-500/15 bg-accent-500/[0.05] p-5">
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-white">
+                <span className="text-base">💡</span> Rule of thumb
+              </h2>
+
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <span className="mt-0.5 flex-shrink-0 rounded-md bg-white/[0.06] px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-white/40">
+                    Title
+                  </span>
+                  <p className="text-[13px] leading-relaxed text-white/50">
+                    Finding a specific show or person — e.g.{' '}
+                    <span className="font-medium text-white/70">“Lex Fridman”</span>.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <span className="mt-0.5 flex-shrink-0 rounded-md bg-accent-500/15 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-accent-400">
+                    Keyword
+                  </span>
+                  <p className="text-[13px] leading-relaxed text-white/50">
+                    Finding a specific topic discussed{' '}
+                    <span className="font-medium text-white/70">deep inside any video</span>,
+                    whoever made it.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => navigate('/search-by-title')}
+                className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-accent-400 transition-colors hover:text-accent-300"
+              >
+                Switch to title search
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </motion.section>
+        )}
 
         {/* Search bar */}
         <motion.div
@@ -199,7 +345,7 @@ const SearchByKeywordsPage = () => {
               </svg>
               <input
                 type="text"
-                placeholder="e.g. machine learning, morning routine..."
+                placeholder="Try searching 'Support Vector Machine'..."
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -211,44 +357,11 @@ const SearchByKeywordsPage = () => {
             </button>
           </div>
 
-          {/* Example keyword chips */}
-          {results.length === 0 && !loading && (
-            <div style={{ marginTop: 14 }}>
-              <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)' }}>
-                Try these keywords
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {EXAMPLE_KEYWORDS.map((kw) => (
-                  <button
-                    key={kw}
-                    onClick={() => { setKeyword(kw); runSearch(kw); }}
-                    style={{
-                      padding: '6px 14px',
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: 9999,
-                      color: 'rgba(255,255,255,0.5)',
-                      fontSize: 12.5, fontWeight: 500,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      transition: 'all 0.2s',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(139,92,246,0.1)';
-                      e.currentTarget.style.borderColor = 'rgba(139,92,246,0.25)';
-                      e.currentTarget.style.color = '#c084fc';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-                      e.currentTarget.style.color = 'rgba(255,255,255,0.5)';
-                    }}
-                  >
-                    {kw}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Example chips now live in the onboarding card above, so they sit
+              next to the explanation of what makes a good keyword. */}
+          <p className="mb-0 mt-3 text-[12.5px] text-white/25">
+            Press Enter to search — we read every transcript, so this takes a moment.
+          </p>
         </motion.div>
 
         {/* Loading */}
@@ -263,91 +376,132 @@ const SearchByKeywordsPage = () => {
               transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
               style={styles.loadingSpinner}
             />
-            <span style={styles.loadingText}>Searching transcripts... this may take a moment</span>
+            <span style={styles.loadingText}>
+              {searchProgress.total > 0
+                ? `Checking transcripts... ${searchProgress.done}/${searchProgress.total} videos`
+                : 'Searching transcripts... this may take a moment'}
+            </span>
           </motion.div>
         )}
 
-        {/* Results */}
+        {/* Results — same vc-* card design language as Search & Discover */}
         {results.map((result, index) => {
           const videoId = result.video.id.videoId;
+          const title = result.video.snippet.title;
+          const channel = result.video.snippet?.channelTitle || '';
+          const thumb = result.video.snippet.thumbnails?.medium?.url || result.video.snippet.thumbnails?.default?.url;
+          const isSelected = selectedVideos.includes(videoId);
+
           return (
             <motion.div
               key={index}
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.1 + index * 0.06 }}
-              style={styles.resultCard}
+              className={`vc-card kw-card ${isSelected ? 'vc-card--selected' : ''}`}
             >
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
-                <h3 style={{ ...styles.resultTitle, margin: 0, flex: 1 }}>{result.video.snippet.title}</h3>
-                <span style={{
-                  flexShrink: 0, fontSize: 11, fontWeight: 700, padding: '3px 9px',
-                  borderRadius: 9999, whiteSpace: 'nowrap',
-                  background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.2)',
-                  color: '#c084fc',
-                }}>
-                  {result.matches.length} match{result.matches.length !== 1 ? 'es' : ''} in transcript
-                </span>
-              </div>
-              <div style={styles.resultBody}>
-                <img
-                  src={result.video.snippet.thumbnails.medium.url}
-                  alt="thumb"
-                  style={styles.thumbnail}
-                />
-                <div style={styles.matchesList}>
-                  {result.matches.slice(0, 5).map((m, i) => (
-                    <a
-                      key={i}
-                      href={`https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(m.timestamp)}s`}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={styles.matchLink}
-                      onClick={() => {
-                        const username = JSON.parse(localStorage.getItem('user'))?.username;
-                        if (username) {
-                          fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              username,
-                              type: 'watch',
-                              videoId,
-                              title: result.video.snippet.title,
-                              timestamp: new Date().toISOString(),
-                            }),
-                          });
-                        }
-                      }}
-                    >
-                      <span style={styles.matchTime}>
-                        {new Date(m.timestamp * 1000).toISOString().substr(11, 8)}
-                      </span>
-                      <span style={styles.matchText}>{m.text}</span>
-                    </a>
-                  ))}
+              <div className="kw-card-main">
+                <div className="kw-card-thumb">
+                  <img src={thumb} alt={title} />
+                </div>
+                <div className="vc-body kw-card-content">
+                  <div className="kw-card-headrow">
+                    <h3 className="vc-title" style={{ WebkitLineClamp: 1 }}>{title}</h3>
+                    <span className="kw-match-badge">
+                      {result.matches.length} match{result.matches.length !== 1 ? 'es' : ''}
+                    </span>
+                  </div>
+                  {channel && <p className="vc-channel">{channel}</p>}
+
+                  <div className="kw-matches-list">
+                    {result.matches.slice(0, 5).map((m, i) => (
+                      <a
+                        key={i}
+                        href={`https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(m.timestamp)}s`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="kw-match-link"
+                        onClick={() => {
+                          const username = JSON.parse(localStorage.getItem('user'))?.username;
+                          if (username) {
+                            fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                username,
+                                type: 'watch',
+                                videoId,
+                                title,
+                                timestamp: new Date().toISOString(),
+                              }),
+                            });
+                          }
+                        }}
+                      >
+                        <span className="kw-match-time">
+                          {new Date(m.timestamp * 1000).toISOString().substr(11, 8)}
+                        </span>
+                        <span className="kw-match-text">{m.text}</span>
+                      </a>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Actions */}
-              <div style={styles.resultActions}>
-                <label style={styles.mergeLabel}>
-                  <input
-                    type="checkbox"
-                    checked={selectedVideos.includes(videoId)}
-                    onChange={() => toggleSelect(videoId)}
-                    style={styles.checkbox}
-                  />
-                  Add to merge
-                </label>
-                <button onClick={() => toggleSummary(index)} style={styles.summaryBtn}>
-                  {expandedSummaries[index] ? 'Hide Summary' : 'Show Summary'}
-                  <svg
-                    width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                    style={{ transform: expandedSummaries[index] ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
+              {/* Footer — identical vc-* buttons to Search & Discover */}
+              <div className="vc-footer">
+                <button
+                  className={`vc-select-btn ${isSelected ? 'vc-select-btn--active' : ''}`}
+                  onClick={() => toggleSelect(videoId)}
+                >
+                  {isSelected ? (
+                    <>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                      Selected
+                    </>
+                  ) : (
+                    <>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                      Add to Merge
+                    </>
+                  )}
+                </button>
+
+                <div className="vc-actions">
+                  <button
+                    className="vc-btn vc-btn--primary"
+                    onClick={() => navigate('/video-player', { state: { video: result.video, videosList: results.map((r) => r.video) } })}
                   >
-                    <polyline points="6 9 12 15 18 9"/>
-                  </svg>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Watch
+                  </button>
+                  <a
+                    href={`https://www.youtube.com/watch?v=${videoId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="vc-btn vc-btn--ghost"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.54 3.5 12 3.5 12 3.5s-7.54 0-9.38.55A3.02 3.02 0 0 0 .5 6.19C0 8.04 0 12 0 12s0 3.96.5 5.81a3.02 3.02 0 0 0 2.12 2.14C4.46 20.5 12 20.5 12 20.5s7.54 0 9.38-.55a3.02 3.02 0 0 0 2.12-2.14C24 15.96 24 12 24 12s0-3.96-.5-5.81zM9.75 15.02V8.98L15.5 12l-5.75 3.02z"/>
+                    </svg>
+                    YouTube
+                  </a>
+                </div>
+
+                <button onClick={() => toggleSummary(index)} className="kw-summary-toggle" disabled={summaryLoading[index]}>
+                  {summaryLoading[index] ? (
+                    <span className="kw-summary-spinner" />
+                  ) : (
+                    expandedSummaries[index] ? 'Hide Summary' : 'Show Summary'
+                  )}
+                  {!summaryLoading[index] && (
+                    <svg
+                      width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                      style={{ transform: expandedSummaries[index] ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
+                    >
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  )}
                 </button>
               </div>
 
@@ -356,9 +510,13 @@ const SearchByKeywordsPage = () => {
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
-                  style={styles.summaryWrap}
+                  className="kw-summary-wrap"
                 >
-                  <p style={styles.summaryText}>{result.summary}</p>
+                  <p className="kw-summary-text">
+                    {summaryLoading[index]
+                      ? 'Generating summary…'
+                      : result.summary || 'No summary available.'}
+                  </p>
                 </motion.div>
               )}
             </motion.div>
@@ -366,7 +524,7 @@ const SearchByKeywordsPage = () => {
         })}
 
         {/* Bottom action bar — merge takes priority when videos are selected */}
-        {selectedVideos.length >= 2 ? (
+        {selectedVideos.length >= 1 ? (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -374,13 +532,13 @@ const SearchByKeywordsPage = () => {
           >
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
               <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.35)' }}>
-                {selectedVideos.length} videos selected
+                {selectedVideos.length} video{selectedVideos.length !== 1 ? 's' : ''} selected
               </span>
               <button onClick={handleOpenMergePreview} style={styles.mergeBtn}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/>
                 </svg>
-                Preview & Merge
+                {selectedVideos.length === 1 ? 'Preview & Summarize' : 'Preview & Merge'}
               </button>
               {results.length >= 3 && (
                 <button onClick={handleSummarize} style={styles.primaryBtn}>
@@ -398,7 +556,7 @@ const SearchByKeywordsPage = () => {
             animate={{ opacity: 1, y: 0 }}
             style={{ ...styles.bottomBar, flexDirection: 'column', gap: 6 }}
           >
-            <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Select 2+ videos to merge, or use auto-select:</p>
+            <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Select a video to summarize, or use auto-select:</p>
             <button onClick={handleSummarize} style={styles.primaryBtn}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <polygon points="5 3 19 12 5 21 5 3" fill="rgba(255,255,255,0.2)"/>
@@ -423,6 +581,129 @@ const SearchByKeywordsPage = () => {
           </motion.div>
         )}
       </div>
+
+      <style>{`
+        .kw-card { max-width: 100%; }
+        .kw-card-main {
+          display: flex;
+          gap: 16px;
+          padding: 14px 16px 0;
+        }
+        .kw-card-thumb {
+          position: relative;
+          width: 220px;
+          flex-shrink: 0;
+          border-radius: 10px;
+          overflow: hidden;
+          aspect-ratio: 16 / 9;
+        }
+        .kw-card-thumb img {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .kw-card-content { flex: 1; min-width: 0; padding: 0; }
+        .kw-card-headrow {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .kw-match-badge {
+          flex-shrink: 0;
+          font-size: 11px;
+          font-weight: 700;
+          padding: 3px 9px;
+          border-radius: 9999px;
+          white-space: nowrap;
+          background: rgba(139,92,246,0.12);
+          border: 1px solid rgba(139,92,246,0.25);
+          color: #c084fc;
+        }
+        .kw-matches-list {
+          margin-top: 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          max-height: 140px;
+          overflow-y: auto;
+          padding-right: 4px;
+        }
+        .kw-match-link {
+          display: flex;
+          gap: 10px;
+          padding: 7px 9px;
+          border-radius: 8px;
+          background: rgba(255,255,255,0.03);
+          text-decoration: none;
+          transition: background 0.15s;
+          align-items: flex-start;
+        }
+        .kw-match-link:hover { background: rgba(71,139,224,0.08); }
+        .kw-match-time {
+          font-size: 11.5px;
+          font-weight: 600;
+          color: #478BE0;
+          font-family: monospace;
+          white-space: nowrap;
+          min-width: 60px;
+          padding-top: 1px;
+        }
+        .kw-match-text {
+          font-size: 12.5px;
+          color: rgba(255,255,255,0.6);
+          line-height: 1.4;
+        }
+        .kw-summary-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 8px 12px;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 10px;
+          color: rgba(255,255,255,0.55);
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.2s;
+          width: 100%;
+        }
+        .kw-summary-toggle:hover { background: rgba(255,255,255,0.07); color: #fff; }
+        .kw-summary-toggle:disabled { cursor: not-allowed; opacity: 0.8; }
+        .kw-summary-spinner {
+          display: inline-block;
+          width: 13px;
+          height: 13px;
+          border: 2px solid rgba(255,255,255,0.25);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: kw-spin 0.65s linear infinite;
+        }
+        @keyframes kw-spin { to { transform: rotate(360deg); } }
+        .kw-summary-wrap {
+          margin: 0 16px 16px;
+          padding: 14px 16px;
+          background: rgba(71,139,224,0.05);
+          border: 1px solid rgba(71,139,224,0.1);
+          border-radius: 10px;
+        }
+        .kw-summary-text {
+          font-size: 13.5px;
+          line-height: 1.6;
+          color: rgba(255,255,255,0.6);
+          margin: 0;
+          font-style: italic;
+        }
+        @media (max-width: 640px) {
+          .kw-card-main { flex-direction: column; }
+          .kw-card-thumb { width: 100%; }
+        }
+      `}</style>
     </div>
   );
 };
@@ -569,115 +850,6 @@ const styles = {
   loadingText: {
     color: 'rgba(255,255,255,0.45)',
     fontSize: '14px',
-  },
-  resultCard: {
-    background: 'rgba(17,24,39,0.5)',
-    border: '1px solid rgba(255,255,255,0.06)',
-    borderRadius: '16px',
-    padding: '20px',
-    marginBottom: '16px',
-    transition: 'border-color 0.2s',
-  },
-  resultTitle: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: '#fff',
-    margin: '0 0 16px',
-    lineHeight: 1.4,
-  },
-  resultBody: {
-    display: 'flex',
-    gap: '16px',
-  },
-  thumbnail: {
-    width: '220px',
-    height: '140px',
-    objectFit: 'cover',
-    borderRadius: '10px',
-    flexShrink: 0,
-  },
-  matchesList: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-    maxHeight: '160px',
-    overflowY: 'auto',
-    paddingRight: '4px',
-  },
-  matchLink: {
-    display: 'flex',
-    gap: '10px',
-    padding: '8px 10px',
-    borderRadius: '8px',
-    background: 'rgba(255,255,255,0.03)',
-    textDecoration: 'none',
-    transition: 'background 0.15s',
-    alignItems: 'flex-start',
-  },
-  matchTime: {
-    fontSize: '12px',
-    fontWeight: 600,
-    color: '#478BE0',
-    fontFamily: 'monospace',
-    whiteSpace: 'nowrap',
-    minWidth: '65px',
-    paddingTop: '1px',
-  },
-  matchText: {
-    fontSize: '13px',
-    color: 'rgba(255,255,255,0.6)',
-    lineHeight: 1.4,
-  },
-  resultActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    marginTop: '14px',
-    paddingTop: '14px',
-    borderTop: '1px solid rgba(255,255,255,0.05)',
-  },
-  mergeLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '12.5px',
-    color: 'rgba(255,255,255,0.5)',
-    cursor: 'pointer',
-  },
-  checkbox: {
-    width: '16px',
-    height: '16px',
-    accentColor: '#478BE0',
-  },
-  summaryBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 14px',
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: '8px',
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: '12.5px',
-    fontWeight: 500,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    transition: 'all 0.2s',
-  },
-  summaryWrap: {
-    marginTop: '12px',
-    padding: '14px 16px',
-    background: 'rgba(71,139,224,0.05)',
-    border: '1px solid rgba(71,139,224,0.1)',
-    borderRadius: '10px',
-  },
-  summaryText: {
-    fontSize: '13.5px',
-    lineHeight: 1.6,
-    color: 'rgba(255,255,255,0.6)',
-    margin: 0,
-    fontStyle: 'italic',
   },
   bottomBar: {
     display: 'flex',

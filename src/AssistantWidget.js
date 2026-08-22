@@ -18,7 +18,7 @@ const KNOWLEDGE_BASE = {
   // ── OVERVIEW ──────────────────────────────────────
   "What does VidFusion do?": {
     answer:
-      "VidFusion turns long YouTube videos into short, intelligent summaries. You pick 1–10 YouTube videos, choose how long you want the output (5, 10, 15, or 20 minutes), and VidFusion produces:\n\n• A written summary with TLDR, chapters, and key takeaways\n• An AI voice narration (MP3) read aloud\n• A highlight video reel using clips from the original videos\n• An AI chat so you can ask questions about the content\n• Downloadable PDF, text, and subtitle files",
+      "VidFusion turns long YouTube videos into short, intelligent summaries. You pick 1–10 YouTube videos, choose how long you want the output (5, 10, 15, or 20 minutes), and VidFusion produces:\n\n• A written summary with TLDR, chapters, and key takeaways\n• An MP3 of the summary in the original speakers' voices\n• A highlight video reel using clips from the original videos\n• An AI chat so you can ask questions about the content\n• Downloadable PDF, text, and subtitle files",
     followUps: [
       "How do I get started?",
       "What output durations are available?",
@@ -61,7 +61,7 @@ const KNOWLEDGE_BASE = {
   // ── OUTPUT DURATIONS ──────────────────────────────
   "What output durations are available?": {
     answer:
-      "You can choose one of four output lengths:\n\n**Quick Scan — 5 min (~600 words, ~10 clips)**\nBest for: short videos under 30 min, or when you only need key highlights\n\n**Brief Summary — 10 min (~1,200 words, ~20 clips)**\nBest for: everyday use — good balance of depth and speed\n\n**Full Coverage — 15 min (~1,800 words, ~30 clips)**\nBest for: lectures, documentaries, complex videos 30–90 min long\n\n**Deep Dive — 20 min (~2,800 words, ~40 clips)**\nBest for: 2h+ podcasts, conference talks, multi-part series\n\nThe system automatically scales how many video clips, narration words, and detail level match your chosen output.",
+      "You can choose one of four output lengths:\n\n**Quick Scan — 5 min (~10 clips)**\nBest for: short videos under 30 min, or when you only need key highlights\n\n**Brief Summary — 10 min (~20 clips)**\nBest for: everyday use — good balance of depth and speed\n\n**Full Coverage — 15 min (~30 clips)**\nBest for: lectures, documentaries, complex videos 30–90 min long\n\n**Deep Dive — 20 min (~40 clips)**\nBest for: 2h+ podcasts, conference talks, multi-part series\n\nYour chosen length is the length of the highlight reel and its audio.",
     followUps: [
       "How does the processing work?",
       "What features are on the results page?",
@@ -72,7 +72,7 @@ const KNOWLEDGE_BASE = {
   // ── PROCESSING STAGES ─────────────────────────────
   "How does the processing work?": {
     answer:
-      "After clicking Summarize, VidFusion runs 7 stages automatically:\n\n**01 Transcribing** — fetches spoken words from each video (YouTube API → yt-dlp → Whisper AI fallback)\n**02 Analyzing** — detects topics, language, structure. Non-English? NLLB-200 translates to English\n**03 Fusing** — merges content from all selected videos, removes duplicates\n**04 Summarizing** — BART-large-CNN compresses the narrative to your target word count\n**05 AI Enriching** — Ollama LLM adds chapters, TLDR, key takeaways\n**06 Voice Gen** — Edge TTS reads the summary aloud and generates subtitle file\n**07 Video Gen** — clips matched to narration via SBERT → trimmed from original video → concatenated\n\nProgress is shown live on the page.",
+      "After clicking Summarize, VidFusion runs 7 stages automatically:\n\n**01 Transcribing** — fetches spoken words from each video (YouTube API → yt-dlp → Whisper AI fallback)\n**02 Analyzing** — detects topics, language, structure. Non-English? NLLB-200 translates to English\n**03 Fusing** — merges content from all selected videos, removes duplicates\n**04 Summarizing** — BART-large-CNN compresses the narrative to your target word count\n**05 AI Enriching** — Ollama LLM adds chapters, TLDR, key takeaways\n**06 Selecting** — SBERT + TF-IDF rank transcript segments against the summary\n**07 Video Gen** — top clips trimmed from the original videos → concatenated, original audio kept\n\nProgress is shown live on the page.",
     followUps: [
       "How long does processing take?",
       "What features are on the results page?",
@@ -93,7 +93,7 @@ const KNOWLEDGE_BASE = {
   // ── RESULTS PAGE ──────────────────────────────────
   "What features are on the results page?": {
     answer:
-      "When processing completes, the same page transforms into a results dashboard with:\n\n**A — Highlight Video** — clips from the original videos, played in narration order with original speaker audio\n**B — Audio Narration** — standalone MP3 player with AI voice reading the full summary\n**C — Text Summary** — full written summary with paragraphs\n**D — TLDR + Chapters + Takeaways** — 2-sentence core point, 5 key bullet points, 3 chapter sections\n**E — AI Chat** — type any question about the video content\n**F — Downloads** — audio MP3, text export, PDF with chapters, SRT subtitles\n**G — Warning banner** — if video highlights failed, you still get everything else",
+      "When processing completes, the same page transforms into a results dashboard with:\n\n**A — Highlight Video** — clips from the original videos, played in narration order with original speaker audio\n**B — Audio** — standalone MP3 player with the highlight reel's original audio\n**C — Text Summary** — full written summary with paragraphs\n**D — TLDR + Chapters + Takeaways** — 2-sentence core point, 5 key bullet points, 3 chapter sections\n**E — AI Chat** — type any question about the video content\n**F — Downloads** — audio MP3, text export, PDF with chapters, SRT subtitles\n**G — Warning banner** — if video highlights failed, you still get everything else",
     followUps: [
       "How does the highlight video work?",
       "Can I chat with the video?",
@@ -104,7 +104,7 @@ const KNOWLEDGE_BASE = {
   // ── HIGHLIGHT VIDEO ───────────────────────────────
   "How does the highlight video work?": {
     answer:
-      "The highlight video is built in 4 steps:\n\n**1. Narration-driven clip selection** — each sentence in the TTS narration is matched to the most semantically similar transcript segment using SBERT (Sentence-BERT). The clip that best represents what the narrator is saying is selected.\n\n**2. Precise trimming** — FFmpeg cuts each clip using two-stage seeking: fast keyframe seek + precise sub-second offset. Clips start at the exact timestamp, not at a keyframe boundary.\n\n**3. Original audio preserved** — the final video uses the original speaker's voice, not the TTS. Natural pauses within a clip are preserved. Between clips, a 0.4-second black frame signals a topic change.\n\n**4. Audio fade** — each clip has a 0.3s fade in/out so transitions feel smooth.",
+      "The highlight video is built in 4 steps:\n\n**1. Score-based clip selection** — every transcript segment is ranked against the summary using SBERT (Sentence-BERT) and TF-IDF. The highest-scoring segments become clips.\n\n**2. Precise trimming** — FFmpeg cuts each clip using two-stage seeking: fast keyframe seek + precise sub-second offset. Clips start at the exact timestamp, not at a keyframe boundary.\n\n**3. Original audio throughout** — the video and the MP3 both use the original speakers' voices. Natural pauses within a clip are preserved. Between clips, a 0.4-second black frame signals a topic change.\n\n**4. Audio fade** — each clip has a 0.3s fade in/out so transitions feel smooth.",
     followUps: [
       "Can I chat with the video?",
       "What can I download?",
@@ -126,7 +126,7 @@ const KNOWLEDGE_BASE = {
   // ── DOWNLOADS ─────────────────────────────────────
   "What can I download?": {
     answer:
-      "From the results page you can download:\n\n• **Audio MP3** — the AI voice narration of the full summary\n• **Text file (.txt)** — plain text summary\n• **PDF** — formatted document with TLDR, chapters, and key takeaways\n• **Subtitles (.srt)** — timestamped subtitle file for the audio narration\n\nAll downloads are generated automatically — nothing extra to configure.",
+      "From the results page you can download:\n\n• **Audio MP3** — the highlight audio in the original speakers' voices\n• **Text file (.txt)** — plain text summary\n• **PDF** — formatted document with TLDR, chapters, and key takeaways\n\nAll downloads are generated automatically — nothing extra to configure.",
     followUps: [
       "How do I view the raw transcript?",
       "What is in my account history?",
@@ -179,7 +179,7 @@ const KNOWLEDGE_BASE = {
   // ── AI MODELS ─────────────────────────────────────
   "What AI models are used?": {
     answer:
-      "VidFusion uses these AI models — all free, all running locally:\n\n**BART-large-CNN** — hierarchical text summarization (compresses transcripts to target word count)\n**Sentence-BERT (all-MiniLM-L6-v2)** — semantic similarity for clip selection, deduplication, and AI chat search\n**FAISS** — vector index for fast semantic search across all video transcripts\n**Ollama (local LLM)** — generates chapters, TLDR, key takeaways, and answers chat questions\n**Whisper** — speech-to-text when YouTube transcripts are unavailable\n**NLLB-200** — translates non-English transcripts to English (200 languages)\n**CLIP ViT-B/16** — cross-modal visual-text scoring for selecting the most relevant video frames\n**Edge TTS** — free Microsoft neural voice narration (no API key needed)",
+      "VidFusion uses these AI models — all free, all running locally:\n\n**BART-large-CNN** — hierarchical text summarization (compresses transcripts to target word count)\n**Sentence-BERT (all-MiniLM-L6-v2)** — semantic similarity for clip selection, deduplication, and AI chat search\n**FAISS** — vector index for fast semantic search across all video transcripts\n**Ollama (local LLM)** — generates chapters, TLDR, key takeaways, and answers chat questions\n**Whisper** — speech-to-text when YouTube transcripts are unavailable\n**NLLB-200** — translates non-English transcripts to English (200 languages)\n**CLIP ViT-B/16** — cross-modal visual-text scoring for selecting the most relevant video frames",
     followUps: [
       "How does the processing work?",
       "How does the highlight video work?",
