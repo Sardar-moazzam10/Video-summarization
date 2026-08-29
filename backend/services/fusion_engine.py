@@ -96,6 +96,17 @@ class FusionEngine:
     - Adapts to target duration
     """
 
+    # Words per caption-boundary chunk when the input has no punctuation.
+    # This is a fusion unit, not a claimed linguistic sentence.  Kept under
+    # max_sentence_words so the hard cap can never drop a chunk, and above
+    # min_sentence_words so every chunk has enough context for SBERT.
+    TARGET_CHUNK_WORDS = 60
+
+    # A meaningful pause between consecutive auto-caption segments (seconds).
+    # YouTube's timing data shows inter-sentence gaps of 0.4–1.5 s; within a
+    # sentence the gap is typically < 0.2 s.  0.5 s is a safe boundary signal.
+    PAUSE_THRESHOLD_S = 0.5
+
     def __init__(self):
         self.embedder = None  # Lazy loaded
         self.min_sentence_words = 5
@@ -113,7 +124,8 @@ class FusionEngine:
         video_titles: Dict[str, str] = None,  # video_id -> title
         target_words: int = 1500,
         include_sources: bool = True,
-        include_transitions: bool = True
+        include_transitions: bool = True,
+        raw_segments: Optional[Dict[str, list]] = None,  # video_id -> [{text,start,duration}]
     ) -> FusionResult:
         """
         Main fusion pipeline.
@@ -130,10 +142,11 @@ class FusionEngine:
         """
         start_time = datetime.now()
         video_titles = video_titles or {}
+        raw_segments = raw_segments or {}
 
         # Step 1: Extract sentences with source tracking
         print(f"[Fusion] Processing {len(transcripts)} transcripts...")
-        sentences = self._extract_sentences(transcripts, video_titles)
+        sentences = self._extract_sentences(transcripts, video_titles, raw_segments)
         print(f"[Fusion] Extracted {len(sentences)} sentences")
 
         if len(sentences) < 3:
@@ -209,30 +222,237 @@ class FusionEngine:
     def _extract_sentences(
         self,
         transcripts: Dict[str, str],
-        video_titles: Dict[str, str]
+        video_titles: Dict[str, str],
+        raw_segments: Optional[Dict[str, list]] = None,
     ) -> List[SourcedSentence]:
-        """Extract and clean sentences from all transcripts."""
+        """
+        Extract sentence-like chunks from transcripts for SBERT clustering.
+
+        Three-tier strategy, applied per video:
+
+          Tier 1 — Segment-boundary chunking (best).
+            When timestamped segments are available, accumulate consecutive
+            caption entries into chunks using three flush triggers (in priority
+            order):
+              (a) Natural punctuation end (.!?) on the current segment.
+              (b) Accumulated words >= TARGET_CHUNK_WORDS AND the gap to the
+                  next segment >= PAUSE_THRESHOLD_S (a meaningful speaker pause).
+              (c) Hard cap: accumulated words >= max_sentence_words.
+            This handles auto-generated YouTube captions, which have reliable
+            timing data but little-to-no punctuation.
+
+          Tier 2 — Punctuation splitting (fallback when segments unavailable).
+            Splits flat text on [.!?]+.  Oversized chunks (> max_sentence_words)
+            are re-split into fixed-size word-count windows so they are never
+            silently dropped.
+
+          Tier 3 — Word-count windowing (final fallback).
+            Applied to any remaining oversized pieces from Tier 2.
+        """
+        raw_segments = raw_segments or {}
         sentences = []
 
         for video_id, text in transcripts.items():
             title = video_titles.get(video_id, f"Video {video_id[:8]}")
-            # Split into sentences
-            raw_sentences = re.split(r'[.!?]+', text)
+            segs = raw_segments.get(video_id)
 
-            for i, sent in enumerate(raw_sentences):
-                sent = sent.strip()
-                words = sent.split()
+            if segs:
+                # ── Tier 1: segment-boundary chunking ─────────────────────────
+                chunks = self._chunk_segments_boundary_aware(segs, video_id, title)
+                sentences.extend(chunks)
+                print(
+                    f"[Fusion] {video_id}: {len(segs)} segments → "
+                    f"{len(chunks)} chunks (segment-boundary)"
+                )
+            else:
+                # ── Tier 2 + 3: punctuation split with word-count fallback ────
+                raw_pieces = re.split(r'[.!?]+', text)
+                added = 0
+                for i, piece in enumerate(raw_pieces):
+                    piece = piece.strip()
+                    if not piece:
+                        continue
+                    words = piece.split()
 
-                # Filter by length
-                if self.min_sentence_words <= len(words) <= self.max_sentence_words:
-                    sentences.append(SourcedSentence(
-                        text=sent,
-                        video_id=video_id,
-                        video_title=title,
-                        position=i
-                    ))
+                    if len(words) <= self.max_sentence_words:
+                        if len(words) >= self.min_sentence_words:
+                            sentences.append(SourcedSentence(
+                                text=piece,
+                                video_id=video_id,
+                                video_title=title,
+                                position=i,
+                            ))
+                            added += 1
+                    else:
+                        # ── Tier 3: word-count window for oversized piece ──
+                        sub_chunks = self._wordcount_chunk(piece, video_id, title, i)
+                        sentences.extend(sub_chunks)
+                        added += len(sub_chunks)
+
+                print(
+                    f"[Fusion] {video_id}: punctuation-split → {added} chunks"
+                )
 
         return sentences
+
+    # ------------------------------------------------------------------
+    # SENTENCE RECONSTRUCTION HELPERS
+    # ------------------------------------------------------------------
+
+    def _chunk_segments_boundary_aware(
+        self,
+        segments: list,
+        video_id: str,
+        video_title: str,
+    ) -> List[SourcedSentence]:
+        """
+        Convert timestamped caption segments into fusion-ready chunks.
+
+        Flush triggers (in priority order):
+          1. Current segment ends with sentence-ending punctuation.
+          2. Accumulated words >= TARGET_CHUNK_WORDS AND gap to next
+             segment >= PAUSE_THRESHOLD_S (a meaningful speaker pause).
+          3. Accumulated words >= max_sentence_words (hard cap — ensures no
+             chunk is ever filtered by the downstream word-limit guard).
+          4. Last segment in the transcript.
+
+        Short remainders (< min_sentence_words) are merged into the
+        previous chunk rather than silently discarded.
+        """
+        _sent_end = re.compile(r'[.!?]["\']?\s*$')
+
+        chunks: List[SourcedSentence] = []
+        buf_segs: list = []
+        buf_words: int = 0
+        chunk_idx: int = 0
+
+        def _flush() -> None:
+            nonlocal buf_segs, buf_words, chunk_idx
+            if not buf_segs:
+                return
+            text = " ".join(s.get("text", "").strip() for s in buf_segs).strip()
+            if text and len(text.split()) >= self.min_sentence_words:
+                chunks.append(SourcedSentence(
+                    text=text,
+                    video_id=video_id,
+                    video_title=video_title,
+                    position=chunk_idx,
+                ))
+                chunk_idx += 1
+            buf_segs = []
+            buf_words = 0
+
+        for i, seg in enumerate(segments):
+            raw_text = seg.get("text", "").strip()
+            if not raw_text:
+                continue
+
+            seg_word_count = len(raw_text.split())
+
+            # Pre-flush: adding this segment would exceed the hard cap.
+            if buf_words > 0 and buf_words + seg_word_count > self.max_sentence_words:
+                _flush()
+
+            # Single-segment overflow: the segment itself exceeds the hard cap
+            # (e.g. a corrupt caption that swallowed many lines).  Split it
+            # into word-count windows so the cap invariant is never violated.
+            if seg_word_count > self.max_sentence_words:
+                for sub in self._wordcount_chunk(raw_text, video_id, video_title, chunk_idx):
+                    chunks.append(SourcedSentence(
+                        text=sub.text,
+                        video_id=video_id,
+                        video_title=video_title,
+                        position=chunk_idx,
+                    ))
+                    chunk_idx += 1
+                continue  # segment handled; skip the normal accumulation path
+
+            buf_segs.append(seg)
+            buf_words += seg_word_count
+
+            # Gap to next segment (0.0 if this is the last one)
+            gap_s = 0.0
+            if i + 1 < len(segments):
+                seg_end = (
+                    float(seg.get("start", 0.0))
+                    + float(seg.get("duration", 0.0))
+                )
+                next_start = float(segments[i + 1].get("start", seg_end))
+                gap_s = max(0.0, next_start - seg_end)
+
+            ends_with_punct = bool(_sent_end.search(raw_text))
+            is_last = (i == len(segments) - 1)
+
+            should_flush = (
+                ends_with_punct
+                or (buf_words >= self.TARGET_CHUNK_WORDS and gap_s >= self.PAUSE_THRESHOLD_S)
+                or buf_words >= self.max_sentence_words
+                or is_last
+            )
+
+            if should_flush:
+                if buf_words >= self.min_sentence_words:
+                    _flush()
+                elif buf_words >= self.max_sentence_words:
+                    # Force-flush even if short — better than an infinite loop.
+                    _flush()
+                # else: keep accumulating — too short to stand alone.
+
+        # Anything left over that never reached min_sentence_words:
+        # merge into the last chunk rather than discarding.
+        if buf_segs:
+            leftover = " ".join(
+                s.get("text", "").strip() for s in buf_segs
+            ).strip()
+            if leftover:
+                if chunks:
+                    last = chunks[-1]
+                    chunks[-1] = SourcedSentence(
+                        text=last.text + " " + leftover,
+                        video_id=last.video_id,
+                        video_title=last.video_title,
+                        position=last.position,
+                    )
+                else:
+                    # Entire transcript was too short — keep it as one unit.
+                    chunks.append(SourcedSentence(
+                        text=leftover,
+                        video_id=video_id,
+                        video_title=video_title,
+                        position=0,
+                    ))
+
+        return chunks
+
+    def _wordcount_chunk(
+        self,
+        text: str,
+        video_id: str,
+        video_title: str,
+        base_position: int,
+    ) -> List[SourcedSentence]:
+        """
+        Split an oversized text piece into max_sentence_words-sized windows.
+
+        Used as Tier 3 fallback when punctuation splitting produces a chunk
+        that still exceeds max_sentence_words (e.g. a flat text with no
+        punctuation and no segment boundaries available).
+        """
+        words = text.split()
+        results = []
+        step = self.max_sentence_words  # non-overlapping windows
+        sub_idx = 0
+        for start in range(0, len(words), step):
+            window = " ".join(words[start: start + step])
+            if len(window.split()) >= self.min_sentence_words:
+                results.append(SourcedSentence(
+                    text=window,
+                    video_id=video_id,
+                    video_title=video_title,
+                    position=base_position * 1000 + sub_idx,
+                ))
+                sub_idx += 1
+        return results
 
     def _cluster_sentences(
         self,
