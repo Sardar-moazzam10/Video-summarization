@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { API_BASE_URL } from './config/api.js';
+import { API_BASE_URL, API } from './config/api.js';
 import DurationSelector from './components/merge/DurationSelector.jsx';
 
 /**
@@ -22,12 +22,16 @@ const STYLES = [
   { value: 'detailed', label: 'Detailed', hint: 'Full depth and nuance' },
 ];
 
-// Seconds — mirrors highlight_duration_seconds (backend bounds: ge=30, le=1200).
+// Seconds — mirrors highlight_duration_seconds (backend bounds: ge=30, le=1800).
+// 120 is special-cased by the backend: an untouched default makes the reel
+// follow the duration picker instead, so the two controls agree by default.
 const HIGHLIGHT_LENGTHS = [
   { value: 60, label: '1 min' },
-  { value: 120, label: '2 min' },
-  { value: 180, label: '3 min' },
+  { value: 120, label: 'Match summary' },
   { value: 300, label: '5 min' },
+  { value: 600, label: '10 min' },
+  { value: 1200, label: '20 min' },
+  { value: 1800, label: '30 min' },
 ];
 
 // MergeJobCreate declares video_ids with max_length=10.
@@ -70,7 +74,7 @@ const MergePreviewPage = () => {
   const initialResults = fromState.length ? fromState : fromStorage;
   const [selectedResults] = useState(initialResults);
 
-  // Minutes — sent verbatim as target_duration_minutes (backend: ge=2, le=20).
+  // Minutes — sent verbatim as target_duration_minutes (backend: ge=5, le=30).
   const [targetMinutes, setTargetMinutes] = useState(10);
   const [selectedStyle, setSelectedStyle] = useState('educational');
   const [generateVideo, setGenerateVideo] = useState(true);
@@ -84,6 +88,43 @@ const MergePreviewPage = () => {
   );
   const sentVideoIds = videoIds.slice(0, MAX_VIDEOS);
   const droppedCount = videoIds.length - sentVideoIds.length;
+
+  // Which summary lengths the selected material can actually produce.
+  // null until resolved, which leaves every option enabled — the backend is
+  // the authority and re-checks on submit, so a slow or failed lookup here
+  // costs the user a clear server-side error, never a silently wrong summary.
+  const [allowedDurations, setAllowedDurations] = useState(null);
+  const [sourceDurationLabel, setSourceDurationLabel] = useState('');
+
+  useEffect(() => {
+    if (!sentVideoIds.length) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(API.MERGE_VIDEO_DURATIONS(sentVideoIds));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !Array.isArray(data.allowed_durations)) return;
+        setAllowedDurations(data.allowed_durations);
+        setSourceDurationLabel(data.combined_duration_label || '');
+        // Never leave the picker sitting on an option the source cannot
+        // produce; move to the longest one it can.
+        setTargetMinutes((current) =>
+          data.allowed_durations.includes(current)
+            ? current
+            : (data.allowed_durations[data.allowed_durations.length - 1] ?? current)
+        );
+      } catch {
+        /* leave every option enabled; the backend still validates */
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sentVideoIds.join(',')]);
+
+  const noDurationFits = Array.isArray(allowedDurations) && allowedDurations.length === 0;
 
   const handleBack = () => navigate(-1);
 
@@ -118,11 +159,30 @@ const MergePreviewPage = () => {
       if (res.ok && data.job_id) {
         navigate(`/merged-player/${data.job_id}`);
       } else {
-        setErrorMsg(
-          typeof data.detail === 'string'
-            ? data.detail
-            : 'Server error during merge. Please retry.'
-        );
+        // Validation errors arrive as a structured `detail` object (see
+        // SUMMARY_DURATION_EXCEEDS_VIDEO in backend/api/merge.py). Show the
+        // server's message verbatim — it names the actual video length — and
+        // re-sync the picker so the impossible options become disabled even
+        // if the duration lookup had failed earlier.
+        const detail = data?.detail;
+        if (detail && typeof detail === 'object' && detail.message) {
+          setErrorMsg(detail.message);
+          if (Array.isArray(detail.allowed_durations)) {
+            setAllowedDurations(detail.allowed_durations);
+          }
+          if (typeof detail.source_duration_seconds === 'number') {
+            const secs = Math.round(detail.source_duration_seconds);
+            const m = Math.floor(secs / 60);
+            const s = secs % 60;
+            setSourceDurationLabel(m && s ? `${m}m ${s}s` : m ? `${m}m` : `${s}s`);
+          }
+        } else {
+          setErrorMsg(
+            typeof detail === 'string'
+              ? detail
+              : 'Server error during merge. Please retry.'
+          );
+        }
       }
     } catch (err) {
       console.error('Merge failed:', err);
@@ -235,6 +295,8 @@ const MergePreviewPage = () => {
             value={targetMinutes}
             onChange={setTargetMinutes}
             disabled={isSubmitting}
+            allowedDurations={allowedDurations}
+            sourceDurationLabel={sourceDurationLabel}
             compact
           />
 
@@ -273,20 +335,6 @@ const MergePreviewPage = () => {
               </span>
             </label>
 
-            {generateVideo && (
-              <div className="mt-4 flex flex-wrap gap-3">
-                {HIGHLIGHT_LENGTHS.map((len) => (
-                  <Pill
-                    key={len.value}
-                    selected={highlightSeconds === len.value}
-                    disabled={isSubmitting}
-                    onClick={() => setHighlightSeconds(len.value)}
-                  >
-                    <span className="text-sm font-semibold">{len.label}</span>
-                  </Pill>
-                ))}
-              </div>
-            )}
           </div>
         </section>
 
@@ -312,7 +360,12 @@ const MergePreviewPage = () => {
           <button
             type="button"
             onClick={handleConfirmMerge}
-            disabled={isSubmitting}
+            // No duration fits at all: the source is shorter than the
+            // shortest profile, so there is nothing valid to submit.
+            disabled={isSubmitting || noDurationFits}
+            title={noDurationFits
+              ? `Video is only ${sourceDurationLabel} — too short to summarise`
+              : undefined}
             className="flex items-center gap-2 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 px-8 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:from-brand-400 hover:to-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? (

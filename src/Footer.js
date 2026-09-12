@@ -40,7 +40,7 @@ const Footer = () => {
         <div style={styles.divider} />
 
         <div style={styles.bottom}>
-          <span style={styles.copyright}>2025 VidFusion. All rights reserved.</span>
+          <span style={styles.copyright}>2026 VidFusion. All rights reserved.</span>
           <span style={styles.version}>v1.0</span>
         </div>
       </div>

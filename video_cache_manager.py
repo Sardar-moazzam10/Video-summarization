@@ -267,13 +267,30 @@ class VideoCacheManager:
             self._stats["misses"] += 1
         return None
 
-    def _download_with_retry(self, video_id: str, output_path: str) -> bool:
+    def _download_with_retry(
+        self,
+        video_id: str,
+        output_path: str,
+        per_attempt_timeout: Optional[float] = None,
+    ) -> bool:
         """
         Download video with retry logic and exponential backoff.
+
+        Args:
+            video_id:            YouTube video ID.
+            output_path:         Destination file path.
+            per_attempt_timeout: Hard wall-clock limit per attempt in seconds.
+                                 If None a default of 300s (5 min) is used.
+                                 The subprocess is forcibly killed once this
+                                 expires, which prevents the background thread
+                                 from outliving an asyncio.wait_for cancellation.
 
         Returns:
             True if successful, False otherwise
         """
+        # Default is conservative enough for a ~20-min 360p video.
+        # Callers that know the source duration should pass a tighter value.
+        _timeout = per_attempt_timeout if per_attempt_timeout is not None else 300.0
         url = f"https://www.youtube.com/watch?v={video_id}"
 
         for attempt in range(1, DOWNLOAD_RETRY_ATTEMPTS + 1):
@@ -286,41 +303,74 @@ class VideoCacheManager:
                     "--no-check-certificates",
                     "--socket-timeout", "60",
                     "--retries", "10",
-                    "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best/bestvideo+bestaudio",
+                    # Abort if YouTube throttles below 100 KB/s — this is the
+                    # signature of a missing PO Token / stale cookies.  At that
+                    # rate a 95-min 360p video (~700 MB) would take ~2 hours;
+                    # better to fail fast and surface the auth problem than to
+                    # silently drain the per-attempt_timeout budget.
+                    "--throttled-rate", "100K",
+                    # 360p cap: the highlight pipeline scales everything to
+                    # 720p anyway; downloading 1080p wastes bandwidth and the
+                    # cache disk budget.  Matches the fallback in video_service.
+                    "-f", "bestvideo[height<=360][ext=mp4]+bestaudio[abr<=64]"
+                          "/best[height<=360][ext=mp4]/worst[ext=mp4]/worst",
+                    # Force the merged output into an MP4 container.  Without
+                    # this, a webm audio track causes yt-dlp to emit MKV, and
+                    # the validation check on `output_path` (which ends in
+                    # .mp4) silently fails — triggering 3 full re-downloads.
+                    "--merge-output-format", "mp4",
                     "-o", output_path,
                     url,
                 ]
                 if os.path.exists(COOKIES_FILE):
                     cmd.extend(["--cookies", COOKIES_FILE])
 
-                print(f"▶ Downloading video {video_id} (attempt {attempt}/{DOWNLOAD_RETRY_ATTEMPTS})...")
+                print(f"\u25b6 Downloading video {video_id} "
+                      f"(attempt {attempt}/{DOWNLOAD_RETRY_ATTEMPTS}, "
+                      f"timeout={_timeout:.0f}s)...")
 
                 subprocess.run(
                     cmd,
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
-                    text=True
+                    text=True,
+                    # Explicit per-subprocess timeout so the OS kills the
+                    # process when asyncio.wait_for cancels the wrapping
+                    # asyncio.to_thread call.  Without this the subprocess
+                    # continues downloading in the background thread until
+                    # the process exits, leaking CPU + network after the
+                    # job has already been marked failed.
+                    timeout=_timeout,
                 )
 
                 # Validate download
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    print(f"✅ Successfully downloaded {video_id}")
+                    fsize_mb = os.path.getsize(output_path) / (1024 * 1024)
+                    print(f"\u2705 Successfully downloaded {video_id} ({fsize_mb:.1f} MB)")
                     return True
                 else:
-                    print(f"⚠️ Download completed but file invalid for {video_id}")
+                    print(f"\u26a0\ufe0f Download completed but file invalid for {video_id}")
 
+            except subprocess.TimeoutExpired:
+                print(f"\u274c Download attempt {attempt} timed out after {_timeout:.0f}s for {video_id} "
+                      f"\u2014 subprocess killed")
+                if attempt < DOWNLOAD_RETRY_ATTEMPTS:
+                    wait_time = 2 ** attempt
+                    print(f"\u23f3 Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
             except subprocess.CalledProcessError as e:
-                print(f"❌ Download attempt {attempt} failed for {video_id}:")
-                print(e.stderr if e.stderr else str(e))
+                stderr = e.stderr or ""
+                print(f"\u274c Download attempt {attempt} failed for {video_id}:")
+                print(stderr[:500] if stderr else str(e))
 
                 if attempt < DOWNLOAD_RETRY_ATTEMPTS:
                     # Exponential backoff: 2, 4, 8 seconds
                     wait_time = 2 ** attempt
-                    print(f"⏳ Waiting {wait_time}s before retry...")
+                    print(f"\u23f3 Waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
             except Exception as e:
-                print(f"❌ Unexpected error downloading {video_id}: {e}")
+                print(f"\u274c Unexpected error downloading {video_id}: {e}")
                 break
 
         return False
@@ -411,7 +461,10 @@ class VideoCacheManager:
             "--no-check-certificates",
             "--socket-timeout", "60",
             "--retries", "10",
-            "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best/bestvideo+bestaudio",
+            # 360p + forced MP4: see _download_with_retry for rationale.
+            "-f", "bestvideo[height<=360][ext=mp4]+bestaudio[abr<=64]"
+                  "/best[height<=360][ext=mp4]/worst[ext=mp4]/worst",
+            "--merge-output-format", "mp4",
             "-o", output_template,
             url,
         ]

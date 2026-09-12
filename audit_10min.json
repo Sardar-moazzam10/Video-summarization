@@ -1,0 +1,324 @@
+{
+  "target_minutes": 10,
+  "job_id": "audit_10min_1788811320",
+  "video_id": "_QXjl-4IuzY",
+  "timings": {
+    "download_transcript": 0.08,
+    "initial_fusion": 49.82,
+    "video_download": 14.82,
+    "semantic_segmentation": 35.85,
+    "concept_extraction": 4.55,
+    "selection": 0.12,
+    "ffmpeg": 63.61,
+    "audio_extraction": 18.38,
+    "second_fusion": 10.99,
+    "bart": 63.58,
+    "T0_to_T1_video_ready": 170.8,
+    "T0_to_T2_bart_start": 200.3,
+    "T0_to_T3_summary": 263.9,
+    "T0_to_T4_completed": 263.9
+  },
+  "duration": {
+    "requested_seconds": 600,
+    "selected_seconds": 598.2,
+    "pct_of_target": 99.7,
+    "clip_count": 22,
+    "early_stop": false,
+    "final_video_seconds": 598.6
+  },
+  "quality_stages": {
+    "full_transcript_words": 4972,
+    "full_transcript_segments": 631,
+    "source_duration_s": 1486.1,
+    "initial_fusion_words": 821,
+    "initial_fusion_topics": [
+      "It starts to take effect....",
+      "Office. It is good. Keep...",
+      "Had written. This is not...",
+      "Hopefully I will complete it...",
+      "Yes sir. sir maintain that...",
+      "Natural love for new things....",
+      "Part Two the Trap. This...",
+      "I have been sharing my...",
+      "It's here friend let's invest...",
+      "tool to learn a musical..."
+    ],
+    "selected_transcript_words": 1902,
+    "selected_transcript_snippet": "Sure sure. Thank you sir. [music] Good morning sir. oh wow new book Yes sir. Have you read Confidence? No sir. Why? Sir, actually he has become very boring. Was. its chapters mean slowly Gradually it was becoming more and more boring. So I got this new fictional book. Hopefully I will complete it as soon as possible. I will give it because it is very interesting And we are getting knowledge from this also. Okay, great. Utkarsh how are you? How's the gym going? Body shot being made? Oh no sir, the timing is not set. Was getting it. getting late for office everyday Was. So what did I do? dance c",
+    "fused_narrative_words": 1157,
+    "fused_narrative_snippet": "Instinct Becomes a Neural Hijack [Music] Is done. According to the theories of science Our mind always goes to the old place Exhausted understands and new shiny paths Shows to be beneficial. you here Not exploring. your mind you Manipulating so that he can avoid hard work Can move towards novelty. now this To understand manipulation you don't have to The cycle must be decoded where your Your brain and your emotions together Activate SOS.. of this journey The name is The Emotional Cycle of Change which There are five levels. And these five levels Let's decide whether you start something Whether",
+    "fused_narrative_topics": [
+      "Instinct Becomes a Neural Hijack...",
+      "Target: Write idea here or...",
+      "So I got this new...",
+      "will be disciplined. Kept practicing...",
+      "second Disadvantage: You remain a..."
+    ],
+    "fusion_artifact_count": 4,
+    "bart_output_words": 235,
+    "bart_output_snippet": "The Emotional Cycle of Change has five levels . There are five levels: Uninformed Optimism, uninformed Optimism and Despair . When we plan, the brain spikes up to a spike . Fear of missing out is a distraction to avoid hard work . When this identity shift comes, When your identity is formed then It becomes easier for you to handle goals Is. Your identity gets further upgraded Is. It becomes an identity-boosting factor in success . The Finisher Muscle That Shifts Your Identity will do. If you can do one thing even for three days, if you can't do it then what is the problem? Is it? Your finisher",
+    "bart_full_output": "The Emotional Cycle of Change has five levels . There are five levels: Uninformed Optimism, uninformed Optimism and Despair . When we plan, the brain spikes up to a spike . Fear of missing out is a distraction to avoid hard work . When this identity shift comes, When your identity is formed then It becomes easier for you to handle goals Is. Your identity gets further upgraded Is. It becomes an identity-boosting factor in success . The Finisher Muscle That Shifts Your Identity will do. If you can do one thing even for three days, if you can't do it then what is the problem? Is it? Your finisher is Muscle Week. If it is strong then what's the solution if it is weak? If it isn't strong then your finisher muscle is the solution to the problem . Howard And MAT's research says that out of 100 Only 5 to 10 people take their online courses Are able to eliminate. The remaining 90% people only Disappeared after three or four lessons  Utkarsh Adhir Hussain says he has learnt a lot from Sachin Sir . He says he will give it because it is very interesting and we are getting knowledge from this also . The target is to make your brain believe that To give, he says . 'I got this new fictional book. Hopefully I will complete it as soon as possible'",
+    "summarization_decision": {
+      "action": "compress",
+      "reason": "1157 words is above the 250-word target (+115% tolerance)",
+      "target_words": 250,
+      "coherence": {
+        "word_count": 1157,
+        "sentence_count": 130,
+        "artifact_density": 0.0308,
+        "fragment_rate": 0.2077,
+        "self_similarity_rate": 0.0078,
+        "source_artifacts": 0,
+        "mid_sentence_connectives": 3,
+        "is_coherent": false,
+        "reasons": [
+          "21% of sentences are fragments (> 20%)"
+        ]
+      }
+    },
+    "tldr": "The Emotional Cycle of Change has five levels . There are five levels: Uninformed Optimism, uninformed Optimism and Despair .",
+    "tldr_words": 20,
+    "takeaways": [
+      "Fear of missing out is a distraction to avoid hard work .",
+      "When this identity shift comes, When your identity is formed then It becomes easier for you to handle goals Is.",
+      "If it isn't strong then your finisher muscle is the solution to the problem .",
+      "Howard And MAT's research says that out of 100 Only 5 to 10 people take their online courses Are able to eliminate.",
+      "The remaining 90% people only Disappeared after three or four lessons  Utkarsh Adhir Hussain says he has learnt a lot from Sachin Sir ."
+    ],
+    "chapters": [
+      {
+        "title": "Introduction & Overview",
+        "words": 63
+      },
+      {
+        "title": "Core Discussion",
+        "words": 55
+      },
+      {
+        "title": "Conclusions & Key Points",
+        "words": 110
+      }
+    ],
+    "quality_audit": {
+      "raw_transcript": {
+        "stage": "raw_transcript",
+        "word_count": 4972,
+        "issues": [
+          "repeated bigrams \u00d73: 'Sir, I'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "initial_fusion_narrative": {
+        "stage": "initial_fusion_narrative",
+        "word_count": 821,
+        "issues": [
+          "13 fusion connective(s): ['additionally,', 'furthermore,', 'moreover,', 'in related terms,', 'building on this,']",
+          "repeated bigrams \u00d73: 'It was'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "selected_transcript": {
+        "stage": "selected_transcript",
+        "word_count": 1902,
+        "issues": [
+          "repeated bigrams \u00d75: 'it is'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "fused_narrative": {
+        "stage": "fused_narrative",
+        "word_count": 1157,
+        "issues": [
+          "4 fusion connective(s): ['additionally,', 'furthermore,', 'moreover,', 'in related terms,']",
+          "repeated bigrams \u00d76: 'to the'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "bart_output": {
+        "stage": "bart_output",
+        "word_count": 235,
+        "issues": [
+          "repeated bigrams \u00d73: 'it is'"
+        ]
+      },
+      "tldr": {
+        "stage": "tldr",
+        "word_count": 20,
+        "issues": []
+      }
+    }
+  },
+  "metrics": {
+    "topics_found": 5,
+    "topics_list": [
+      "Instinct Becomes a Neural Hijack...",
+      "Target: Write idea here or...",
+      "So I got this new...",
+      "will be disciplined. Kept practicing...",
+      "second Disadvantage: You remain a..."
+    ],
+    "total_source_words": 4972,
+    "selected_text_words": 1902,
+    "fused_narrative_words": 1157,
+    "output_words": 235,
+    "target_words": 250,
+    "compression_pct_as_coded": 12.36,
+    "compression_pct_vs_full": 4.73,
+    "compression_formula_coded": "output_words / selected_text_words = 235/1902 = 12.4%",
+    "compression_formula_vs_full": "output_words / full_transcript_words = 235/4972 = 4.7%",
+    "summary_quality_pct": 64.0,
+    "video_quality_pct": 94.8,
+    "quality_detail_check_a": {
+      "name": "Summary fidelity (summary vs original video)",
+      "score": 64.0,
+      "verdict": "FAIR \u2014 captures the gist but misses/dilutes some key points",
+      "keyword_coverage": {
+        "score": 28.0,
+        "hits": [
+          "work",
+          "new",
+          "people",
+          "brain",
+          "sir",
+          "thing",
+          "problem"
+        ],
+        "misses": [
+          "music",
+          "did",
+          "level",
+          "just",
+          "mind",
+          "don",
+          "like",
+          "start",
+          "let",
+          "time",
+          "happen",
+          "sos",
+          "know",
+          "stage",
+          "going",
+          "pattern",
+          "write",
+          "yes"
+        ],
+        "total_keywords": 25,
+        "top_keywords": [
+          "music",
+          "work",
+          "new",
+          "people",
+          "did",
+          "brain",
+          "level",
+          "just",
+          "sir",
+          "mind",
+          "don",
+          "like",
+          "start",
+          "thing",
+          "let",
+          "time",
+          "happen",
+          "sos",
+          "problem",
+          "know",
+          "stage",
+          "going",
+          "pattern",
+          "write",
+          "yes"
+        ]
+      },
+      "semantic_coverage": {
+        "score": 100.0,
+        "covered": 63,
+        "total": 63,
+        "unit": "topic chunks",
+        "threshold": 0.45,
+        "least_covered": []
+      },
+      "llm_judge": {
+        "score": null,
+        "error": "disabled (--no-llm)"
+      }
+    },
+    "quality_detail_check_b": {
+      "name": "Video\u2194Summary match (clips vs summary)",
+      "score": 94.8,
+      "verdict": "GOOD \u2014 the video closely represents its summary (as expected)",
+      "keyword_coverage": {
+        "score": 89.5,
+        "hits": [
+          "identity",
+          "finisher",
+          "muscle",
+          "says",
+          "solution",
+          "strong",
+          "problem",
+          "brain",
+          "levels",
+          "week",
+          "optimism",
+          "uninformed",
+          "weak",
+          "gets",
+          "upgraded",
+          "days",
+          "thing"
+        ],
+        "misses": [
+          "factor",
+          "success"
+        ],
+        "total_keywords": 19,
+        "top_keywords": [
+          "identity",
+          "finisher",
+          "muscle",
+          "says",
+          "solution",
+          "strong",
+          "problem",
+          "brain",
+          "levels",
+          "week",
+          "optimism",
+          "uninformed",
+          "weak",
+          "gets",
+          "upgraded",
+          "days",
+          "thing",
+          "factor",
+          "success"
+        ]
+      },
+      "semantic_coverage": {
+        "score": 100.0,
+        "covered": 18,
+        "total": 18,
+        "unit": "summary sentences",
+        "threshold": 0.45,
+        "least_covered": []
+      },
+      "llm_judge": {
+        "score": null,
+        "error": "disabled (--no-llm)"
+      }
+    }
+  },
+  "grounding": {
+    "bart_grounded_in_narrative": true,
+    "bart_grounded_in_selected": true,
+    "bart_grounded_in_full": true,
+    "narrative_reasons": [],
+    "selected_reasons": [],
+    "full_reasons": [],
+    "potential_leak": false
+  },
+  "errors": []
+}

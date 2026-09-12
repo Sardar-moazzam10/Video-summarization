@@ -12,6 +12,7 @@
   transition: border-color 0.25s, box-shadow 0.25s;
   position: relative;
   backdrop-filter: blur(12px);
+  height: 100%;
 }
 
 .vc-card:hover {

@@ -3,16 +3,19 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import axios from 'axios';
 import { API_BASE_URL } from './config/api.js';
+import { extractErrorMessage } from './utils/apiError.js';
+import { getStepStatus, monotonicPercent, nextVisitedStages } from './utils/progressState.js';
 import QualityPanel from './QualityPanel.js';
 
 const STAGES = [
   { key: 'transcribing', label: 'Transcribing', icon: '01' },
   { key: 'analyzing', label: 'Analyzing', icon: '02' },
-  { key: 'fusing', label: 'Fusing', icon: '03' },
-  { key: 'summarizing', label: 'Summarizing', icon: '04' },
-  { key: 'enriching', label: 'AI Enriching', icon: '05' },
-  { key: 'generating_voice', label: 'Voice Gen', icon: '06' },
-  { key: 'generating_video', label: 'Video Gen', icon: '07' },
+  { key: 'fusing', label: 'Selecting', icon: '03' },
+  { key: 'generating_video', label: 'Video Gen', icon: '04' },
+  { key: 'video_ready', label: 'Video Ready', icon: '05' },
+  { key: 'summarizing', label: 'Summarizing', icon: '06' },
+  { key: 'enriching', label: 'AI Enriching', icon: '07' },
+  { key: 'generating_voice', label: 'Voice Gen', icon: '08' },
 ];
 
 const MergedPodcastPlayer = () => {
@@ -21,6 +24,9 @@ const MergedPodcastPlayer = () => {
   const [status, setStatus] = useState('pending');
   const [stage, setStage] = useState('Initializing...');
   const [progressPercent, setProgressPercent] = useState(0);
+  // Stages ever seen, so a step badge never regresses to "pending" once shown
+  // — see utils/progressState.js for the rewind bug this fixes.
+  const [visitedStages, setVisitedStages] = useState(() => new Set());
   const [summary, setSummary] = useState('');
   const [audioUrl, setAudioUrl] = useState('');
   const [metadata, setMetadata] = useState(null);
@@ -38,8 +44,12 @@ const MergedPodcastPlayer = () => {
   // This job's own settings, echoed back by /result. Carried into the
   // highlight-reel job so it reproduces THIS summary instead of a new one.
   const [jobSettings, setJobSettings] = useState({});
+  // Full result payload from /result, used to read summary_unavailable and
+  // other fields that the status endpoint (/merge/{id}) does not carry.
+  const [resultData, setResultData] = useState(null);
   const pollIntervalRef = useRef(null);
   const lastStatusRef = useRef('');
+  const videoFetchedRef = useRef(false);
 
   const getPollInterval = (status) => {
     switch (status) {
@@ -50,6 +60,7 @@ const MergedPodcastPlayer = () => {
       case 'enriching': return 3000;
       case 'generating_voice': return 4000;
       case 'generating_video': return 5000;
+      case 'video_ready': return 2000;
       default: return 3000;
     }
   };
@@ -60,7 +71,8 @@ const MergedPodcastPlayer = () => {
       const currentStatus = res.data.status;
       setStatus(currentStatus);
       setStage(res.data.stage_message || 'Processing...');
-      setProgressPercent(res.data.progress_percent || 0);
+      setVisitedStages((prev) => nextVisitedStages(prev, currentStatus));
+      setProgressPercent((prev) => monotonicPercent(prev, res.data.progress_percent || 0));
 
       if (currentStatus === 'completed' || currentStatus === 'partial_success') {
         const resultRes = await axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`);
@@ -73,6 +85,7 @@ const MergedPodcastPlayer = () => {
           target_duration_minutes: resultRes.data.target_duration_minutes,
           style: resultRes.data.rich_output?.style_applied,
         });
+        setResultData(resultRes.data);
         setWarning(resultRes.data.warning || res.data.warning || '');
         if (resultRes.data.audio_url) {
           setAudioUrl(`${API_BASE_URL}${resultRes.data.audio_url}`);
@@ -88,6 +101,22 @@ const MergedPodcastPlayer = () => {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       } else {
+        if ((currentStatus === 'video_ready' || ['summarizing', 'enriching', 'generating_voice'].includes(currentStatus) || visitedStages.has('video_ready')) && !videoFetchedRef.current) {
+          videoFetchedRef.current = true;
+          axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
+            .then((videoRes) => {
+              if (videoRes.data.video_url) {
+                setVideoUrl(`${API_BASE_URL}${videoRes.data.video_url}`);
+              }
+              setVideoId(videoRes.data.highlight_segments?.[0]?.video_id || videoRes.data.video_ids?.[0] || '');
+              setVideoIds(videoRes.data.video_ids || []);
+              if (videoRes.data.summary_text) setSummary(videoRes.data.summary_text);
+              if (videoRes.data.rich_output) setRichOutput(videoRes.data.rich_output);
+              if (videoRes.data.metadata && Object.keys(videoRes.data.metadata).length > 0) setMetadata(videoRes.data.metadata);
+              if (videoRes.data.audio_url) setAudioUrl(`${API_BASE_URL}${videoRes.data.audio_url}`);
+            })
+            .catch(() => {});
+        }
         if (lastStatusRef.current !== currentStatus) {
           clearInterval(pollIntervalRef.current);
           const pollInterval = getPollInterval(currentStatus);
@@ -121,7 +150,8 @@ const MergedPodcastPlayer = () => {
           }
           setStatus(data.status);
           setStage(data.stage_message || 'Processing...');
-          setProgressPercent(data.progress_percent || 0);
+          setVisitedStages((prev) => nextVisitedStages(prev, data.status));
+          setProgressPercent((prev) => monotonicPercent(prev, data.progress_percent || 0));
 
           if (data.status === 'completed' || data.status === 'partial_success') {
             axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
@@ -135,6 +165,7 @@ const MergedPodcastPlayer = () => {
                   target_duration_minutes: res.data.target_duration_minutes,
                   style: res.data.rich_output?.style_applied,
                 });
+                setResultData(res.data);
                 setWarning(res.data.warning || data.warning || '');
                 if (res.data.audio_url) {
                   setAudioUrl(`${API_BASE_URL}${res.data.audio_url}`);
@@ -148,6 +179,21 @@ const MergedPodcastPlayer = () => {
           } else if (data.status === 'error') {
             setError(data.stage_message || 'An unknown error occurred.');
             eventSource.close();
+          } else if ((data.status === 'video_ready' || ['summarizing', 'enriching', 'generating_voice'].includes(data.status)) && !videoFetchedRef.current) {
+            videoFetchedRef.current = true;
+            axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
+              .then(res => {
+                if (res.data.video_url) {
+                  setVideoUrl(`${API_BASE_URL}${res.data.video_url}`);
+                }
+                setVideoId(res.data.highlight_segments?.[0]?.video_id || res.data.video_ids?.[0] || '');
+                setVideoIds(res.data.video_ids || []);
+                if (res.data.summary_text) setSummary(res.data.summary_text);
+                if (res.data.rich_output) setRichOutput(res.data.rich_output);
+                if (res.data.metadata && Object.keys(res.data.metadata).length > 0) setMetadata(res.data.metadata);
+                if (res.data.audio_url) setAudioUrl(`${API_BASE_URL}${res.data.audio_url}`);
+              })
+              .catch(() => {});
           }
         } catch (parseErr) {
           console.error('SSE parse error:', parseErr);
@@ -179,16 +225,13 @@ const MergedPodcastPlayer = () => {
 
   const handleBack = () => navigate('/search-by-title');
 
-  const getStepStatus = (stepName) => {
-    const statusOrder = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'generating_video', 'partial_success', 'completed'];
-    const currentIdx = statusOrder.indexOf(status);
-    const stepIdx = statusOrder.indexOf(stepName);
-    if (stepIdx < currentIdx) return 'complete';
-    if (stepIdx === currentIdx) return 'active';
-    return 'pending';
-  };
+  const getCurrentStepStatus = (stepName) => getStepStatus(stepName, status, visitedStages);
 
-  const isProcessing = ['pending', 'transcribing', 'analyzing', 'fusing', 'summarizing', 'enriching', 'generating_voice', 'generating_video'].includes(status);
+  const isFinal = status === 'completed' || status === 'partial_success';
+  const hasVideoReady = visitedStages.has('video_ready') || isFinal || status === 'video_ready' || ['summarizing', 'enriching', 'generating_voice'].includes(status);
+  const isProcessing = !hasVideoReady && !isFinal && status !== 'error';
+  const summaryPending = hasVideoReady && !isFinal && status !== 'error';
+  const showResults = isFinal || summaryPending;
 
   const saveToHistory = (resultData) => {
     const username = JSON.parse(localStorage.getItem('user'))?.username;
@@ -224,7 +267,9 @@ const MergedPodcastPlayer = () => {
       setChatAnswer(res.data);
     } catch (err) {
       console.error('Chat error:', err);
-      const errMsg = err.response?.data?.detail || 'Failed to get an answer. Please try again.';
+      const errMsg = extractErrorMessage(
+        err.response?.data, 'Failed to get an answer. Please try again.'
+      );
       setChatAnswer({ answer: errMsg, sources: [] });
     } finally {
       setChatLoading(false);
@@ -264,8 +309,9 @@ const MergedPodcastPlayer = () => {
       }
     } catch (err) {
       console.error('Highlight reel request failed:', err);
-      const msg = err.response?.data?.detail || 'Could not generate highlights. Please try again.';
-      setCompileError(msg);
+      setCompileError(extractErrorMessage(
+        err.response?.data, 'Could not generate highlights. Please try again.'
+      ));
     } finally {
       setIsCompiling(false);
     }
@@ -290,7 +336,15 @@ const MergedPodcastPlayer = () => {
           </button>
           <h1 style={styles.title}>VidFusion</h1>
           <p style={styles.subtitle}>
-            {isProcessing ? 'Processing your videos...' : (status === 'completed' || status === 'partial_success') ? 'Your summary is ready' : 'Something went wrong'}
+            {isProcessing
+              ? (warning
+                  ? `Summary unavailable for this language — generating highlight video…`
+                  : 'Processing your videos...')
+              : summaryPending
+              ? 'Highlight video ready — generating AI summary...'
+              : isFinal
+              ? 'Your summary is ready'
+              : 'Something went wrong'}
           </p>
         </motion.div>
 
@@ -325,8 +379,8 @@ const MergedPodcastPlayer = () => {
 
             {/* Steps */}
             <div style={styles.stepsRow}>
-              {STAGES.map((s, i) => {
-                const stepStatus = getStepStatus(s.key);
+              {STAGES.slice(0, 5).map((s, i) => {
+                const stepStatus = getCurrentStepStatus(s.key);
                 return (
                   <div key={i} style={styles.step}>
                     <div style={{
@@ -355,8 +409,8 @@ const MergedPodcastPlayer = () => {
           </motion.div>
         )}
 
-        {/* Completed State */}
-        {(status === 'completed' || status === 'partial_success') && (
+        {/* Completed / Video-Ready State */}
+        {showResults && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -385,8 +439,35 @@ const MergedPodcastPlayer = () => {
               </div>
             )}
 
-            {/* Quality Check — two scores: summary vs video, and video vs summary */}
-            <QualityPanel mergeId={mergeId} delay={0.18} />
+            {/* Quality Check — two scores: summary vs video, and video vs summary.
+                Needs a finished summary; the /evaluate endpoint returns
+                { unavailable: true } for language-abort jobs, so we skip it
+                and show a clear notice instead. */}
+            {isFinal && !resultData?.summary_unavailable && (
+              <QualityPanel mergeId={mergeId} delay={0.18} />
+            )}
+            {isFinal && resultData?.summary_unavailable && (
+              <motion.div
+                style={{
+                  ...styles.tldrCard,
+                  borderColor: 'rgba(245,158,11,0.2)',
+                  background: 'rgba(245,158,11,0.04)',
+                }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.18 }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: '#f59e0b' }}>Quality Check Unavailable</span>
+                </div>
+                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', margin: 0, lineHeight: 1.5 }}>
+                  Quality evaluation requires a written summary. No summary was generated
+                  because the transcript language ({resultData.detected_language || 'unsupported'}) is not
+                  supported by the summarizer.
+                </p>
+              </motion.div>
+            )}
 
             {/* Audio Player */}
             {audioUrl && (
@@ -414,7 +495,7 @@ const MergedPodcastPlayer = () => {
                 transition={{ delay: 0.21 }}
               >
                 <div style={styles.warningIcon}>!</div>
-                <div>
+                <div style={styles.warningBody}>
                   <h3 style={styles.warningTitle}>Video Warning</h3>
                   <p style={styles.warningText}>{warning}</p>
                 </div>
@@ -444,6 +525,51 @@ const MergedPodcastPlayer = () => {
               </motion.div>
             )}
 
+            {/* Summary generating — shown while video is ready but the text
+                pipeline is still running */}
+            {summaryPending && (
+              <motion.div
+                style={styles.tldrCard}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25 }}
+              >
+                <h3 style={styles.sectionTitle}>Generating Summary</h3>
+                <p style={{ ...styles.tldrText, fontSize: '0.95rem', marginBottom: '24px' }}>
+                  AI summary, TL;DR, key takeaways and chapters are being generated —
+                  this page will update automatically.
+                </p>
+                <div style={styles.stepsRow}>
+                  {STAGES.slice(5).map((s, i) => {
+                    const stepStatus = getCurrentStepStatus(s.key);
+                    return (
+                      <div key={i} style={styles.step}>
+                        <div style={{
+                          ...styles.stepDot,
+                          background: stepStatus === 'complete' ? '#22c55e'
+                            : stepStatus === 'active' ? '#478BE0'
+                            : 'rgba(255,255,255,0.1)',
+                          boxShadow: stepStatus === 'active' ? '0 0 12px rgba(71,139,224,0.4)' : 'none',
+                        }}>
+                          {stepStatus === 'complete' ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                          ) : (
+                            <span style={{ fontSize: '10px', fontWeight: 700, color: stepStatus === 'active' ? '#fff' : 'rgba(255,255,255,0.3)' }}>{s.icon}</span>
+                          )}
+                        </div>
+                        <span style={{
+                          ...styles.stepLabel,
+                          color: stepStatus === 'active' ? '#fff'
+                            : stepStatus === 'complete' ? 'rgba(255,255,255,0.5)'
+                            : 'rgba(255,255,255,0.25)',
+                        }}>{s.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+
             {/* TL;DR */}
             {richOutput?.tldr && (
               <motion.div
@@ -465,7 +591,19 @@ const MergedPodcastPlayer = () => {
               transition={{ delay: 0.3 }}
             >
               <h3 style={styles.sectionTitle}>AI Summary</h3>
-              <p style={styles.summaryText}>{summary}</p>
+              {summaryPending ? (
+                <p style={{ ...styles.summaryText, fontStyle: 'italic', opacity: 0.6 }}>
+                  Generating AI summary…
+                </p>
+              ) : resultData?.summary_unavailable ? (
+                <p style={{ ...styles.summaryText, fontStyle: 'italic', color: 'rgba(245,158,11,0.85)' }}>
+                  AI Summary unavailable — the transcript language
+                  ({resultData.detected_language || 'unsupported'}) is not supported
+                  by the summarizer. The highlight video above is still playable.
+                </p>
+              ) : (
+                <p style={styles.summaryText}>{summary}</p>
+              )}
             </motion.div>
 
             {/* Key Takeaways */}
@@ -481,7 +619,7 @@ const MergedPodcastPlayer = () => {
                   {richOutput.key_takeaways.map((item, idx) => (
                     <li key={idx} style={styles.takeawayItem}>
                       <span style={styles.takeawayIcon}>&#10003;</span>
-                      <span>{item}</span>
+                      <span style={styles.takeawayText}>{item}</span>
                     </li>
                   ))}
                 </ul>
@@ -588,7 +726,8 @@ const MergedPodcastPlayer = () => {
               </motion.div>
             )}
 
-            {/* Chat with Video */}
+            {/* Chat with Video (Temporarily Disabled) */}
+            {false && (
             <motion.div
               style={styles.chatCard}
               initial={{ opacity: 0, y: 20 }}
@@ -635,66 +774,57 @@ const MergedPodcastPlayer = () => {
                 </div>
               )}
             </motion.div>
+            )}
 
-            {/* Export Buttons */}
-            <motion.div
-              style={styles.exportRow}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.65 }}
-            >
-              <button
-                style={styles.exportBtn}
-                onClick={() => {
-                  const text = [
-                    richOutput?.tldr ? `TL;DR: ${richOutput.tldr}\n` : '',
-                    `SUMMARY:\n${summary}\n`,
-                    richOutput?.key_takeaways?.length ? `KEY TAKEAWAYS:\n${richOutput.key_takeaways.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n` : '',
-                    richOutput?.chapters?.length ? `CHAPTERS:\n${richOutput.chapters.map((c, i) => `${i + 1}. ${c.title}\n${c.text}`).join('\n\n')}\n` : '',
-                    richOutput?.action_steps?.length ? `ACTION STEPS:\n${richOutput.action_steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : '',
-                  ].filter(Boolean).join('\n');
-                  navigator.clipboard.writeText(text);
-                  alert('Copied to clipboard!');
-                }}
+            {/* Export Buttons — need a finished summary; hidden while it's
+                still generating (video_ready). */}
+            {!summaryPending && (
+              <motion.div
+                style={styles.exportRow}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.65 }}
               >
-                Copy Text
-              </button>
-              <button
-                style={styles.exportBtn}
-                onClick={() => {
-                  const text = [
-                    richOutput?.tldr ? `TL;DR: ${richOutput.tldr}\n` : '',
-                    `SUMMARY:\n${summary}\n`,
-                    richOutput?.key_takeaways?.length ? `KEY TAKEAWAYS:\n${richOutput.key_takeaways.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n` : '',
-                    richOutput?.chapters?.length ? `CHAPTERS:\n${richOutput.chapters.map((c, i) => `${i + 1}. ${c.title}\n${c.text}`).join('\n\n')}\n` : '',
-                    richOutput?.action_steps?.length ? `ACTION STEPS:\n${richOutput.action_steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : '',
-                  ].filter(Boolean).join('\n');
-                  const blob = new Blob([text], { type: 'text/plain' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `summary_${mergeId}.txt`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                Download TXT
-              </button>
-              <button
-                style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05))', borderColor: 'rgba(239,68,68,0.3)' }}
-                onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/export?format=pdf`, '_blank')}
-              >
-                Download PDF
-              </button>
-              {audioUrl && (
                 <button
-                  style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(71,139,224,0.15), rgba(71,139,224,0.05))', borderColor: 'rgba(71,139,224,0.3)' }}
-                  onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/audio`, '_blank')}
+                  style={styles.exportBtn}
+                  onClick={() => {
+                    const text = [
+                      richOutput?.tldr ? `TL;DR: ${richOutput.tldr}\n` : '',
+                      `SUMMARY:\n${summary}\n`,
+                      richOutput?.key_takeaways?.length ? `KEY TAKEAWAYS:\n${richOutput.key_takeaways.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n` : '',
+                      richOutput?.chapters?.length ? `CHAPTERS:\n${richOutput.chapters.map((c, i) => `${i + 1}. ${c.title}\n${c.text}`).join('\n\n')}\n` : '',
+                      richOutput?.action_steps?.length ? `ACTION STEPS:\n${richOutput.action_steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : '',
+                    ].filter(Boolean).join('\n');
+                    navigator.clipboard.writeText(text);
+                    alert('Copied to clipboard!');
+                  }}
                 >
-                  Download Audio
+                  Copy Text
                 </button>
-              )}
-            </motion.div>
+                <button
+                  style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05))', borderColor: 'rgba(239,68,68,0.3)' }}
+                  onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/export?format=pdf`, '_blank')}
+                >
+                  Download PDF
+                </button>
+                {videoUrl && (
+                  <button
+                    style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(71,139,224,0.15), rgba(71,139,224,0.05))', borderColor: 'rgba(71,139,224,0.3)' }}
+                    onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/video`, '_blank')}
+                  >
+                    Download Video
+                  </button>
+                )}
+                {audioUrl && (
+                  <button
+                    style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(71,139,224,0.15), rgba(71,139,224,0.05))', borderColor: 'rgba(71,139,224,0.3)' }}
+                    onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/audio`, '_blank')}
+                  >
+                    Download Audio
+                  </button>
+                )}
+              </motion.div>
+            )}
 
             {/* Action */}
             <motion.div
@@ -878,7 +1008,7 @@ const styles = {
   },
   statsGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, 1fr)',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
     gap: '12px',
     marginBottom: '20px',
   },
@@ -947,6 +1077,10 @@ const styles = {
     fontWeight: 800,
     flexShrink: 0,
   },
+  warningBody: {
+    flex: 1,
+    minWidth: 0,
+  },
   warningTitle: {
     fontSize: '0.95rem',
     fontWeight: 700,
@@ -958,6 +1092,8 @@ const styles = {
     lineHeight: 1.6,
     color: '#fef3c7',
     margin: 0,
+    overflowWrap: 'break-word',
+    wordBreak: 'break-word',
   },
   summaryCard: {
     background: 'rgba(17, 24, 39, 0.5)',
@@ -1087,6 +1223,12 @@ const styles = {
     flexShrink: 0,
     marginTop: '2px',
   },
+  takeawayText: {
+    flex: 1,
+    minWidth: 0,
+    overflowWrap: 'break-word',
+    wordBreak: 'break-word',
+  },
   chaptersList: {
     display: 'flex',
     flexDirection: 'column',
@@ -1149,7 +1291,7 @@ const styles = {
   },
   whoGrid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
     gap: '12px',
     marginBottom: '20px',
   },

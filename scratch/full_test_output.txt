@@ -1,0 +1,68 @@
+
+==================================================
+STARTING TEST: 10 MINUTES
+==================================================
+[01:35:58.785] T0: User clicks Generate
+[01:35:59.247] Job started: 53140eb6-4a75-44cf-9ef2-536da5162a21
+[01:36:35.521] Stage change: fusing (70%)
+[01:36:37.686] T2: Semantic selection complete
+[01:36:37.686] Stage change: generating_video (60%)
+[01:37:43.387] T3: Highlight video generated
+[01:37:43.387] T4: VIDEO_READY received
+[01:37:43.387] T5: Requesting /result for playable video...
+[01:37:43.390] ERROR: 400 on /result or no video!
+[01:37:43.390] Stage change: video_ready (70%)
+[01:38:01.504] T6: BART summary starts
+[01:38:01.504] Stage change: summarizing (79%)
+[01:38:41.794] Stage change: completed (100%)
+[01:38:41.794] T9: Final COMPLETED state
+
+--- VALIDATION: 10 MIN ---
+Video URL: /api/v1/merge/53140eb6-4a75-44cf-9ef2-536da5162a21/video
+Text Summary Length: 1201 chars
+Clips Selected: 0
+Final Duration: 0 seconds
+
+--- LATENCY ---
+Video-ready latency: 104.60s
+Full completion latency: 163.01s
+FFmpeg time: 65.70s
+
+==================================================
+STARTING TEST: 15 MINUTES
+==================================================
+[01:38:41.805] T0: User clicks Generate
+[01:38:41.859] Job started: 6c2521f0-4572-4b26-87b7-4ec4fda3de1b
+[01:39:03.475] Stage change: fusing (70%)
+[01:39:05.223] T2: Semantic selection complete
+[01:39:05.223] Stage change: generating_video (60%)
+[01:40:36.358] T3: Highlight video generated
+[01:40:36.358] T4: VIDEO_READY received
+[01:40:36.358] T5: Requesting /result for playable video...
+[01:40:36.362] ERROR: 400 on /result or no video!
+[01:40:36.362] Stage change: video_ready (70%)
+[01:40:59.951] T6: BART summary starts
+[01:40:59.951] Stage change: summarizing (79%)
+[01:42:12.441] Stage change: completed (100%)
+[01:42:12.441] T9: Final COMPLETED state
+
+--- VALIDATION: 15 MIN ---
+Video URL: None
+Text Summary Length: 0 chars
+Clips Selected: 0
+Final Duration: 0 seconds
+
+--- LATENCY ---
+Video-ready latency: 114.55s
+Full completion latency: 210.64s
+FFmpeg time: 91.13s
+
+
+==================================================
+FINAL COMPARISON
+==================================================
+Metric | 10 min | 15 min
+Video Duration (s) | 0 | 0
+Clips Selected | 0 | 0
+Video-Ready Latency (s) | 104.6 | 114.6
+Full Latency (s) | 163.0 | 210.6

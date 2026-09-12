@@ -72,7 +72,7 @@ const KNOWLEDGE_BASE = {
   // ── PROCESSING STAGES ─────────────────────────────
   "How does the processing work?": {
     answer:
-      "After clicking Summarize, VidFusion runs 7 stages automatically:\n\n**01 Transcribing** — fetches spoken words from each video (YouTube API → yt-dlp → Whisper AI fallback)\n**02 Analyzing** — detects topics, language, structure. Non-English? NLLB-200 translates to English\n**03 Fusing** — merges content from all selected videos, removes duplicates\n**04 Summarizing** — BART-large-CNN compresses the narrative to your target word count\n**05 AI Enriching** — Ollama LLM adds chapters, TLDR, key takeaways\n**06 Selecting** — SBERT + TF-IDF rank transcript segments against the summary\n**07 Video Gen** — top clips trimmed from the original videos → concatenated, original audio kept\n\nProgress is shown live on the page.",
+      "After clicking Summarize, VidFusion runs 7 stages automatically:\n\n**01 Transcribing** — fetches spoken words from each video (YouTube API → yt-dlp → Whisper AI fallback)\n**02 Analyzing** — detects topics, language, structure. Non-English? NLLB-200 translates to English\n**03 Fusing** — merges content from all selected videos, removes duplicates\n**04 Selecting** — SBERT + TF-IDF rank transcript segments against the summary\n**05 Video Gen** — top clips trimmed from the original videos → concatenated, original audio kept\n**06 Summarizing** — BART-large-CNN compresses the narrative to your target word count\n**07 AI Enriching** — Ollama LLM adds chapters, TLDR, key takeaways\n\nProgress is shown live on the page.",
     followUps: [
       "How long does processing take?",
       "What features are on the results page?",

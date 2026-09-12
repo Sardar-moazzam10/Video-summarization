@@ -7,9 +7,10 @@ Pipeline (v2 — original-audio, precise-seek):
          - Single accurate input seek (-ss before -i) → exact timestamp, not
            keyframe-aligned, and PTS reset to 0 so fade timings line up
          - Single re-encode to 1280x720 H.264 (no double encode)
-         - Audio + video fade-in / fade-out at clip boundaries
-    3. Concatenate clips back to back (no black-frame separator — the per-clip
-       fades already carry the transition; see _concat_with_transitions)
+         - Hard video cut; short audio de-click fade only
+    3. Concatenate clips back to back — no black-frame separator, and since the
+       video fade was removed, no fade to black either (see
+       _concat_with_transitions and _trim_and_normalize_segment)
     4. Keep original speaker audio — NO TTS overlay on the video track.
        TTS narration remains as a SEPARATE audio file for the UI audio player.
 
@@ -64,6 +65,24 @@ YTDLP_CMD  = _resolve_ytdlp_cmd()
 YTDLP_BIN  = YTDLP_CMD[0]  # retained for logging / back-compat
 NODE_BIN   = _resolve_binary("NODE_PATH",   "node")
 
+# Bounded concurrency for per-clip trim/normalize (each is one ffmpeg
+# subprocess: decode+scale/pad+encode). The clip loop used to run strictly
+# sequentially — one ffmpeg process at a time — which measurably dominated
+# highlight-reel latency (a real 33-clip job spent 155.8s here, the single
+# largest contributor to total job time).
+#
+# Chosen from a real benchmark (33 real clips, same source video) measuring
+# wall time / CPU / memory at 1, 2, 4, 6, 8 concurrent workers on this class
+# of hardware (4-core/8-thread, memory-constrained):
+#   1: 114.5s   2: 122.2s (slower — noise/contention)   4: 111.9s (~flat)
+#   6: 96.8s (-15% vs N=1)   8: 74.5s (-35%, but +32% more memory than N=6)
+# CPU is already ~94-97% saturated by N=4, so 4/6/8 don't meaningfully differ
+# in CPU headroom — the real differentiator is memory, which scales ~linearly
+# with worker count (184MB at N=1 -> 1273MB peak at N=8). No correctness
+# issues (duration, A/V sync, black frames) at any tested N. 6 was chosen as
+# the best speed/memory balance for this machine, not the outright fastest.
+MAX_CONCURRENT_CLIP_ENCODES = 6
+
 
 class VideoService:
     """
@@ -72,7 +91,7 @@ class VideoService:
     v2 changes vs v1:
     - Trim + normalize combined into ONE FFmpeg pass (was two separate passes)
     - Accurate single-stage input seeking (PTS-reset, fade-safe)
-    - Audio + video fade at clip boundaries (0.15s)
+    - Hard cut on video; 0.04s audio fade only (de-click, not a transition)
     - Clips concatenated back to back (black-frame separator removed)
     - Original speaker audio preserved (TTS not overlaid on video)
     """
@@ -119,13 +138,9 @@ class VideoService:
                 await progress_callback(
                     f"Cutting {len(highlight_segments)} clips..."
                 )
-            clips = []
-            for i, seg in enumerate(highlight_segments):
-                clip = await self._trim_and_normalize_segment(
-                    seg, video_paths, work_dir, i
-                )
-                if clip:
-                    clips.append(clip)
+            clips = await self._trim_segments_bounded(
+                highlight_segments, video_paths, work_dir
+            )
 
             if not clips:
                 raise Exception("No segments could be trimmed")
@@ -156,12 +171,38 @@ class VideoService:
         video_ids: List[str],
         job_id: str = "",
         progress_callback: Optional[Callable[[str], Awaitable]] = None,
+        source_duration_seconds: Optional[float] = None,
     ) -> Dict[str, str]:
-        """Download videos using video_cache_manager, yt-dlp fallback."""
+        """Download videos using video_cache_manager, yt-dlp fallback.
+
+        Args:
+            video_ids:                List of YouTube video IDs.
+            job_id:                   Used to name the download work directory.
+            progress_callback:        Async callable for status messages.
+            source_duration_seconds:  Known duration of the source content, used
+                                      to compute a bounded per-video download
+                                      timeout.  Longer videos get a larger window;
+                                      unknown durations get a safe default.
+        """
         import sys
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         if project_root not in sys.path:
             sys.path.insert(0, project_root)
+
+        # Per-video timeout: 0.5x the source duration plus a 120s fixed margin
+        # (for startup, format negotiation, and merge).  This bounds the download
+        # to something proportional to the content length rather than a fixed wall
+        # that is right for 20-min videos and wrong for 95-min ones.
+        #
+        # Floor at 300s (enough for ~20 min at typical YouTube 360p speed).
+        # Ceiling at 3600s (1 hour — a 120-min video at half-speed should finish).
+        if source_duration_seconds and source_duration_seconds > 0:
+            _per_video_timeout = max(
+                300.0,
+                min(3600.0, source_duration_seconds * 0.5 + 120.0),
+            )
+        else:
+            _per_video_timeout = 600.0  # 10-min default when duration unknown
 
         video_paths = {}
         if job_id:
@@ -174,7 +215,7 @@ class VideoService:
             if progress_callback:
                 await progress_callback(f"Downloading video {i + 1}/{len(video_ids)}...")
             try:
-                path = await self._download_single(vid, work_dir)
+                path = await self._download_single(vid, work_dir, timeout=_per_video_timeout)
                 if path:
                     video_paths[vid] = path
                     print(f"[Video] Downloaded {vid}: {path}")
@@ -183,8 +224,25 @@ class VideoService:
 
         return video_paths
 
-    async def _download_single(self, video_id: str, work_dir: str) -> Optional[str]:
-        """Download a single video using video_cache_manager or yt-dlp fallback."""
+    async def _download_single(
+        self, video_id: str, work_dir: str, timeout: float = 600.0
+    ) -> Optional[str]:
+        """Download a single video using video_cache_manager or yt-dlp fallback.
+
+        Args:
+            video_id:   YouTube video ID.
+            work_dir:   Directory to write the downloaded file.
+            timeout:    Per-video wall-clock budget in seconds.  The cache
+                        manager attempt gets half this budget; the yt-dlp
+                        fallback gets the remaining half.  This ensures both
+                        together stay within the caller's expectation and that
+                        neither can silently exhaust the whole budget on its own.
+        """
+        # Split the budget between the two download paths so neither can
+        # monopolise the full timeout while still leaving room for both.
+        _cache_timeout   = timeout * 0.4   # 40% for the cache manager (fast path)
+        _ytdlp_timeout   = timeout * 0.6   # 60% for the yt-dlp fallback
+
         try:
             from video_cache_manager import get_video_cache_manager
             cache_manager = get_video_cache_manager()
@@ -192,11 +250,12 @@ class VideoService:
                 asyncio.to_thread(
                     cache_manager.download_and_cache_video, video_id, work_dir
                 ),
-                timeout=120.0,
+                timeout=_cache_timeout,
             )
             return path
         except asyncio.TimeoutError:
-            print(f"[Video] Cache manager timed out for {video_id} — falling back to yt-dlp")
+            print(f"[Video] Cache manager timed out ({_cache_timeout:.0f}s) for {video_id} "
+                  f"— falling back to yt-dlp")
         except Exception as e:
             print(f"[Video] Cache manager failed for {video_id}: {e}")
 
@@ -214,6 +273,11 @@ class VideoService:
             "--remote-components", "ejs:github",
             "--no-check-certificates",
             "--socket-timeout", "30",
+            # Abort if YouTube throttles below 100 KB/s — the signature of a
+            # missing PO Token / stale cookies.  At 0.1 MB/s a 95-min 360p
+            # video (~700 MB) takes ~2 hours; better to fail fast and surface
+            # the authentication problem.
+            "--throttled-rate", "100K",
             "-f", "bestvideo[height<=360][ext=mp4]+bestaudio[abr<=64]"
                   "/best[height<=360][ext=mp4]/worst[ext=mp4]/worst",
             "--merge-output-format", "mp4",
@@ -223,17 +287,30 @@ class VideoService:
         if os.path.exists(cookies_file):
             cmd.extend(["--cookies", cookies_file])
 
-        print(f"[Video] Downloading {video_id} (360p max) via yt-dlp...")
-        await asyncio.wait_for(
-            asyncio.to_thread(
-                subprocess.run, cmd, check=True,
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            ),
-            timeout=180.0,
-        )
+        print(f"[Video] Downloading {video_id} (360p max, timeout={_ytdlp_timeout:.0f}s) via yt-dlp...")
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    subprocess.run, cmd, check=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                    # Hard subprocess timeout: if asyncio cancels the to_thread
+                    # wrapper the OS will also kill yt-dlp, not just the task.
+                    timeout=_ytdlp_timeout,
+                ),
+                timeout=_ytdlp_timeout + 5,  # asyncio wrapper adds a small margin
+            )
+        except asyncio.TimeoutError:
+            print(f"[Video] yt-dlp timed out ({_ytdlp_timeout:.0f}s) for {video_id}")
+            return None
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or b"").decode(errors="replace")[-400:] if e.stderr else ""
+            print(f"[Video] yt-dlp failed for {video_id}: {err}")
+            return None
 
         for fname in os.listdir(work_dir):
             if fname.startswith(f"{video_id}."):
+                fsize_mb = os.path.getsize(os.path.join(work_dir, fname)) / (1024 * 1024)
+                print(f"[Video] yt-dlp download complete: {fname} ({fsize_mb:.1f} MB)")
                 return os.path.join(work_dir, fname)
 
         return None
@@ -241,6 +318,34 @@ class VideoService:
     # ------------------------------------------------------------------
     # TRIM + NORMALIZE (combined, precise)
     # ------------------------------------------------------------------
+
+    async def _trim_segments_bounded(
+        self,
+        highlight_segments: List[Dict],
+        video_paths: Dict[str, str],
+        work_dir: str,
+    ) -> List[str]:
+        """
+        Trim + normalize every segment with at most MAX_CONCURRENT_CLIP_ENCODES
+        ffmpeg processes in flight at once — see that constant's comment for
+        why 6 and not "as many as possible".
+
+        Segment order is preserved in the returned list regardless of which
+        clip's ffmpeg process happens to finish first (concat depends on
+        this order matching highlight_segments' order). A failed clip
+        (_trim_and_normalize_segment returning None) is dropped, same as the
+        prior sequential loop.
+        """
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLIP_ENCODES)
+
+        async def _bounded(i: int, seg: Dict) -> Optional[str]:
+            async with semaphore:
+                return await self._trim_and_normalize_segment(seg, video_paths, work_dir, i)
+
+        results = await asyncio.gather(
+            *[_bounded(i, seg) for i, seg in enumerate(highlight_segments)]
+        )
+        return [clip for clip in results if clip]
 
     async def _trim_and_normalize_segment(
         self,
@@ -263,12 +368,8 @@ class VideoService:
 
         Also applies:
           - Scale/pad to 1280x720 (uniform format for concat)
-          - Video fade-in + fade-out (0.3s each)
-          - Audio fade-in + fade-out (0.3s each)
+          - Audio fade-in + fade-out of 0.04s (click suppression only)
           - 30 fps output
-
-        These fades give the viewer an auditory "breath" between clips,
-        matching the natural pause structure of the original speaker.
         """
         vid = seg.get("video_id")
         if not vid or vid not in video_paths:
@@ -284,28 +385,32 @@ class VideoService:
         if duration < 0.5:
             return None
 
-        # Fade duration: 0.15s or 10% of clip, whichever is shorter.
-        # Shortened from 0.30s — combined with the (now removed) 0.4s black
-        # separator, the old values produced ~1s of darkness between every clip
-        # (fade out 0.3 + black 0.4 + fade in 0.3), which read as a black-screen
-        # glitch across a 25-clip reel. 0.15s keeps the transition soft without
-        # the dead air.
+        # VIDEO: hard cut, no fade.
         #
-        # `st=` is measured on the FILTERGRAPH clock. That clock is zero-based
-        # at `start` only because the seek above is a single input-side -ss.
-        # An output-side -ss (i.e. a second -ss placed after -i) shifts the
-        # output window WITHOUT shifting the filter clock, which would move the
-        # fade-out `st` earlier than the clip's real end — and since fade=out
-        # holds frames black after the fade completes, every clip would end in
-        # a black, silent tail as long as that offset. Keep the seek single-stage.
-        fade_d         = min(0.15, duration * 0.10)
+        # The video used to fade in and out over 0.15s at every clip boundary.
+        # Measured on a rendered 5-minute reel, blackdetect found a black run at
+        # 7 of the 8 joins — 28.85s, 109.89s, 171.65s, 191.89s, 232.99s,
+        # 254.19s, 276.92s, against joins at 28.84, 109.85, 171.57, 191.79,
+        # 232.87, 254.01, 276.75 — each 0.07-0.10s, which is 2-3 frames of black
+        # flashing between every pair of clips. A fade "to black" is a fade to
+        # black however short it is; on a highlight reel it reads as a glitch,
+        # and a hard cut is what the format normally uses anyway.
+        #
+        # AUDIO: a short fade is kept and shortened to 0.04s. Splicing raw PCM
+        # at an arbitrary sample produces an audible click; 0.04s (~2 frames)
+        # removes it without being perceptible as a fade, and is short enough
+        # that it cannot clip the start or end of a word. Segments already begin
+        # and end on sentence boundaries, so it lands in a natural pause.
+        #
+        # `st=` is measured on the FILTERGRAPH clock, which is zero-based at
+        # `start` only because the seek above is a single input-side -ss. Keep
+        # the seek single-stage or these offsets stop lining up.
+        fade_d         = min(0.04, duration * 0.05)
         fade_out_start = max(0.0, duration - fade_d)
 
         vf = (
             f"scale=1280:720:force_original_aspect_ratio=decrease,"
-            f"pad=1280:720:-1:-1:color=black,"
-            f"fade=t=in:st=0:d={fade_d:.3f},"
-            f"fade=t=out:st={fade_out_start:.3f}:d={fade_d:.3f}"
+            f"pad=1280:720:-1:-1:color=black"
         )
         af = (
             f"afade=t=in:st=0:d={fade_d:.3f},"

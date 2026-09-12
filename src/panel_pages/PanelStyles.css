@@ -8,6 +8,7 @@
   color: #fff;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   position: relative;
+  overflow-x: hidden;
 }
 
 .panel-bg-gradient {
@@ -22,7 +23,6 @@
   min-height: 100vh;
   position: relative;
   z-index: 1;
-  padding-top: 80px;
 }
 
 /* ============================================
@@ -31,7 +31,7 @@
 .panel-sidebar {
   width: 260px;
   flex-shrink: 0;
-  padding: 24px 16px;
+  padding: 16px 16px 24px;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(17, 24, 39, 0.3);
 }
@@ -135,7 +135,8 @@
    ============================================ */
 .panel-main {
   flex: 1;
-  padding: 32px 40px;
+  min-width: 0;
+  padding: 90px 40px 32px;
   max-width: 700px;
 }
 
@@ -520,6 +521,7 @@
   .panel-layout,
   .user-panel-wrapper {
     flex-direction: column;
+    padding-top: 62px;
   }
 
   .panel-sidebar,
@@ -527,7 +529,7 @@
     width: 100%;
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    padding: 16px;
+    padding: 16px 16px 16px;
   }
 
   .panel-sidebar-nav {
@@ -546,5 +548,26 @@
 
   .panel-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .history-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .history-card {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .history-card-header {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+}
+
+@media (max-width: 420px) {
+  .history-card {
+    padding: 12px;
   }
 }

@@ -135,7 +135,13 @@ async def rate_limit_middleware(request: Request, call_next):
     # Record request
     rate_limit_store[client_ip].append(current_time)
 
-    return await call_next(request)
+    try:
+        return await call_next(request)
+    except BaseException as e:
+        import asyncio
+        if isinstance(e, asyncio.CancelledError):
+            return JSONResponse(status_code=499, content={"detail": "Client Closed Request"})
+        raise
 
 
 # Include routers

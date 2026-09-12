@@ -7,7 +7,7 @@ const VideoList = ({ videos, selectedVideoIds = [], onToggleSelectForMerge }) =>
 
   return (
     <div className="vl-container">
-      <div className="vl-grid">
+      <div className="vl-grid" style={{ alignItems: "stretch" }}>
         {videos.map((video, idx) => {
           const id = video.id?.videoId || video.id;
           return (
@@ -16,6 +16,7 @@ const VideoList = ({ videos, selectedVideoIds = [], onToggleSelectForMerge }) =>
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: idx * 0.04 }}
+              style={{ height: '100%' }}
             >
               <VideoCard
                 video={video}

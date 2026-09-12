@@ -4,6 +4,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import './AuthPage.css';
 import { API_BASE_URL } from '../config/api.js';
+import { extractErrorMessage } from '../utils/apiError.js';
 
 /* Eye icon component */
 const EyeIcon = ({ open }) =>
@@ -60,7 +61,9 @@ const LoginPage = () => {
         setIsError(true);
       }
     } catch (error) {
-      const msg = error.response?.data?.detail || 'Login failed. Please check your credentials.';
+      const msg = extractErrorMessage(
+        error.response?.data, 'Login failed. Please check your credentials.'
+      );
       setMessage(msg);
       setIsError(true);
     } finally {

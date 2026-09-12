@@ -139,31 +139,51 @@ class OllamaService:
     # Core generation
     # --------------------------------------------------
 
-    def _generate(self, prompt: str, expect_json: bool = False) -> str:
-        """Synchronous Ollama /api/generate call. Run via asyncio.to_thread()."""
+    def _generate(self, prompt: str, expect_json: bool = False,
+                  timeout: Optional[float] = None,
+                  num_predict: Optional[int] = None) -> str:
+        """
+        Synchronous Ollama /api/generate call. Run via asyncio.to_thread().
+
+        `timeout` overrides OLLAMA_TIMEOUT_SECONDS for this call. It exists
+        because asyncio.wait_for() cannot kill a thread started by
+        asyncio.to_thread(): when the caller's asyncio timeout is SHORTER than
+        this HTTP timeout, the coroutine is cancelled but the thread keeps
+        generating, holding a slot on a daemon that serialises requests. Letting
+        the caller set the HTTP timeout means the request itself aborts, and the
+        thread actually ends.
+
+        `num_predict` caps the generated token count. The 1536 default suits a
+        long rich-summary answer and is badly wrong for a short structured one:
+        a 3B model asked for five concepts will happily ramble to the cap, and on
+        CPU that is minutes of generation for an answer that needs a few hundred
+        tokens.
+        """
         payload: dict = {
             "model": self._model,
             "prompt": prompt,
             "stream": False,
             "options": {
                 "temperature": 0.35,
-                "num_predict": 1536,
+                "num_predict": num_predict if num_predict is not None else 1536,
             },
         }
         if expect_json:
             payload["format"] = "json"
 
         try:
+            effective_timeout = timeout if timeout is not None else self._timeout
             resp = httpx.post(
                 f"{self._base_url}/api/generate",
                 json=payload,
-                timeout=self._timeout,
+                timeout=effective_timeout,
             )
             resp.raise_for_status()
             return resp.json().get("response", "")
 
         except httpx.TimeoutException:
-            print(f"[Ollama] Timed out after {self._timeout}s — try a smaller model or increase OLLAMA_TIMEOUT_SECONDS")
+            print(f"[Ollama] Timed out after {timeout if timeout is not None else self._timeout}s "
+                  f"— try a smaller model or increase the timeout")
             self._available = None  # reset so next request re-checks
             return ""
         except Exception as e:

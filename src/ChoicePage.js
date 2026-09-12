@@ -209,12 +209,29 @@ const ChoicePage = () => {
     return () => clearTimeout(t);
   }, [displayText, phraseIndex, isDeleting]);
 
+  const INPUT_MINUTES = 120;
+  const SUMMARY_DURATIONS = [5, 10, 15, 20, 30];
   const [compressionDone, setCompressionDone] = useState(false);
+  const [durationIndex, setDurationIndex] = useState(0);
 
   useEffect(() => {
-    const t = setTimeout(() => setCompressionDone(d => !d), compressionDone ? 4000 : 5000);
+    const t = setTimeout(() => {
+      setCompressionDone(d => !d);
+      if (compressionDone) {
+        setDurationIndex(i => (i + 1) % SUMMARY_DURATIONS.length);
+      }
+    }, compressionDone ? 4000 : 5000);
     return () => clearTimeout(t);
   }, [compressionDone]);
+
+  const formatSavedTime = (mins) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  };
+  const savedMinutes = INPUT_MINUTES - SUMMARY_DURATIONS[durationIndex];
 
   return (
     <div className="cp">
@@ -291,9 +308,9 @@ const ChoicePage = () => {
                 transition={{ delay: 0.7 }}
               >
                 {[
-                  { label: 'Lex Fridman #401',  dur: '2h 15m', color: '#478BE0' },
-                  { label: 'Huberman Lab #312', dur: '1h 30m', color: '#8b5cf6' },
-                  { label: 'Tim Ferriss #702',  dur: '45m',    color: '#10b981' },
+                  { label: 'Lex Fridman (Lex Fridman Podcast)',      dur: '2h 15m', color: '#478BE0' },
+                  { label: 'Steven Bartlett (The Diary of A CEO)',   dur: '1h 30m', color: '#8b5cf6' },
+                  { label: 'Raj Shamani & Bill Gates',                dur: '45m',    color: '#10b981' },
                 ].map((v, i) => (
                   <div key={i} className="cp-src-row">
                     <span className="cp-src-dot" style={{ background: v.color, boxShadow: `0 0 6px ${v.color}55` }} />
@@ -322,8 +339,8 @@ const ChoicePage = () => {
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 1.0, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
               >
-                <div className="cp-transform-from">
-                  <span className="cp-transform-dur">2h</span>
+                <div className={`cp-transform-from${compressionDone ? ' cp-transform-from--done' : ''}`}>
+                  <span className="cp-transform-dur">2h+</span>
                   <span className="cp-transform-sub">input</span>
                 </div>
                 <div className="cp-transform-arrow-wrap">
@@ -332,14 +349,14 @@ const ChoicePage = () => {
                   </svg>
                 </div>
                 <div className={`cp-transform-to${compressionDone ? ' cp-transform-to--done' : ''}`}>
-                  <span className="cp-transform-dur">{compressionDone ? '12 min' : '···'}</span>
+                  <span className="cp-transform-dur">{compressionDone ? `${SUMMARY_DURATIONS[durationIndex]} min` : '···'}</span>
                   <span className="cp-transform-sub">summary</span>
                 </div>
               </motion.div>
 
               {/* Saving badge */}
               <div className={`cp-transform-badge${compressionDone ? ' cp-transform-badge--done' : ''}`}>
-                {compressionDone ? '⚡ You save 1h 48m' : '⚙ Compressing with AI...'}
+                {compressionDone ? `⚡ You save ${formatSavedTime(savedMinutes)}` : '⚙ Compressing with AI...'}
               </div>
 
               {/* Output type pills */}

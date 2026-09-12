@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './AuthPage.css';
 import { API_BASE_URL } from '../config/api.js';
+import { extractErrorMessage } from '../utils/apiError.js';
 
 const EyeIcon = ({ open }) =>
   open ? (
@@ -70,7 +71,9 @@ const SignupPage = () => {
         setIsError(true);
       }
     } catch (err) {
-      setMessage(err.response?.data?.detail || 'Signup failed. Please try again.');
+      setMessage(extractErrorMessage(
+        err.response?.data, 'Signup failed. Please try again.'
+      ));
       setIsError(true);
     } finally {
       setLoading(false);

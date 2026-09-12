@@ -82,30 +82,10 @@ class DurationProfile:
 # =====================================================
 
 DURATION_PROFILES: Dict[int, DurationProfile] = {
-    # 2-minute "Quick" profile — added for fast demos and live runs.
-    # ~300 words → ~112s of TTS → ~2 min output video, versus 1500 words /
-    # ~8 min for the 10-minute profile. Reuses HEADLINE style, whose
-    # generation config is already the fastest (num_beams=2).
-    # NOTE: a shorter summary covers less of a long source video, so expect
-    # lower coverage scores from evaluate_summary.py at this profile — use a
-    # longer profile when producing evaluation results.
-    2: DurationProfile(
-        target_minutes=2,
-        style=SummaryStyle.HEADLINE,
-        target_words=300,
-        words_per_minute=160,
-        max_tokens_per_source=120,
-        include_examples=False,
-        include_transitions=False,
-        include_sources=False,
-        include_conflicts=False,
-        max_topics=3,
-        compression_target=0.02  # 2% of original
-    ),
     5: DurationProfile(
         target_minutes=5,
         style=SummaryStyle.HEADLINE,
-        target_words=750,
+        target_words=150,
         words_per_minute=160,  # Slightly faster for headlines
         max_tokens_per_source=200,
         include_examples=False,
@@ -118,7 +98,7 @@ DURATION_PROFILES: Dict[int, DurationProfile] = {
     10: DurationProfile(
         target_minutes=10,
         style=SummaryStyle.BRIEF,
-        target_words=1500,
+        target_words=250,
         words_per_minute=150,
         max_tokens_per_source=400,
         include_examples=True,
@@ -131,7 +111,7 @@ DURATION_PROFILES: Dict[int, DurationProfile] = {
     15: DurationProfile(
         target_minutes=15,
         style=SummaryStyle.STANDARD,
-        target_words=2200,
+        target_words=350,
         words_per_minute=145,
         max_tokens_per_source=600,
         include_examples=True,
@@ -144,7 +124,7 @@ DURATION_PROFILES: Dict[int, DurationProfile] = {
     20: DurationProfile(
         target_minutes=20,
         style=SummaryStyle.COMPREHENSIVE,
-        target_words=2800,
+        target_words=450,
         words_per_minute=140,  # Slower for complex content
         max_tokens_per_source=800,
         include_examples=True,
@@ -153,7 +133,35 @@ DURATION_PROFILES: Dict[int, DurationProfile] = {
         include_conflicts=True,
         max_topics=15,
         compression_target=0.20
+    ),
+    # 30 min = "Comprehensive Summary". No separate algorithm: the duration is a
+    # time budget handed to coverage_selector.select_segments(), exactly like
+    # every other mode. Only target_words (the summary text length) and the reel
+    # budget change.
+    30: DurationProfile(
+        target_minutes=30,
+        style=SummaryStyle.COMPREHENSIVE,
+        target_words=600,
+        words_per_minute=140,
+        max_tokens_per_source=1200,
+        include_examples=True,
+        include_transitions=True,
+        include_sources=True,
+        include_conflicts=True,
+        max_topics=20,
+        compression_target=0.30
     )
+}
+
+
+# User-facing names for each mode. These are labels only — every mode runs the
+# same pipeline with a different time budget.
+MODE_LABELS: Dict[int, str] = {
+    5: "Quick Highlights",
+    10: "Key Concepts",
+    15: "Balanced Summary",
+    20: "Detailed Summary",
+    30: "Comprehensive Summary",
 }
 
 
@@ -188,6 +196,7 @@ def get_all_profiles() -> List[Dict[str, Any]]:
         {
             "value": minutes,
             "label": f"{minutes} min",
+            "mode": MODE_LABELS.get(minutes, profile.description),
             "style": profile.style.value,
             "description": profile.description,
             "icon": profile.icon,
@@ -253,6 +262,13 @@ class SummarizationConfig:
     num_beams: int = 4
     length_penalty: float = 2.0
     early_stopping: bool = True
+    # Discourages the model from re-using tokens it has already generated.
+    # 1.0 = no penalty (the old, silently-applied default — see the bug this
+    # fixes in summarization_service._get_pipeline). Raised for styles that
+    # produce longer output / go through more chunking, since paraphrase-level
+    # degeneration ("not to worry... not to fear... not in fear...") showed up
+    # specifically on long COMPREHENSIVE-style runs.
+    repetition_penalty: float = 1.3
 
 
 def get_summarization_config(profile: DurationProfile) -> SummarizationConfig:
@@ -266,25 +282,29 @@ def get_summarization_config(profile: DurationProfile) -> SummarizationConfig:
             max_output_length=300,
             min_output_length=80,
             num_beams=2,  # Faster
-            length_penalty=1.0  # Don't penalize short
+            length_penalty=1.0,  # Don't penalize short
+            repetition_penalty=1.2
         ),
         SummaryStyle.BRIEF: SummarizationConfig(
             max_output_length=600,
             min_output_length=200,
             num_beams=4,
-            length_penalty=1.5
+            length_penalty=1.5,
+            repetition_penalty=1.3
         ),
         SummaryStyle.STANDARD: SummarizationConfig(
             max_output_length=900,
             min_output_length=350,
             num_beams=4,
-            length_penalty=2.0
+            length_penalty=2.0,
+            repetition_penalty=1.3
         ),
         SummaryStyle.COMPREHENSIVE: SummarizationConfig(
             max_output_length=1024,
             min_output_length=450,
             num_beams=4,
-            length_penalty=2.5  # Encourage longer
+            length_penalty=2.5,  # Encourage longer
+            repetition_penalty=1.4
         )
     }
 

@@ -1,0 +1,150 @@
+{
+  "_method": "Hand-authored by reading a condensed timestamped pass over each transcript. Windows are the spans where a concept is SUBSTANTIVELY discussed, at the granularity of the read (90-150s blocks), widened to block edges. tier 'core' = the video is materially incomplete without it; 'secondary' = worth having, not essential. Deliberately NOT derived from TF-IDF/SBERT/the pipeline, so the evaluation is not circular.",
+
+  "7eh4d6sabA0": {
+    "genre": "tutorial", "title": "Python ML tutorial (Mosh)", "duration": 2982,
+    "concepts": [
+      {"name": "Why ML instead of hand-written rules (cat/dog)", "tier": "core", "windows": [[60, 200]]},
+      {"name": "The steps of an ML project", "tier": "core", "windows": [[182, 290]]},
+      {"name": "Choosing an algorithm for the problem", "tier": "secondary", "windows": [[272, 360]]},
+      {"name": "pandas DataFrame", "tier": "core", "windows": [[363, 460]]},
+      {"name": "Installing Anaconda / Jupyter", "tier": "secondary", "windows": [[456, 640]]},
+      {"name": "Getting a dataset from Kaggle", "tier": "secondary", "windows": [[644, 820]]},
+      {"name": "DataFrame methods: shape, describe, values", "tier": "core", "windows": [[827, 1010]]},
+      {"name": "Jupyter keyboard shortcuts", "tier": "secondary", "windows": [[1010, 1320]]},
+      {"name": "The music-store recommendation problem", "tier": "core", "windows": [[1372, 1550]]},
+      {"name": "Splitting data into input X and output y", "tier": "core", "windows": [[1644, 1820]]},
+      {"name": "DecisionTreeClassifier: create and fit a model", "tier": "core", "windows": [[1826, 1950]]},
+      {"name": "Making predictions with model.predict", "tier": "core", "windows": [[1916, 2000]]},
+      {"name": "train_test_split and measuring accuracy", "tier": "core", "windows": [[2007, 2280]]},
+      {"name": "Effect of training-set size on accuracy", "tier": "core", "windows": [[2282, 2370]]},
+      {"name": "Model persistence with joblib", "tier": "core", "windows": [[2373, 2620]]},
+      {"name": "Visualising the decision tree", "tier": "core", "windows": [[2647, 2960]]}
+    ]
+  },
+
+  "nm1TxQj9IsQ": {
+    "genre": "podcast", "title": "Huberman Lab: sleep and wakefulness", "duration": 4920,
+    "concepts": [
+      {"name": "Adenosine builds sleep pressure", "tier": "core", "windows": [[455, 610]]},
+      {"name": "Caffeine blocks adenosine", "tier": "core", "windows": [[605, 755]]},
+      {"name": "Circadian rhythm, the ~24h internal clock", "tier": "core", "windows": [[755, 910]]},
+      {"name": "Cortisol pulse wakes you up", "tier": "core", "windows": [[908, 1060]]},
+      {"name": "Light sets the central clock", "tier": "core", "windows": [[1515, 1670]]},
+      {"name": "Get sunlight as close to waking as possible", "tier": "core", "windows": [[1666, 1830]]},
+      {"name": "Benefits of early light: mood, blood pressure", "tier": "secondary", "windows": [[1819, 1970]]},
+      {"name": "Artificial light when sunlight is unavailable", "tier": "core", "windows": [[2122, 2280]]},
+      {"name": "Melanopsin ganglion cells in the eye", "tier": "core", "windows": [[2425, 2580]]},
+      {"name": "Evening light signals end of day", "tier": "core", "windows": [[2577, 2730]]},
+      {"name": "View sunlight twice a day (morning and evening)", "tier": "core", "windows": [[2729, 2880]]},
+      {"name": "Retinal light sensitivity rises with time awake", "tier": "secondary", "windows": [[2880, 3030]]},
+      {"name": "NSDR / yoga nidra as a napping alternative", "tier": "core", "windows": [[3786, 3940]]},
+      {"name": "Reveri hypnosis scripts", "tier": "secondary", "windows": [[3937, 4090]]},
+      {"name": "Aspirin can shift circadian rhythm", "tier": "secondary", "windows": [[4389, 4540]]},
+      {"name": "Magnesium threonate as a sleep supplement", "tier": "core", "windows": [[4544, 4700]]},
+      {"name": "Theanine, vivid dreams, sleepwalker caution", "tier": "core", "windows": [[4695, 4840]]}
+    ]
+  },
+
+  "E4rTyhYfZhE": {
+    "genre": "interview", "title": "Mel Robbins x Dr Anna Lembke on dopamine", "duration": 4764,
+    "concepts": [
+      {"name": "What dopamine is and why it matters", "tier": "core", "windows": [[302, 460]]},
+      {"name": "The pleasure-pain balance framework", "tier": "core", "windows": [[605, 760]]},
+      {"name": "Craving and the dopamine dip", "tier": "core", "windows": [[756, 910]]},
+      {"name": "Repeated exposure to a drug of choice", "tier": "core", "windows": [[906, 1060]]},
+      {"name": "Behavioural addictions: porn, shopping, attachment", "tier": "core", "windows": [[1208, 1360]]},
+      {"name": "Social media engagement, likes and followers", "tier": "core", "windows": [[1360, 1512]]},
+      {"name": "Novelty and intermittent reinforcement", "tier": "core", "windows": [[1512, 1664]]},
+      {"name": "Link between dopamine and anxiety", "tier": "core", "windows": [[1664, 1815]]},
+      {"name": "Lembke's own romance-novel addiction", "tier": "secondary", "windows": [[2100, 2570]]},
+      {"name": "Dopamine deficit state", "tier": "core", "windows": [[2572, 2720]]},
+      {"name": "Wired for scarcity, now living in abundance", "tier": "core", "windows": [[2722, 2874]]},
+      {"name": "Deliberately pressing on the pain side", "tier": "core", "windows": [[2874, 3025]]},
+      {"name": "Building mental calluses / tolerating discomfort", "tier": "core", "windows": [[3025, 3180]]},
+      {"name": "The dopamine fast experiment", "tier": "core", "windows": [[3326, 3480]]},
+      {"name": "Exercise helps in withdrawal", "tier": "secondary", "windows": [[3478, 3630]]},
+      {"name": "Self-binding: barriers between you and the drug", "tier": "core", "windows": [[3629, 3780]]},
+      {"name": "Decide your list before picking up the device", "tier": "core", "windows": [[3779, 3933]]},
+      {"name": "Morning ritual: no phone first thing", "tier": "core", "windows": [[3933, 4085]]},
+      {"name": "Boredom as a painful but useful state", "tier": "core", "windows": [[4385, 4538]]},
+      {"name": "We are more resilient than we think", "tier": "secondary", "windows": [[4538, 4690]]}
+    ]
+  },
+
+  "kyQ0CRkYhy4": {
+    "genre": "technical lecture", "title": "Intro to neural networks and deep learning", "duration": 3396,
+    "concepts": [
+      {"name": "Tacit knowledge: we cannot describe how we do things", "tier": "core", "windows": [[121, 300]]},
+      {"name": "Building a dataset of features to predict an outcome", "tier": "core", "windows": [[363, 480]]},
+      {"name": "Representations of the underlying object", "tier": "core", "windows": [[483, 610]]},
+      {"name": "Representation learning replaces hand-designed features", "tier": "core", "windows": [[604, 730]]},
+      {"name": "Outputs: probabilities that sum to one vs arbitrary numbers", "tier": "core", "windows": [[1086, 1210]]},
+      {"name": "X and Y can be anything, including multimodal", "tier": "core", "windows": [[1449, 1570]]},
+      {"name": "Binary classification example", "tier": "secondary", "windows": [[1571, 1690]]},
+      {"name": "Logistic regression written as a network", "tier": "core", "windows": [[1693, 1930]]},
+      {"name": "Non-linear activation is what makes depth meaningful", "tier": "core", "windows": [[2059, 2180]]},
+      {"name": "A neuron: linear function followed by a non-linearity", "tier": "core", "windows": [[2302, 2420]]},
+      {"name": "Fully connected / dense layers", "tier": "core", "windows": [[2423, 2540]]},
+      {"name": "Activation function shape", "tier": "secondary", "windows": [[2543, 2660]]},
+      {"name": "ReLU and why it enabled deep learning", "tier": "core", "windows": [[2663, 2780]]},
+      {"name": "Design choices: input and output are fixed, the rest is yours", "tier": "core", "windows": [[2784, 2900]]},
+      {"name": "Loss function and optimisation algorithm", "tier": "core", "windows": [[2905, 3030]]}
+    ]
+  },
+
+  "HVqWN7IVzwU": {
+    "genre": "educational/general", "title": "Shiny object syndrome (9 stated rules)", "duration": 2352,
+    "_note": "The author enumerates his nine points verbatim at 37:50-38:50, so this gold set is author-declared, not my interpretation.",
+    "concepts": [
+      {"name": "1. Invert your philosophy", "tier": "core", "windows": [[242, 500]]},
+      {"name": "Businesses that thrive without advertising (B&H)", "tier": "secondary", "windows": [[365, 610]]},
+      {"name": "2. Finger off the trigger (impulsiveness)", "tier": "core", "windows": [[609, 800]]},
+      {"name": "3. Slow down: 24-48 hours before acting", "tier": "core", "windows": [[850, 1090]]},
+      {"name": "4. Let the universe scream at you", "tier": "core", "windows": [[1096, 1290]]},
+      {"name": "5. Distance from hype / echo chambers", "tier": "core", "windows": [[1337, 1520]]},
+      {"name": "Outsiders make the best investors", "tier": "secondary", "windows": [[1459, 1600]]},
+      {"name": "6. Regain your sanity (vacation, objectivity)", "tier": "core", "windows": [[1584, 1830]]},
+      {"name": "7. Cross-pollinate sources for creativity", "tier": "core", "windows": [[1949, 2070]]},
+      {"name": "8. Out of sight, out of mind", "tier": "core", "windows": [[1949, 2140]]},
+      {"name": "9. Focus on long-term value, not short-term hype", "tier": "core", "windows": [[2192, 2330]]}
+    ]
+  },
+
+  "8wmn7k1TTcI": {
+    "genre": "tutorial", "title": "DSA series: arrays", "duration": 3240,
+    "concepts": [
+      {"name": "What an array is and why you need one", "tier": "core", "windows": [[151, 310]]},
+      {"name": "Arrays are contiguous / linear structures", "tier": "core", "windows": [[303, 460]]},
+      {"name": "Array size", "tier": "secondary", "windows": [[453, 610]]},
+      {"name": "Zero-based indexing", "tier": "core", "windows": [[605, 760]]},
+      {"name": "Traversing with a loop from 0 to size-1", "tier": "core", "windows": [[756, 910]]},
+      {"name": "INT_MAX as the initial value when finding a minimum", "tier": "core", "windows": [[1058, 1215]]},
+      {"name": "INT_MIN when finding a maximum", "tier": "core", "windows": [[1360, 1520]]},
+      {"name": "Arrays are non-primitive; pass by reference", "tier": "core", "windows": [[1514, 1670]]},
+      {"name": "The array name is implicitly a pointer", "tier": "core", "windows": [[1665, 1820]]},
+      {"name": "Linear search algorithm", "tier": "core", "windows": [[1817, 2120]]},
+      {"name": "Passing an array and its size to a function", "tier": "secondary", "windows": [[2122, 2270]]},
+      {"name": "Reversing an array with start and end pointers", "tier": "core", "windows": [[2272, 2730]]},
+      {"name": "Even vs odd sized arrays when reversing", "tier": "core", "windows": [[2575, 2730]]},
+      {"name": "Loop while start < end", "tier": "core", "windows": [[2875, 3030]]},
+      {"name": "Nested loops and why they are not optimal", "tier": "secondary", "windows": [[3179, 3240]]}
+    ]
+  },
+
+  "jGwO_UgTS7I": {
+    "genre": "technical lecture", "title": "Stanford CS229 lecture 1", "duration": 4519,
+    "_note": "This video's first ~35 minutes are course administration; the gold set reflects that only the later part carries subject matter.",
+    "concepts": [
+      {"name": "What machine learning is / AI is the new electricity", "tier": "core", "windows": [[1860, 2100]]},
+      {"name": "Supervised learning definition", "tier": "core", "windows": [[2250, 2450]]},
+      {"name": "Regression: predicting a continuous value (house prices)", "tier": "core", "windows": [[2650, 2760]]},
+      {"name": "Classification: discrete output (benign vs malignant tumour)", "tier": "core", "windows": [[2640, 2900]]},
+      {"name": "Features of a tumour: clump thickness, cell size", "tier": "secondary", "windows": [[2700, 2820]]},
+      {"name": "Learning theory / ML strategy", "tier": "core", "windows": [[3480, 3560]]},
+      {"name": "Unsupervised learning and clustering (Google News)", "tier": "core", "windows": [[3930, 4090]]},
+      {"name": "Reinforcement learning: the helicopter, training a dog", "tier": "core", "windows": [[4320, 4520]]},
+      {"name": "Two-lane vs four-lane road models and an arbitrator", "tier": "secondary", "windows": [[3360, 3430]]}
+    ]
+  }
+}

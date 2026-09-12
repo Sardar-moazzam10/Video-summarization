@@ -5,9 +5,11 @@ import { API_BASE_URL } from './config/api.js';
  * @param {string} videoId - The YouTube video ID
  * @returns {Array} - Array of transcript entries or empty array if unavailable
  */
-export const fetchTranscript = async (videoId) => {
+export const fetchTranscript = async (videoId, options = {}) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/transcript?videoId=${videoId}`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/transcript?videoId=${videoId}`, {
+      signal: options.signal
+    });
     if (!response.ok) {
       throw new Error(`Error: ${response.status}`);
     }
@@ -39,29 +41,27 @@ export const searchKeywordInTranscript = (transcript, keyword) => {
   if (!transcript || transcript.length === 0) return [];
 
   const lowerKeyword = keyword.toLowerCase();
+  const matches = [];
 
-  return transcript
-    .filter((entry) => entry.text.toLowerCase().includes(lowerKeyword))
-    .map((entry) => ({
-      text: entry.text,
-      timestamp: entry.start,
-    }));
-};
+  for (let i = 0; i < transcript.length; i++) {
+    const entry = transcript[i];
+    if (entry.text.toLowerCase().includes(lowerKeyword)) {
+      // Build context from previous, current, and next sentences
+      const prev = i > 0 ? transcript[i - 1].text : '';
+      const next = i < transcript.length - 1 ? transcript[i + 1].text : '';
+      
+      const textWithContext = [prev, entry.text, next]
+        .filter(t => t.trim())
+        .join(' ')
+        .trim();
 
-// ✅ Example Usage for Testing
-(async () => {
-  const videoId = 'UF8uR6Z6KLc'; // Example video
-  console.log(`📺 Fetching transcript for: ${videoId}`);
-
-  const transcript = await fetchTranscript(videoId);
-
-  if (transcript.length > 0) {
-    console.log('✅ Transcript fetched successfully:', transcript);
-
-    const keyword = 'habit';
-    const matches = searchKeywordInTranscript(transcript, keyword);
-    console.log(`🔍 Matches for "${keyword}":`, matches);
-  } else {
-    console.log('❌ No transcript available for this video.');
+      matches.push({
+        text: entry.text,
+        contextText: textWithContext,
+        timestamp: entry.start,
+      });
+    }
   }
-})();
+
+  return matches;
+};

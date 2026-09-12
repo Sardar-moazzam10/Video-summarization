@@ -6,17 +6,18 @@ const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 const DEFAULT_OPTIONS = {
   appendPodcast: false, // when true, " podcast" is appended to the query
   duration: 'any',      // YouTube videoDuration: 'any' | 'short' | 'medium' | 'long'
+  maxResults: 20,
 };
 
 /**
  * Fetch videos for a search query.
  *
  * @param {string} searchQuery      Raw user query — sent verbatim unless appendPodcast is set.
- * @param {object} [options]        { appendPodcast, duration }
+ * @param {object} [options]        { appendPodcast, duration, maxResults }
  * @returns {Promise<Array>}        YouTube search items (empty array on failure).
  */
 export const fetchVideos = async (searchQuery, options = {}) => {
-  const { appendPodcast, duration } = { ...DEFAULT_OPTIONS, ...options };
+  const { appendPodcast, duration, maxResults } = { ...DEFAULT_OPTIONS, ...options };
 
   try {
     const q = appendPodcast ? `${searchQuery} podcast` : searchQuery;
@@ -27,7 +28,7 @@ export const fetchVideos = async (searchQuery, options = {}) => {
         q,
         type: 'video',
         videoDuration: duration,
-        maxResults: 20,
+        maxResults,
         key: API_KEY,
       },
     });

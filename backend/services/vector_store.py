@@ -221,13 +221,23 @@ class VectorStore:
         print(f"[VectorStore] Indexed {len(texts)} segments with timestamps from {video_id}")
         return len(texts)
 
-    def search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        video_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Semantic search across all indexed transcripts.
+        Semantic search across indexed transcripts.
 
         Args:
             query: Natural language search query
             top_k: Number of results to return
+            video_ids: If given, restrict results to these videos. Filtering
+                happens BEFORE truncating to top_k (not after) — otherwise a
+                video's relevant segments can lose out to globally-closer
+                matches from other indexed videos and never make the cut,
+                even though the answer is right there in that video's text.
 
         Returns:
             List of results with text, video_id, video_title, score
@@ -242,16 +252,20 @@ class VectorStore:
         query_emb = np.array(query_emb, dtype="float32")
         faiss.normalize_L2(query_emb)
 
-        # Search
-        k = min(top_k, self.index.ntotal)
+        # When scoping to specific videos, search the whole (flat) index so
+        # filtering doesn't starve the requested videos of candidates.
+        k = self.index.ntotal if video_ids else min(top_k, self.index.ntotal)
         scores, indices = self.index.search(query_emb, k)
 
+        video_id_set = set(video_ids) if video_ids else None
         results = []
         seen_texts = set()  # Deduplicate similar results
         for score, idx in zip(scores[0], indices[0]):
             if idx < 0 or idx >= len(self.metadata):
                 continue
             meta = self.metadata[idx]
+            if video_id_set is not None and meta["video_id"] not in video_id_set:
+                continue
             # Skip near-duplicate texts
             text_key = meta["text"][:80].lower()
             if text_key in seen_texts:
@@ -264,6 +278,9 @@ class VectorStore:
                 "video_title": meta["video_title"],
                 "score": round(float(score), 4),
             })
+
+            if len(results) >= top_k:
+                break
 
         return results
 

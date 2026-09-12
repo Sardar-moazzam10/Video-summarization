@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { API_BASE_URL } from './config/api.js';
+import { extractErrorMessage } from './utils/apiError.js';
 
 /**
  * Quality scorecard panel — shows TWO separate scores for a completed job:
@@ -77,7 +78,7 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
     const res = await fetch(url);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || `Evaluation failed (${res.status})`);
+      throw new Error(extractErrorMessage(body, `Evaluation failed (${res.status})`));
     }
     return res.json();
   }, [mergeId]);
@@ -127,6 +128,23 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
     );
   }
 
+  // Backend returned { unavailable: true } — no summary was generated so scoring
+  // is impossible.  Render a controlled notice instead of crashing on missing data.
+  if (data?.unavailable) {
+    return (
+      <motion.div style={panelStyles.card} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }}>
+        <div style={panelStyles.header}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span style={panelStyles.title}>Quality Check Unavailable</span>
+        </div>
+        <p style={{ ...panelStyles.muted, marginTop: 6 }}>
+          {data.reason || 'Quality evaluation unavailable — no written summary was generated for this language.'}
+        </p>
+      </motion.div>
+    );
+  }
+
+
   const a = data.check_a || {};
   const b = data.check_b || {};
   const aLlm = a.llm_judge || {};
@@ -175,7 +193,8 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
         </div>
       )}
 
-      {!data.llm_used && (
+      {/* Temporarily disabled LLM judge button for future use */}
+      {false && !data.llm_used && (
         <button
           style={{ ...panelStyles.button, opacity: judging ? 0.6 : 1, cursor: judging ? 'wait' : 'pointer' }}
           onClick={runDetailed}

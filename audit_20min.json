@@ -1,0 +1,337 @@
+{
+  "target_minutes": 20,
+  "job_id": "audit_20min_1788812140",
+  "video_id": "_QXjl-4IuzY",
+  "timings": {
+    "download_transcript": 0.01,
+    "initial_fusion": 37.33,
+    "video_download": 14.37,
+    "semantic_segmentation": 0.0,
+    "concept_extraction": 0.0,
+    "selection": 0.16,
+    "ffmpeg": 155.92,
+    "audio_extraction": 39.58,
+    "second_fusion": 19.19,
+    "bart": 187.91,
+    "T0_to_T1_video_ready": 210.7,
+    "T0_to_T2_bart_start": 269.6,
+    "T0_to_T3_summary": 457.5,
+    "T0_to_T4_completed": 457.5
+  },
+  "duration": {
+    "requested_seconds": 1200,
+    "selected_seconds": 1098.4,
+    "pct_of_target": 91.5,
+    "clip_count": 39,
+    "early_stop": true,
+    "shortfall_seconds": 101.6,
+    "shortfall_pct": 8.5,
+    "last_pick_gain": -0.0676,
+    "stop_reason": "Optimizer: no remaining segment adds positive value (gain=-0.0676 \u2264 0) after fill=39 picks. This is INTENTIONAL behavior (coverage_selector.py line 875-880): redundant segments are rejected once budget fill \u2265 SELECT_MIN_BUDGET_FILL.",
+    "final_video_seconds": 1099.0
+  },
+  "quality_stages": {
+    "full_transcript_words": 4972,
+    "full_transcript_segments": 631,
+    "source_duration_s": 1486.1,
+    "initial_fusion_words": 821,
+    "initial_fusion_topics": [
+      "It starts to take effect....",
+      "Office. It is good. Keep...",
+      "Had written. This is not...",
+      "Hopefully I will complete it...",
+      "Yes sir. sir maintain that...",
+      "Natural love for new things....",
+      "Part Two the Trap. This...",
+      "I have been sharing my...",
+      "It's here friend let's invest...",
+      "tool to learn a musical..."
+    ],
+    "selected_transcript_words": 3564,
+    "selected_transcript_snippet": "Which book are you reading? Sir confidence. Okay, when did you take it? Sir, I took it yesterday and I know I have three Also completed the chapters. Okay, that's great. Happy reading. Thank you sir. What's the matter Utkarsh ji? Late again today. Hey sir no, I have joined the gym from here So now I will go to workout in the morning only. If I have to do it now, I will come late. Office. It is good. Keep it up. Wow where did this plant come from? Sir, I have installed it. thought about office The environment will become a little greener. Energy She will also be a little positive and will do my",
+    "fused_narrative_words": 1280,
+    "fused_narrative_snippet": "Instinct Becomes a Neural Hijack [Music] Is done. According to the theories of science Our mind always goes to the old place Exhausted understands and new shiny paths Shows to be beneficial. you here Not exploring. your mind you Manipulating so that he can avoid hard work Can move towards novelty. now this To understand manipulation you don't have to The cycle must be decoded where your Your brain and your emotions together Activate SOS.. So if you also like this pattern What needs to be done if it has to be changed? a lot It is simple. Psychology of that 10% people Deciphering Their Brain's C",
+    "fused_narrative_topics": [
+      "Instinct Becomes a Neural Hijack...",
+      "Which book are you reading?...",
+      "Target: Write idea here or...",
+      "It's like a honeymoon face....",
+      "it. I meet them too...",
+      "will be disciplined. Kept practicing...",
+      "be my decision. after that...",
+      "Second Strategy Burn Your Ships...",
+      "the solution or not? Friend,..."
+    ],
+    "fusion_artifact_count": 4,
+    "bart_output_words": 319,
+    "bart_output_snippet": "Utkarsh ji shares five brain cheat codes to help you understand your inner workings . The Emotional Cycle of Change must be decoded where your Your brain and your emotions together activate SOS. Part Two the Trap is as common as it sounds isn't it? This sounds shiny Object syndrome, which is equally dangerous in reality and then No matter how creative a person is, Be talented, sos his life a lot Can impact badly of this journey. Level one is for new work The first day when excitement was sky high . Level 1 is to convince your brain that you Can complete the work. When this identity is formed t",
+    "bart_full_output": "Utkarsh ji shares five brain cheat codes to help you understand your inner workings . The Emotional Cycle of Change must be decoded where your Your brain and your emotions together activate SOS. Part Two the Trap is as common as it sounds isn't it? This sounds shiny Object syndrome, which is equally dangerous in reality and then No matter how creative a person is, Be talented, sos his life a lot Can impact badly of this journey. Level one is for new work The first day when excitement was sky high . Level 1 is to convince your brain that you Can complete the work. When this identity is formed then it becomes easier for you to handle goals Is you a permanent You a You A Gave up coding code. It gets upgraded. And one last big loss to you I am going to tell you about a phase in my life. But those cheat quotes I fixed it with you which I will give you an insight into what I said earlier today\u2019s \u2018cheeky\u201d \u2013 Sachin Sir . He says he also faces. Whatever ambition is there, it shrinks. Sometimes we say excel us. We have to reach the top in this field.  The Finisher Muscle That Shifts Your Identity is the fifth cheat code . Burn Your Ships and give your brain believe that to give. Burn the Ships Method . Don't set a very big goal. Start small. Don't make the entry point too small. Burn your ships. Give your brain the right way to give yourself. Burn yourself. Be disciplined. Burn any of your boats. Give yourself the right thing. Burn it all. Burn everything. Burn anything. Burn nothing. Burn something. Burn a lot. Burn things. Burn them out. Burn what you want. Burn away . Burn the ships. Burn whatever you want to burn. There are only two options. Win or die.",
+    "summarization_decision": {
+      "action": "compress",
+      "reason": "1280 words is above the 450-word target (+115% tolerance)",
+      "target_words": 450,
+      "coherence": {
+        "word_count": 1280,
+        "sentence_count": 143,
+        "artifact_density": 0.0559,
+        "fragment_rate": 0.2657,
+        "self_similarity_rate": 0.0,
+        "source_artifacts": 0,
+        "mid_sentence_connectives": 2,
+        "is_coherent": false,
+        "reasons": [
+          "27% of sentences are fragments (> 20%)"
+        ]
+      }
+    },
+    "tldr": "Utkarsh ji shares five brain cheat codes to help you understand your inner workings . The Emotional Cycle of Change must be decoded where your Your brain and your emotions together activate SOS.",
+    "tldr_words": 33,
+    "takeaways": [
+      "Utkarsh ji shares five brain cheat codes to help you understand your inner workings .",
+      "The Emotional Cycle of Change must be decoded where your Your brain and your emotions together activate SOS.",
+      "This sounds shiny Object syndrome, which is equally dangerous in reality and then No matter how creative a person is, Be talented, sos his life a lot Can impact badly of this journey.",
+      "When this identity is formed then it becomes easier for you to handle goals Is you a permanent You a You A Gave up coding code.",
+      "But those cheat quotes I fixed it with you which I will give you an insight into what I said earlier today\u2019s \u2018cheeky\u201d \u2013 Sachin Sir ."
+    ],
+    "chapters": [
+      {
+        "title": "Introduction & Overview",
+        "words": 93
+      },
+      {
+        "title": "Core Discussion",
+        "words": 91
+      },
+      {
+        "title": "Conclusions & Key Points",
+        "words": 61
+      }
+    ],
+    "quality_audit": {
+      "raw_transcript": {
+        "stage": "raw_transcript",
+        "word_count": 4972,
+        "issues": [
+          "repeated bigrams \u00d73: 'Sir, I'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "initial_fusion_narrative": {
+        "stage": "initial_fusion_narrative",
+        "word_count": 821,
+        "issues": [
+          "13 fusion connective(s): ['additionally,', 'furthermore,', 'moreover,', 'in related terms,', 'building on this,']",
+          "repeated bigrams \u00d73: 'It was'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "selected_transcript": {
+        "stage": "selected_transcript",
+        "word_count": 3564,
+        "issues": [
+          "repeated bigrams \u00d73: 'Sir, I'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "fused_narrative": {
+        "stage": "fused_narrative",
+        "word_count": 1280,
+        "issues": [
+          "5 fusion connective(s): ['additionally,', 'furthermore,', 'moreover,', 'in related terms,', 'building on this,']",
+          "repeated bigrams \u00d74: 'to the'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "bart_output": {
+        "stage": "bart_output",
+        "word_count": 319,
+        "issues": [
+          "repeated bigrams \u00d73: 'your brain'"
+        ]
+      },
+      "tldr": {
+        "stage": "tldr",
+        "word_count": 33,
+        "issues": []
+      }
+    }
+  },
+  "metrics": {
+    "topics_found": 9,
+    "topics_list": [
+      "Instinct Becomes a Neural Hijack...",
+      "Which book are you reading?...",
+      "Target: Write idea here or...",
+      "It's like a honeymoon face....",
+      "it. I meet them too...",
+      "will be disciplined. Kept practicing...",
+      "be my decision. after that...",
+      "Second Strategy Burn Your Ships...",
+      "the solution or not? Friend,..."
+    ],
+    "total_source_words": 4972,
+    "selected_text_words": 3564,
+    "fused_narrative_words": 1280,
+    "output_words": 319,
+    "target_words": 450,
+    "compression_pct_as_coded": 8.95,
+    "compression_pct_vs_full": 6.42,
+    "compression_formula_coded": "output_words / selected_text_words = 319/3564 = 9.0%",
+    "compression_formula_vs_full": "output_words / full_transcript_words = 319/4972 = 6.4%",
+    "summary_quality_pct": 70.0,
+    "video_quality_pct": 100.0,
+    "quality_detail_check_a": {
+      "name": "Summary fidelity (summary vs original video)",
+      "score": 70.0,
+      "verdict": "FAIR \u2014 captures the gist but misses/dilutes some key points",
+      "keyword_coverage": {
+        "score": 40.0,
+        "hits": [
+          "work",
+          "new",
+          "brain",
+          "level",
+          "sir",
+          "don",
+          "start",
+          "thing",
+          "sos",
+          "going"
+        ],
+        "misses": [
+          "music",
+          "people",
+          "did",
+          "just",
+          "mind",
+          "like",
+          "let",
+          "time",
+          "happen",
+          "problem",
+          "know",
+          "stage",
+          "pattern",
+          "write",
+          "yes"
+        ],
+        "total_keywords": 25,
+        "top_keywords": [
+          "music",
+          "work",
+          "new",
+          "people",
+          "did",
+          "brain",
+          "level",
+          "just",
+          "sir",
+          "mind",
+          "don",
+          "like",
+          "start",
+          "thing",
+          "let",
+          "time",
+          "happen",
+          "sos",
+          "problem",
+          "know",
+          "stage",
+          "going",
+          "pattern",
+          "write",
+          "yes"
+        ]
+      },
+      "semantic_coverage": {
+        "score": 100.0,
+        "covered": 63,
+        "total": 63,
+        "unit": "topic chunks",
+        "threshold": 0.45,
+        "least_covered": []
+      },
+      "llm_judge": {
+        "score": null,
+        "error": "disabled (--no-llm)"
+      }
+    },
+    "quality_detail_check_b": {
+      "name": "Video\u2194Summary match (clips vs summary)",
+      "score": 100.0,
+      "verdict": "GOOD \u2014 the video closely represents its summary (as expected)",
+      "keyword_coverage": {
+        "score": 100.0,
+        "hits": [
+          "burn",
+          "brain",
+          "want",
+          "options",
+          "right",
+          "ships",
+          "don",
+          "boats",
+          "big",
+          "cheat",
+          "thing",
+          "ambition",
+          "excel",
+          "faces",
+          "field",
+          "reach",
+          "say",
+          "shrinks",
+          "level",
+          "work"
+        ],
+        "misses": [],
+        "total_keywords": 20,
+        "top_keywords": [
+          "burn",
+          "brain",
+          "want",
+          "options",
+          "right",
+          "ships",
+          "don",
+          "boats",
+          "big",
+          "cheat",
+          "thing",
+          "ambition",
+          "excel",
+          "faces",
+          "field",
+          "reach",
+          "say",
+          "shrinks",
+          "level",
+          "work"
+        ]
+      },
+      "semantic_coverage": {
+        "score": 100.0,
+        "covered": 24,
+        "total": 24,
+        "unit": "summary sentences",
+        "threshold": 0.45,
+        "least_covered": []
+      },
+      "llm_judge": {
+        "score": null,
+        "error": "disabled (--no-llm)"
+      }
+    }
+  },
+  "grounding": {
+    "bart_grounded_in_narrative": true,
+    "bart_grounded_in_selected": true,
+    "bart_grounded_in_full": true,
+    "narrative_reasons": [],
+    "selected_reasons": [],
+    "full_reasons": [],
+    "potential_leak": false
+  },
+  "errors": []
+}

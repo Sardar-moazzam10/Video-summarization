@@ -69,12 +69,13 @@ async def chat_with_video(request: ChatRequest):
             question=request.question,
         )
 
-    # Step 1: Retrieve relevant segments from FAISS
-    results = store.search(request.question, top_k=request.top_k)
-
-    # Filter by video_ids if specified
-    if request.video_ids:
-        results = [r for r in results if r["video_id"] in request.video_ids]
+    # Step 1: Retrieve relevant segments from FAISS, scoped to the requested
+    # videos (filtering happens inside search(), before top_k truncation).
+    results = store.search(
+        request.question,
+        top_k=request.top_k,
+        video_ids=request.video_ids,
+    )
 
     if not results:
         return ChatResponse(

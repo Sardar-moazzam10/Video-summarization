@@ -19,7 +19,9 @@ Setup (automatic on first use):
 
 from __future__ import annotations
 
+import concurrent.futures
 import re
+import time
 from typing import Optional, Tuple
 
 # =====================================================
@@ -211,15 +213,20 @@ def translate_segments(texts: list[str], src_lang: str) -> list[str]:
         return list(texts)
 
     # Fast path first. Google batches ~64 segments per request and finishes a
-    # full transcript in about 30 seconds; NLLB is a local 600M model that takes
-    # minutes on CPU for the same work. NLLB stays as the offline fallback for
-    # when there is no network or Google rate-limits us.
+    # full transcript in about 30 seconds when responsive; NLLB is a local
+    # 600M model that is far slower on CPU for the same work — see the size
+    # gate below. NLLB stays as the offline fallback for when there is no
+    # network or Google rate-limits us, but only for transcripts short enough
+    # for it to plausibly finish in a bounded time.
     google = _translate_segments_google(texts, src_lang)
     if google is not None and len(google) == len(texts):
         return google
 
+    from ..core.config import get_settings
+    max_segments = get_settings().NLLB_MAX_SEGMENTS_FOR_FALLBACK
+
     flores_code = ISO_TO_FLORES.get(src_lang.lower())
-    if flores_code:
+    if flores_code and len(texts) <= max_segments:
         pair = _load_nllb()
         if pair:
             try:
@@ -227,6 +234,16 @@ def translate_segments(texts: list[str], src_lang: str) -> list[str]:
                 return _translate_segments_nllb(texts, flores_code, *pair)
             except Exception as e:
                 print(f"[Translation] NLLB segment error: {e}")
+    elif flores_code:
+        # Measured ~2.3s/segment even batched (see NLLB_MAX_SEGMENTS_FOR_
+        # FALLBACK) — for this many segments NLLB would itself become a
+        # multi-minute stall, the exact failure mode this gate exists to
+        # avoid. The caller (transcript_service) decides what to do next —
+        # keep the original text, or re-transcribe via Whisper if the video
+        # is short enough for that to be bounded too.
+        print(f"[Translation] Skipping NLLB fallback — {len(texts)} segments "
+              f"exceeds NLLB_MAX_SEGMENTS_FOR_FALLBACK ({max_segments}), would "
+              f"take minutes on CPU")
 
     return list(texts)
 
@@ -240,7 +257,8 @@ _GOOGLE_PAUSE_SECONDS = 1.0   # keeps a 10-request transcript under the rate lim
 
 def _translate_segments_google(texts: list[str], src_lang: str) -> Optional[list[str]]:
     """
-    Batched Google translation — the fast path, ~30s for a 630-segment transcript.
+    Batched Google translation — the fast path, ~30s for a 630-segment transcript
+    when Google is responsive.
 
     Segments are joined with newlines, translated in one request per chunk, and
     split back apart. Google does preserve the newlines, but that is observed
@@ -250,10 +268,39 @@ def _translate_segments_google(texts: list[str], src_lang: str) -> Optional[list
     shift every later segment's text onto the wrong timestamp, which is the exact
     corruption this module used to ship.
 
-    Returns None when more than half the chunks fail, so the caller can fall back
-    to NLLB (offline) or Whisper rather than accept a half-translated transcript.
+    Bounded behaviour (this is the free scraping endpoint, not an API — it rate
+    limits and occasionally stops responding entirely):
+      - Every request runs through _call_with_timeout(), since deep-translator
+        issues a bare requests.get() with no timeout and would otherwise hang
+        the calling thread indefinitely on a stalled connection.
+      - A chunk request gets ONE retry. If both attempts raise (as opposed to a
+        line-count mismatch, which is a benign case worth redoing per-segment),
+        the whole chunk is marked untranslated and the loop moves on — a raised
+        exception from the free endpoint usually means it just started
+        rate-limiting/blocking us, so hundreds of per-segment retries for that
+        same chunk would almost certainly fail identically while burning
+        minutes of wall-clock time. This is what previously turned a few failed
+        chunks into a multi-minute stall (see TRANSLATION_STAGE_TIMEOUT_SECONDS
+        below for the hard ceiling on top of this).
+      - The whole stage is bounded by TRANSLATION_STAGE_TIMEOUT_SECONDS. Once
+        exceeded, any not-yet-processed segments are left untranslated rather
+        than attempted.
+      - Circuit breaker: TRANSLATION_CIRCUIT_BREAKER_FAILURES consecutive
+        whole-chunk failures (not mismatches — an actual raised exception on
+        both attempts) means Google itself is blocking/down for this run, and
+        every later chunk will fail the same way. Rather than wait out the
+        full stage budget one doomed chunk at a time, give up immediately.
+
+    Returns None when more than half the segments end up untranslated, so the
+    caller can fall back to NLLB (offline) or Whisper rather than accept a
+    half-translated transcript.
     """
-    import time
+    from ..core.config import get_settings
+
+    settings = get_settings()
+    request_timeout = settings.TRANSLATION_REQUEST_TIMEOUT_SECONDS
+    stage_timeout = settings.TRANSLATION_STAGE_TIMEOUT_SECONDS
+    circuit_breaker_limit = settings.TRANSLATION_CIRCUIT_BREAKER_FAILURES
 
     try:
         from deep_translator import GoogleTranslator
@@ -268,58 +315,126 @@ def _translate_segments_google(texts: list[str], src_lang: str) -> Optional[list
         print(f"[Translation] GoogleTranslator init failed for '{source}': {e}")
         return None
 
+    # Single worker: calls are already sequential (rate-limit pacing), and
+    # reusing one pool means a request that truly hangs forever just makes
+    # every later .result(timeout=...) fail fast instead of actually
+    # blocking — we still get a bounded answer every time.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    def _call_with_timeout(text: str) -> str:
+        future = pool.submit(translator.translate, text)
+        return future.result(timeout=request_timeout)
+
     result: list[str] = []
     chunks = 0
     failed = 0
     i = 0
+    stage_start = time.monotonic()
+    budget_exceeded = False
+    circuit_tripped = False
+    consecutive_hard_failures = 0
 
-    while i < len(texts):
-        # Chunk on segment boundaries, never mid-segment: a split inside a
-        # segment cannot be reassembled into the right line afterwards.
-        j, size = i, 0
-        while j < len(texts) and size + len(texts[j]) + 1 <= _GOOGLE_MAX_CHARS:
-            size += len(texts[j]) + 1
-            j += 1
-        j = max(j, i + 1)          # always consume at least one segment
-        batch = texts[i:j]
-        chunks += 1
+    try:
+        while i < len(texts):
+            if time.monotonic() - stage_start > stage_timeout:
+                budget_exceeded = True
+                break
+            if consecutive_hard_failures >= circuit_breaker_limit:
+                circuit_tripped = True
+                break
 
-        translated_batch = None
-        try:
-            out = translator.translate("\n".join(batch))
-            lines = (out or "").split("\n")
-            if len(lines) == len(batch):
-                translated_batch = lines
-            else:
+            # Chunk on segment boundaries, never mid-segment: a split inside a
+            # segment cannot be reassembled into the right line afterwards.
+            j, size = i, 0
+            while j < len(texts) and size + len(texts[j]) + 1 <= _GOOGLE_MAX_CHARS:
+                size += len(texts[j]) + 1
+                j += 1
+            j = max(j, i + 1)          # always consume at least one segment
+            batch = texts[i:j]
+            chunks += 1
+
+            translated_batch = None
+            mismatch = False
+            lines: list[str] = []
+            last_error = None
+
+            for attempt in range(2):   # one try + one retry
+                try:
+                    out = _call_with_timeout("\n".join(batch))
+                    lines = (out or "").split("\n")
+                    if len(lines) == len(batch):
+                        translated_batch = lines
+                    else:
+                        mismatch = True
+                    break               # got a response either way — stop retrying
+                except concurrent.futures.TimeoutError:
+                    last_error = f"timed out after {request_timeout}s"
+                except Exception as e:
+                    last_error = type(e).__name__
+
+            if translated_batch is None and mismatch:
                 print(f"[Translation] chunk {chunks}: sent {len(batch)} lines, "
                       f"got {len(lines)} — redoing segment by segment")
-        except Exception as e:
-            print(f"[Translation] chunk {chunks} failed ({type(e).__name__}) — "
-                  f"redoing segment by segment")
+                consecutive_hard_failures = 0  # Google responded — not a block
+                per_segment = []
+                for t in batch:
+                    if not t.strip():
+                        per_segment.append(t)
+                        continue
+                    if time.monotonic() - stage_start > stage_timeout:
+                        per_segment.append(t)  # budget ran out mid-chunk
+                        failed += 1
+                        continue
+                    try:
+                        per_segment.append(_call_with_timeout(t) or t)
+                    except Exception:
+                        per_segment.append(t)  # untranslated, but in the right slot
+                        failed += 1
+                translated_batch = per_segment
 
-        if translated_batch is None:
-            per_segment = []
-            for t in batch:
-                if not t.strip():
-                    per_segment.append(t)
-                    continue
-                try:
-                    per_segment.append(translator.translate(t) or t)
-                except Exception:
-                    per_segment.append(t)     # untranslated, but in the right slot
-                    failed += 1
-            translated_batch = per_segment
+            elif translated_batch is None:
+                # Both attempts raised — a systemic issue (rate limit, network),
+                # not a one-off. Per-segment retries would hit the same wall at
+                # ~N times the cost, so mark the chunk failed and move on.
+                print(f"[Translation] chunk {chunks} failed twice ({last_error}) — "
+                      f"marking {len(batch)} segment(s) untranslated")
+                translated_batch = list(batch)
+                failed += len(batch)
+                consecutive_hard_failures += 1
 
-        result.extend(translated_batch)
-        i = j
-        if i < len(texts):
-            time.sleep(_GOOGLE_PAUSE_SECONDS)
+            else:
+                consecutive_hard_failures = 0  # clean success
+
+            result.extend(translated_batch)
+            i = j
+            if i < len(texts):
+                time.sleep(_GOOGLE_PAUSE_SECONDS)
+
+        if budget_exceeded:
+            remaining = texts[i:]
+            print(f"[Translation] stage budget ({stage_timeout}s) exceeded — "
+                  f"leaving {len(remaining)} remaining segment(s) untranslated")
+            result.extend(remaining)
+            failed += len(remaining)
+        elif circuit_tripped:
+            remaining = texts[i:]
+            print(f"[Translation] {circuit_breaker_limit} consecutive chunk failures — "
+                  f"Google is blocking/down, giving up early instead of grinding "
+                  f"through the remaining {len(remaining)} segment(s)")
+            result.extend(remaining)
+            failed += len(remaining)
+    finally:
+        # wait=False: a genuinely hung request can't be cancelled once its
+        # socket call is running, so don't block shutdown on it.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     if failed > len(texts) // 2:
         print(f"[Translation] Google path failed for {failed}/{len(texts)} segments — giving up")
         return None
 
-    print(f"[Translation] Google translated {len(result)} segments in {chunks} requests")
+    elapsed = time.monotonic() - stage_start
+    print(f"[Translation] Google translated {len(result)} segments in {chunks} "
+          f"requests, {failed} failed, {elapsed:.1f}s")
     return result
 
 

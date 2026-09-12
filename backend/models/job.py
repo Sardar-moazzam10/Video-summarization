@@ -25,6 +25,13 @@ class JobStatus(str, Enum):
     ENRICHING = "enriching"
     GENERATING_VOICE = "generating_voice"
     GENERATING_VIDEO = "generating_video"
+    # Video-first checkpoint: the highlight reel has been generated and
+    # persisted (video_path set), and the job is now continuing on to BART
+    # summarization/enrichment in the background. Distinct from
+    # PARTIAL_SUCCESS, which is a terminal state — VIDEO_READY is not
+    # terminal, the job always moves on from here to COMPLETED or
+    # PARTIAL_SUCCESS.
+    VIDEO_READY = "video_ready"
     COMPLETED = "completed"
     PARTIAL_SUCCESS = "partial_success"
     ERROR = "error"
@@ -102,16 +109,28 @@ class RichOutput(BaseModel):
     style_applied: str = "educational"
 
 
+class ConceptInfo(BaseModel):
+    """An important concept extracted from the source video."""
+    concept: str
+    importance: float = 0.0
+    reason: str = ""
+    evidence: List[str] = []
+    timestamps: List[List[float]] = []
+    support: int = 1
+    aliases: List[str] = []
+    source: str = "llm"
+
+
 class MergeJobCreate(BaseModel):
     """Request to create a new merge job"""
     video_ids: List[str] = Field(..., min_length=1, max_length=10)
-    # ge=2 allows the fast 2-minute "Quick" demo profile (was ge=5).
-    target_duration_minutes: int = Field(default=10, ge=2, le=20)
+    # le=30 adds the "Comprehensive Summary" mode.
+    target_duration_minutes: int = Field(default=10, ge=5, le=30)
     generate_audio: bool = True
     generate_video: bool = False
-    # le raised from 600 so a 20-minute output is expressible: the reel is now
-    # the product itself (original audio), not a short companion to a narration.
-    highlight_duration_seconds: int = Field(default=120, ge=30, le=1200)
+    # le raised from 1200 to 1800 alongside the 30-minute profile. The reel is
+    # the product itself (original audio), not a companion to a narration.
+    highlight_duration_seconds: int = Field(default=120, ge=30, le=1800)
     style: str = "educational"
 
 
@@ -142,6 +161,14 @@ class MergeJob(BaseModel):
     fusion_metadata: Optional[FusionMetadata] = None
     keyframes_extracted: Dict[str, int] = {}
 
+    # Semantic selection pipeline output (coverage_selector + concept_extractor).
+    # All optional so a job produced by the legacy path still validates.
+    concepts: List[ConceptInfo] = []
+    selection_metrics: Optional[Dict] = None
+    selection_trace: List[Dict] = []
+    summarization_decision: Optional[Dict] = None
+    selection_mode: str = "legacy"      # "semantic" | "legacy"
+
     # Output paths
     audio_path: Optional[str] = None
     subtitle_path: Optional[str] = None
@@ -158,6 +185,15 @@ class MergeJob(BaseModel):
     warning: Optional[str] = None
     retry_count: int = 0
     max_retries: int = 3
+
+    # Language-abort metadata: set when transcript language is unsupported by
+    # the text pipeline (BART/enrichment).  The job still runs video generation
+    # and reaches VIDEO_READY / PARTIAL_SUCCESS — these fields distinguish
+    # "no summary" from the normal completed state without touching status before
+    # video generation has finished.
+    summary_unavailable: bool = False
+    summary_unavailable_reason: Optional[str] = None
+    detected_language: Optional[str] = None
 
     class Config:
         use_enum_values = True
@@ -192,7 +228,7 @@ class MergeJobResult(BaseModel):
 # =====================================================
 
 def get_duration_style(minutes: int) -> DurationStyle:
-    """Map duration to style."""
+    """Map duration to style. 20 and 30 both map to COMPREHENSIVE."""
     if minutes <= 5:
         return DurationStyle.HEADLINE
     elif minutes <= 10:

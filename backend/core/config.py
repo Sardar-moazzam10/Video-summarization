@@ -96,11 +96,148 @@ class Settings(BaseSettings):
     VIDEO_CACHE_MAX_AGE_DAYS: int = 30
 
     # =====================================================
+    # TRANSLATION (non-English caption fast path)
+    # =====================================================
+    # deep-translator's GoogleTranslator issues a plain requests.get() with no
+    # timeout param, so a stalled/blocked connection would otherwise hang the
+    # calling thread forever. This bounds a single request.
+    TRANSLATION_REQUEST_TIMEOUT_SECONDS: float = 8.0
+    # Hard ceiling on the whole batched Google-translate pass for one video's
+    # transcript, regardless of how many chunks fail. Once hit, any remaining
+    # segments are left untranslated rather than retried further.
+    TRANSLATION_STAGE_TIMEOUT_SECONDS: float = 60.0
+    # Outer bound around translating one transcript (Google fast path, run via
+    # asyncio.to_thread so it can't block the event loop / progress SSE
+    # stream). Comfortably above TRANSLATION_STAGE_TIMEOUT_SECONDS to leave
+    # room for the language-detect + per-segment work around it.
+    TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS: float = 90.0
+    # Consecutive whole-chunk Google failures before giving up on it entirely
+    # for this transcript, instead of grinding through the full
+    # TRANSLATION_STAGE_TIMEOUT_SECONDS budget one doomed chunk at a time.
+    # Measured on a real rate-limited run (Nkaa8fPEtQk, 1467 segments): once
+    # Google starts blocking, every subsequent chunk fails identically.
+    TRANSLATION_CIRCUIT_BREAKER_FAILURES: int = 3
+    # NLLB-200 on CPU measured ~2.3s/segment even batched (benchmark: a
+    # 32-segment batch with max_new_tokens=64 took 74.9s on the real
+    # Nkaa8fPEtQk transcript). Fine for a short clip; for a 1467-segment/
+    # 51-minute video that projects to ~57 minutes — unusable interactively.
+    # Only attempt the segment-preserving NLLB fallback when the transcript
+    # is short enough to plausibly finish within TRANSLATION_STAGE_TIMEOUT_
+    # SECONDS; longer transcripts skip it entirely rather than burning over a
+    # minute before giving up anyway.
+    NLLB_MAX_SEGMENTS_FOR_FALLBACK: int = 30
+    # Whisper's task="translate" reliably produces correct English from any
+    # source language, but re-transcribes the whole audio track at ~3.4x
+    # realtime on CPU (see WHISPER_MODEL above) — ~15 minutes for a
+    # 51-minute video, a multi-minute stall no retry/timeout policy can
+    # shrink. Only auto-attempt it as a translation fallback for videos up to
+    # this length; longer videos proceed with the best-effort (possibly
+    # still non-English) transcript and a clear job warning instead of
+    # silently running Whisper for a quarter of an hour.
+    WHISPER_TRANSLATE_MAX_VIDEO_SECONDS: float = 480.0  # 8 minutes of source audio
+
+    # =====================================================
     # DURATION PROFILES
     # =====================================================
     DEFAULT_DURATION_MINUTES: int = 10
-    MIN_DURATION_MINUTES: int = 2   # 2-minute "Quick" demo profile
-    MAX_DURATION_MINUTES: int = 20
+    MIN_DURATION_MINUTES: int = 5
+    # 30 = "Comprehensive Summary". One duration-aware optimizer serves every
+    # mode (see coverage_selector.select_segments) — only the budget changes.
+    MAX_DURATION_MINUTES: int = 30
+
+    # =====================================================
+    # SEMANTIC SEGMENT SELECTION
+    # =====================================================
+    # Master switch for the coverage-aware pipeline: semantic segmentation ->
+    # concept extraction -> submodular budgeted selection. Set false to fall
+    # back to the legacy top-score clip selection in segment_extractor.py.
+    ENABLE_SEMANTIC_SELECTION: bool = True
+
+    # Use Ollama for concept extraction.
+    #
+    # Off by default, for the same measured reason ENABLE_OLLAMA_ENRICHMENT is:
+    # llama3.2:3b on CPU cannot finish this stage in a usable time.
+    #
+    # Benchmarked here, one chunk per row:
+    #     450 words,  799 prompt tokens,  99 generated  -> 179.7 s
+    #     700 words, 1107 prompt tokens, 175 generated  -> 183.9 s
+    # Roughly 180 s per chunk, and the split shows why: the time is prompt
+    # evaluation, not generation, so capping num_predict does not help. A repeat
+    # of the first row came back in 66.8 s, but only because an identical prefix
+    # was still in Ollama's KV cache — in a real run every chunk is different
+    # text, so that number does not apply.
+    #
+    # A 25-minute video is 14 sampled chunks; at two in flight that is roughly
+    # 21 minutes of concept extraction before the stage times out and falls back
+    # anyway.
+    #
+    # The fallback is not a stub. TF-IDF keyphrases with a spoken-filler stop
+    # list pull real domain vocabulary out of a real podcast — on an 82-minute
+    # sleep episode: light, sleep, melatonin, sunlight, cortisol, adenosine,
+    # caffeine. Weaker than the LLM's named-and-explained concepts, but honest,
+    # instant and deterministic.
+    #
+    # Set ENABLE_CONCEPT_LLM=true on a GPU machine, or with a smaller/faster
+    # model, to get the better concepts. The code path is complete and tested;
+    # only the default reflects this hardware.
+    ENABLE_CONCEPT_LLM: bool = False
+
+    # Wall-clock caps for the concept stage. Per-chunk keeps one slow generation
+    # from stalling the batch; total bounds the whole stage so a long podcast
+    # cannot push the job past a usable runtime.
+    CONCEPT_CHUNK_TIMEOUT_SECONDS: float = 45.0
+    CONCEPT_TOTAL_TIMEOUT_SECONDS: float = 300.0
+    CONCEPT_TOP_K: int = 25
+
+    # Semantic segment bounds, in seconds. A segment is the unit the optimizer
+    # picks and ffmpeg cuts, so these set how long a single "complete thought"
+    # clip may run. Below ~15s a clip reads as channel-surfing; above ~120s a
+    # single segment can swallow a short budget on its own.
+    SEGMENT_MIN_SECONDS: float = 20.0
+    SEGMENT_MAX_SECONDS: float = 90.0
+
+    # =====================================================
+    # SELECTION SCORING WEIGHTS
+    # =====================================================
+    # score = CONCEPT * concept_coverage_gain     (submodular: diminishing)
+    #       + SEMANTIC * relevance                (how on-topic the segment is)
+    #       + COVERAGE * temporal_coverage_gain   (concave: rewards new regions)
+    #       + COHERENCE * completeness            (clean start/end boundaries)
+    #       - REDUNDANCY * similarity_to_selected (penalty)
+    #       - DURATION_PENALTY * relative_length  (mild bias to shorter picks)
+    #
+    # Concept + coverage together (0.60) outweigh raw relevance (0.20):
+    # relevance alone is what produced the beginning-heavy selections, because
+    # early segments introduce the topic and therefore look most similar to any
+    # summary of it.
+    #
+    # The 0.28/0.32 split between coverage and concept is measured, not assumed.
+    # Against a hand-authored gold standard of 103 important concepts over 7
+    # videos in 5 genres (see evaluation/), and scored with the same BART
+    # summary reference the merge pipeline supplies at runtime, coverage 0.28
+    # raised F1 from 0.637 to 0.662 over the previous 0.25.
+    #
+    # 0.35 reaches the same F1 but is not used: it trips the shipped-config
+    # diversity guard in tests/test_coverage_selector.py, selecting 7 of 10
+    # near-identical segments where 0.28 selects 2, because past ~0.32 a fresh
+    # temporal bin outbids the redundancy penalty when no concept signal is
+    # available. 0.28 is also better on the 5-minute mode (0.546 vs 0.532).
+    #
+    # An earlier sweep that scored selections WITHOUT the summary reference
+    # favoured 0.35 much more strongly; that measurement did not reflect
+    # production, which always has one. Tune per content type via .env.
+    SELECT_CONCEPT_WEIGHT: float = 0.32
+    SELECT_SEMANTIC_WEIGHT: float = 0.20
+    SELECT_COVERAGE_WEIGHT: float = 0.28
+    SELECT_COHERENCE_WEIGHT: float = 0.10
+    SELECT_REDUNDANCY_PENALTY: float = 0.25
+    SELECT_DURATION_PENALTY: float = 0.05
+
+    # The optimizer is allowed to stop before the budget is full only once the
+    # reel has reached this fraction of the requested duration — the "duration
+    # is approximately respected" tolerance. Lower it to let the optimizer be
+    # stricter about quality at the cost of a shorter reel.
+    SELECT_MIN_BUDGET_FILL: float = 0.90
 
     # =====================================================
     # HUGGING FACE

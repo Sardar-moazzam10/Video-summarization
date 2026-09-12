@@ -354,9 +354,14 @@ async def get_job_status(job_id: str):
 @router.get("/{job_id}/result")
 async def get_job_result(job_id: str):
     """
-    Get the result of a completed merge job.
+    Get the result of a merge job.
 
-    Only available when status is 'completed'.
+    Available once status is 'completed', 'partial_success', or
+    'video_ready'. In the 'video_ready' case the highlight video is done but
+    the text summary is still being generated in the background —
+    `summary_pending` is True and `summary_text`/`rich_output`/`metadata`
+    are withheld (returned as None/empty) rather than exposed as an empty
+    finished summary.
     """
     jobs_collection = await get_jobs_collection()
     job_data = await jobs_collection.find_one({"job_id": job_id})
@@ -364,17 +369,43 @@ async def get_job_result(job_id: str):
     if not job_data:
         raise HTTPException(404, "Job not found")
 
-    if job_data["status"] not in {JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value}:
+    video_ready_statuses = {
+        JobStatus.VIDEO_READY.value,
+        JobStatus.FUSING.value,
+        JobStatus.SUMMARIZING.value,
+        JobStatus.ENRICHING.value,
+        JobStatus.GENERATING_VOICE.value,
+    }
+    
+    allowed_statuses = {
+        JobStatus.COMPLETED.value,
+        JobStatus.PARTIAL_SUCCESS.value,
+    } | video_ready_statuses
+    
+    if job_data["status"] not in allowed_statuses:
         raise HTTPException(
             400,
             f"Job not completed. Current status: {job_data['status']}"
         )
 
+    summary_pending = job_data["status"] in video_ready_statuses
+
+    highlight_segments = job_data.get("highlight_segments", [])
+    video_duration_seconds = sum(
+        (seg.get("end_time", 0) - seg.get("start_time", 0)) for seg in highlight_segments
+    )
+
     return {
         "job_id": job_data["job_id"],
         "status": job_data["status"],
-        "summary_text": job_data.get("summary_text", ""),
-        "rich_output": job_data.get("rich_output"),
+        # True only while video_ready — the AI summary (text/TL;DR/
+        # takeaways/chapters) has not finished yet.
+        "summary_pending": summary_pending,
+        # None (not "") means "not ready yet" — same convention already
+        # used for the language-unavailable case — so a pending summary is
+        # never mistaken for a finished, empty one.
+        "summary_text": None if summary_pending else job_data.get("summary_text", ""),
+        "rich_output": None if summary_pending else job_data.get("rich_output"),
         "audio_url": f"/api/v1/merge/{job_id}/audio" if job_data.get("audio_path") else None,
         "video_url": f"/api/v1/merge/{job_id}/video" if job_data.get("video_path") else None,
         "subtitle_url": f"/api/v1/merge/{job_id}/subtitles" if job_data.get("subtitle_path") else None,
@@ -382,7 +413,10 @@ async def get_job_result(job_id: str):
         # Echoed back so a follow-up job (e.g. the highlight re-compile on the
         # player page) can reuse this job's settings instead of hardcoding them.
         "target_duration_minutes": job_data.get("target_duration_minutes"),
-        "highlight_segments": job_data.get("highlight_segments", []),
+        # Actual selected/rendered reel length — available as soon as the
+        # video is, independent of the target duration requested.
+        "video_duration_seconds": round(video_duration_seconds, 1),
+        "highlight_segments": highlight_segments,
         "keyframes_extracted": job_data.get("keyframes_extracted", {}),
         # Semantic pipeline output. Absent on jobs produced before this
         # pipeline existed, so the frontend must treat all of it as optional.
@@ -393,7 +427,13 @@ async def get_job_result(job_id: str):
         "selection_mode": job_data.get("selection_mode", "legacy"),
         "warning": job_data.get("warning"),
         "error": job_data.get("error"),
-        "metadata": job_data.get("fusion_metadata", {}),
+        "metadata": {} if summary_pending else job_data.get("fusion_metadata", {}),
+        # Language-abort fields — present on language-abort jobs so the frontend
+        # can skip QualityPanel and show the correct unavailable-summary state
+        # without hitting /evaluate (which would previously 500).
+        "summary_unavailable": job_data.get("summary_unavailable", False),
+        "summary_unavailable_reason": job_data.get("summary_unavailable_reason"),
+        "detected_language": job_data.get("detected_language"),
         "created_at": job_data["created_at"],
         "completed_at": job_data.get("completed_at"),
     }
@@ -430,6 +470,19 @@ async def evaluate_job_quality(job_id: str, llm: bool = False):
     if job_data["status"] not in {JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value}:
         raise HTTPException(400, f"Job not completed. Current status: {job_data['status']}")
 
+    # Language-abort jobs have no summary — quality evaluation is impossible.
+    # Return a controlled response instead of propagating to _build_quality_report
+    # which would crash on None summary_text.
+    if job_data.get("summary_unavailable"):
+        return {
+            "unavailable": True,
+            "reason": job_data.get("warning") or "No written summary was generated for this job (unsupported language).",
+            "summary_score": None,
+            "video_score": None,
+            "check_a": {},
+            "check_b": {},
+        }
+
     cache_field = _QUALITY_CACHE_FIELD_LLM if llm else _QUALITY_CACHE_FIELD
     cached = job_data.get(cache_field)
     if cached:
@@ -465,9 +518,19 @@ async def _build_quality_report(job_data: dict, use_llm: bool) -> dict:
     online. The work runs in a worker thread now so everything else keeps
     serving while it computes.
     """
-    summary_text = job_data.get("summary_text", "")
+    # Defend against None (language-abort jobs) and empty string.
+    summary_text = job_data.get("summary_text") or ""
     if not summary_text.strip():
-        raise HTTPException(400, "Job has no summary to evaluate")
+        # Return a safe, structured response instead of crashing with
+        # AttributeError or a raw HTTP 400 that surfaces as a red error in the UI.
+        return {
+            "unavailable": True,
+            "reason": "No written summary was generated for this job.",
+            "summary_score": None,
+            "video_score": None,
+            "check_a": {},
+            "check_b": {},
+        }
 
     # Reuse the same transcript fetch the pipeline uses (cached in MongoDB)
     video_ids = job_data.get("video_ids", [])
@@ -734,11 +797,28 @@ def _fit_to_duration(highlights: list, target_seconds: int) -> list:
     return selected
 
 
+def _merge_overlapping_clips(clips: list) -> list:
+    """
+    Merge overlapping or adjacent clips from the same video.
+    Prevents repeated speech at the boundary of adjacent semantic segments.
+    """
+    merged_clips = []
+    for h in clips:
+        if merged_clips and merged_clips[-1].get("video_id") == h.get("video_id"):
+            # if overlap or touch (e.g. within 0.1s)
+            if float(h["start_time"]) <= float(merged_clips[-1]["end_time"]) + 0.1:
+                merged_clips[-1]["end_time"] = max(float(merged_clips[-1]["end_time"]), float(h["end_time"]))
+                merged_clips[-1]["text"] = merged_clips[-1].get("text", "") + " " + h.get("text", "")
+                continue
+        merged_clips.append(dict(h))
+    return merged_clips
+
+
 async def _legacy_select_highlights(
     job,
     video_paths: Dict[str, str],
     raw_segments: Dict[str, list],
-    summary_text: str,
+    semantic_bias_text: str,
     update_status,
     keyframes_extracted: Dict[str, int],
 ) -> list:
@@ -855,7 +935,7 @@ async def _legacy_select_highlights(
             highlights = extract_highlight_segments(
                 video_id=vid,
                 transcript_segments=segs,
-                summary_text=summary_text,
+                summary_text=semantic_bias_text,
                 target_duration_seconds=per_video_seconds,
                 context_padding_seconds=1.5,
                 min_segment_duration=20.0,
@@ -903,7 +983,7 @@ def _allocate_budgets(durations: Dict[str, float], total_budget: float) -> Dict[
 async def run_semantic_selection(
     job,
     raw_segments: Dict[str, list],
-    summary_text: str,
+    semantic_bias_text: str,
     progress=None,
 ) -> Optional[Dict]:
     """
@@ -915,13 +995,19 @@ async def run_semantic_selection(
                    -> metrics                           (summary_metrics)
 
     Returns None when it cannot produce a usable selection, which tells the
-    caller to run the legacy scorer instead. It never raises: a failure here
-    must degrade the job, not fail it.
+    caller to run the legacy scorer instead. It never raises for operational
+    failures, but WILL propagate programmer/integration errors (TypeError,
+    AttributeError) so the call site can distinguish a bad call from a bad
+    input.
 
     Args:
         job: the MergeJob being processed
         raw_segments: {video_id: [{text, start, duration}]}
-        summary_text: the finished summary, used as the relevance reference
+        semantic_bias_text: the baseline fusion narrative, used as the
+            relevance reference for semantic selection.  This is the
+            FIRST-PASS fusion output (full transcript), NOT the final
+            summary — passing the final summary would create a circular
+            dependency (Select-First -> Summarize-Selected).
         progress: optional async callback(message) for status updates
     """
     from ..services.semantic_segmenter import build_semantic_segments
@@ -946,19 +1032,20 @@ async def run_semantic_selection(
     budgets = _allocate_budgets(durations, budget)
 
     # --- Reference vector for the relevance term ---
-    # The summary is the best statement of what the video is "about", but it is
-    # only used as a *reference*, never as the sole ranking signal — that is
-    # precisely what made selection beginning-heavy.
+    # semantic_bias_text is the FIRST-PASS fusion output over the full
+    # transcript — used only as a soft relevance reference so the optimizer
+    # can distinguish "on-topic" segments from digressions.  It is NOT the
+    # final summary (that would require a circular dependency).
     summary_embedding = None
     try:
         from ..services.fusion_engine import get_sentence_transformer
         embedder = get_sentence_transformer()
-        if summary_text.strip():
+        if semantic_bias_text.strip():
             summary_embedding = embedder.encode(
-                [summary_text[:4000]], show_progress_bar=False
+                [semantic_bias_text[:4000]], show_progress_bar=False
             )[0]
     except Exception as exc:
-        print(f"[Semantic] Embedder unavailable ({exc}) — continuing without a summary reference")
+        print(f"[Semantic] Embedder unavailable ({exc}) — continuing without a relevance reference")
 
     all_selected = []
     baselines = []
@@ -1307,6 +1394,7 @@ async def process_merge_job(job_id: str):
                 video_count=len(transcripts),
             )
             summarization_decision = None
+            fusion_result = None
 
             # Jump directly to video generation — reuses the same code block
             # below by letting execution fall through with summary_text=None.
@@ -1326,21 +1414,28 @@ async def process_merge_job(job_id: str):
             selection_trace: list = []
             selection_mode = "legacy"
 
-            # Emit a partial-success result now, BEFORE video generation,
-            # so the UI shows a clear language-unavailable state even if
-            # video generation is also skipped.
-            job.status = JobStatus.PARTIAL_SUCCESS
+            # Do NOT set PARTIAL_SUCCESS here — video generation has not run yet.
+            # Store the language metadata without changing the terminal status, so
+            # the frontend stays on the processing screen until VIDEO_READY.
             job.stage_message = (
                 f"Written summary unavailable ('{langs}' transcript). "
                 f"Generating video highlights..."
             )
             job.warning = job_warning
+            job.summary_unavailable = True
+            job.summary_unavailable_reason = "UNSUPPORTED_LANGUAGE"
+            job.detected_language = langs
             await jobs_collection.update_one(
                 {"job_id": job_id},
                 {"$set": {
-                    "status": job.status.value,
+                    # Status intentionally NOT changed here — keep the job in its
+                    # current processing state (ANALYZING / TRANSCRIBING) so the
+                    # frontend does not interpret this as a terminal result.
                     "stage_message": job.stage_message,
                     "warning": job_warning,
+                    "summary_unavailable": True,
+                    "summary_unavailable_reason": "UNSUPPORTED_LANGUAGE",
+                    "detected_language": langs,
                 }}
             )
 
@@ -1367,6 +1462,7 @@ async def process_merge_job(job_id: str):
             # Get duration profile
             profile = get_profile(job.target_duration_minutes)
             target_words = profile.target_words
+            fusion_budget = profile.target_minutes * profile.words_per_minute
 
             await update_status(
                 JobStatus.ANALYZING,
@@ -1389,7 +1485,7 @@ async def process_merge_job(job_id: str):
             fusion_engine = get_fusion_engine()
             fusion_result = fusion_engine.fuse_transcripts(
                 transcripts=transcripts,
-                target_words=target_words,
+                target_words=fusion_budget,
                 include_sources=profile.include_sources,
                 include_transitions=profile.include_transitions,
                 raw_segments=raw_segments,
@@ -1402,124 +1498,12 @@ async def process_merge_job(job_id: str):
             )
 
         if not _language_abort:
-            # STAGE 4: Summarizing (70-85%) - BART-large-CNN Hierarchical
-            await update_status(
-                JobStatus.SUMMARIZING,
-                75,
-                "Running BART-large-CNN hierarchical summarization..."
-            )
-
-            from ..services.summarization_service import get_summarization_service
-            summarizer_svc = get_summarization_service()
-            # summarize_with_policy() also reports WHY it took the path it did, so a
-            # bypass can never again go unnoticed the way the old
-            # `if word_count <= target_words: return text` shortcut did.
-            summary_text, summarization_decision = await asyncio.to_thread(
-                summarizer_svc.summarize_with_policy,
-                fusion_result.narrative,
-                target_words,
-                profile,
-            )
-
-            # Store metadata
-            fusion_metadata = FusionMetadata(
-                total_source_words=fusion_result.metadata.get("total_source_words", 0),
-                output_words=fusion_result.metadata.get("output_words", 0),
-                compression_ratio=fusion_result.metadata.get("compression_ratio", 0),
-                topics_found=fusion_result.topics,
-                clusters_created=fusion_result.metadata.get("clusters_created", 0),
-                dedup_ratio=fusion_result.metadata.get("dedup_ratio", 0),
-                processing_time_seconds=fusion_result.metadata.get("processing_time_seconds", 0),
-                video_count=len(transcripts),
-            )
-
-            await update_status(
-                JobStatus.SUMMARIZING,
-                80,
-                f"BART summary ready: {len(summary_text.split())} words"
-            )
-
-            # STAGE 4.5: Ollama AI Enrichment (80-90%)
-            rich_output = None
-            _OLLAMA_WALL_TIMEOUT = 120  # hard cap so job never blocks >2 min on this stage
-            try:
-                from ..services.ollama_service import get_ollama_service
-                ollama = get_ollama_service()
-
-                if not settings.ENABLE_OLLAMA_ENRICHMENT:
-                    # Skipped by default — on CPU this stage times out (~100s) and
-                    # returns None, after which the local TF-IDF enrichment below
-                    # produces the TLDR/takeaways/chapters anyway. Skipping removes
-                    # the dead time without changing the job's output.
-                    # The Quality Panel's LLM judge is unaffected and still uses Ollama.
-                    print("[Ollama] Merge-path enrichment disabled "
-                          "(ENABLE_OLLAMA_ENRICHMENT=false) — using local TF-IDF enrichment")
-                elif ollama.is_available():
-                    await update_status(
-                        JobStatus.ENRICHING,
-                        82,
-                        f"AI enriching with Ollama/{settings.OLLAMA_MODEL} (chapters, takeaways, quotes)..."
-                    )
-
-                    video_titles = ", ".join(job.video_ids)
-                    rich_output = await asyncio.wait_for(
-                        ollama.generate_rich_summary(
-                            narrative=fusion_result.narrative,
-                            target_words=target_words,
-                            style=job.style,
-                            video_titles=video_titles,
-                        ),
-                        timeout=_OLLAMA_WALL_TIMEOUT,
-                    )
-
-                    if rich_output:
-                        # Patch BART summary in if Ollama's summary is too short
-                        if not rich_output.summary or len(rich_output.summary.split()) < 50:
-                            rich_output.summary = summary_text
-                        else:
-                            summary_text = rich_output.summary
-                        await update_status(
-                            JobStatus.ENRICHING,
-                            90,
-                            f"AI enrichment done: {len(rich_output.chapters)} chapters, "
-                            f"{len(rich_output.key_takeaways)} takeaways"
-                        )
-                    else:
-                        print("[Ollama] returned None — using local fallback")
-                else:
-                    print(f"[Ollama] Not available. Run: ollama pull {settings.OLLAMA_MODEL}")
-
-            except asyncio.TimeoutError:
-                print(f"[Ollama] Hard timeout ({_OLLAMA_WALL_TIMEOUT}s) — using local TF-IDF fallback")
-                rich_output = None
-            except Exception as e:
-                print(f"[WARN] Ollama enrichment failed: {e}")
-
-            # Always fall back to local TF-IDF if Ollama produced no structured output
-            if not rich_output or not rich_output.tldr or not rich_output.key_takeaways:
-                print("[LocalEnrich] Generating TLDR+takeaways locally (TF-IDF)...")
-                rich_output = _generate_local_enrichment(summary_text, job.style)
-
-        # STAGE 5: Audio (90-97%)
-        #
-        # The summary audio is the ORIGINAL speaker audio taken from the highlight
-        # reel, not synthesized narration. TTS was removed deliberately: the product
-        # promise is authentic source audio, and the reel already preserves it
-        # (see video_service.py). audio_path is therefore filled in AFTER the reel
-        # is built, by _extract_audio_from_reel() further down.
-        #
-        # subtitle_path stays None. It only ever held the TTS narration's SRT, and
-        # nothing in the UI consumes /subtitles.
-        if not _language_abort:
+            # -------------------------------------------------------------
+            # NEW ARCHITECTURE: SELECT FIRST, THEN SUMMARIZE
+            # -------------------------------------------------------------
+            video_path = None
             audio_path = None
             subtitle_path = None
-
-        # STAGE 6: Video Highlight Generation (97-99%) - Optional
-        # Free-only pipeline: PySceneDetect + CLIP ViT-B/16 + temporal attention
-        # When _language_abort is True, these are already initialized above;
-        # skip the re-initialization so the language-abort branch values survive.
-        if not _language_abort:
-            video_path = None
             job_warning = None
             highlight_segments_result = []
             keyframes_extracted = {}
@@ -1527,11 +1511,15 @@ async def process_merge_job(job_id: str):
             selection_metrics = None
             selection_trace = []
             selection_mode = "legacy"
+
+            video_paths = {}
+
+        video_error = False
         if job.generate_video:
             await update_status(
                 JobStatus.GENERATING_VIDEO,
-                97,
-                "Generating video highlight reel (CLIP + temporal attention pipeline)..."
+                50,
+                "Downloading source videos and selecting highlights..."
             )
 
             try:
@@ -1541,69 +1529,73 @@ async def process_merge_job(job_id: str):
 
                 video_svc = get_video_service()
 
-                # Step 1: Download source videos
                 await update_status(
-                    JobStatus.GENERATING_VIDEO, 97,
+                    JobStatus.GENERATING_VIDEO, 55,
                     "Downloading source videos for highlight extraction..."
                 )
                 unique_video_ids = list(raw_segments.keys())
 
                 async def video_progress(msg):
-                    await update_status(JobStatus.GENERATING_VIDEO, 98, msg)
+                    await update_status(JobStatus.GENERATING_VIDEO, 60, msg)
 
-                # Derive total source duration from the transcript timestamps.
-                # This is the same data raw_segments holds: sum of all per-video
-                # durations gives the overall source length, which drives the
-                # per-video download timeout inside download_videos().
                 _total_source_seconds = sum(
                     _source_duration(raw_segments.get(v, []))
                     for v in unique_video_ids
                 )
 
-                # download_videos() now owns the per-video timeout; the old
-                # global 300s asyncio.wait_for wrapper is removed because it
-                # was sized for 20-min videos and silently failed for 95-min
-                # content.  Each video gets a proportional budget inside
-                # _download_single() instead.
-                video_paths = await video_svc.download_videos(
-                    unique_video_ids,
-                    job_id=job_id,
-                    progress_callback=video_progress,
-                    source_duration_seconds=_total_source_seconds,
+                # Start tasks concurrently
+                download_task = asyncio.create_task(
+                    video_svc.download_videos(
+                        unique_video_ids,
+                        job_id=job_id,
+                        progress_callback=video_progress,
+                        source_duration_seconds=_total_source_seconds,
+                    )
                 )
 
+                semantic_task = None
+                if settings.ENABLE_SEMANTIC_SELECTION:
+                    semantic_task = asyncio.create_task(
+                        run_semantic_selection(
+                            job=job,
+                            raw_segments={v: raw_segments.get(v, []) for v in unique_video_ids},
+                            semantic_bias_text=fusion_result.narrative if fusion_result else "",
+                            progress=video_progress,
+                        )
+                    )
+
+                if semantic_task:
+                    dl_result, sem_result = await asyncio.gather(download_task, semantic_task, return_exceptions=True)
+                else:
+                    dl_result = await download_task
+                    sem_result = None
+
+                if isinstance(dl_result, Exception):
+                    raise dl_result
+                video_paths = dl_result
+                
                 if not video_paths:
                     raise Exception("Could not download any source videos")
 
-                # ---------------------------------------------------------
-                # SELECTION — coverage-aware semantic path, legacy fallback
-                # ---------------------------------------------------------
-                # The semantic path chooses COMPLETE THOUGHTS under a time budget
-                # using concept coverage, temporal coverage and a redundancy
-                # penalty. The legacy path below sorts candidate clips by score
-                # and takes them until the budget fills, which is what produced
-                # the beginning-heavy reels (measured: 80% of a 5-minute summary
-                # in the first half of a 24.8-minute source, last two deciles
-                # empty). It is kept as a fallback for transcripts the semantic
-                # path cannot handle — no timestamps, or too short to segment.
                 semantic = None
-                if settings.ENABLE_SEMANTIC_SELECTION:
-                    await update_status(
-                        JobStatus.GENERATING_VIDEO, 98,
-                        "Analyzing concepts and selecting complete semantic segments..."
-                    )
-                    try:
-                        semantic = await run_semantic_selection(
-                            job=job,
-                            raw_segments={v: raw_segments.get(v, []) for v in video_paths},
-                            summary_text=summary_text,
-                            progress=video_progress,
-                        )
-                    except Exception as sel_err:
-                        print(f"[Semantic] Pipeline failed ({sel_err}) — falling back to legacy scorer")
+                if semantic_task:
+                    if isinstance(sem_result, (TypeError, AttributeError)):
                         import traceback
-                        traceback.print_exc()
-                        semantic = None
+                        traceback.print_exception(sem_result)
+                        raise RuntimeError(
+                            f"[Semantic] Integration error in run_semantic_selection — "
+                            f"semantic path is broken, NOT falling back to legacy: {sem_result}"
+                        ) from sem_result
+                    elif isinstance(sem_result, Exception):
+                        print(f"[Semantic] Pipeline failed with operational error: {sem_result}")
+                        import traceback
+                        traceback.print_exception(sem_result)
+                        print("[Semantic] Falling back to legacy scorer (operational failure, not a coding error)")
+                    else:
+                        semantic = sem_result
+                        if semantic and semantic.get("highlights"):
+                            # Filter highlights for videos that successfully downloaded
+                            semantic["highlights"] = [h for h in semantic["highlights"] if h["video_id"] in video_paths]
 
                 if semantic and semantic["highlights"]:
                     highlight_segments_result = semantic["highlights"]
@@ -1619,19 +1611,13 @@ async def process_merge_job(job_id: str):
                         job=job,
                         video_paths=video_paths,
                         raw_segments=raw_segments,
-                        summary_text=summary_text,
+                        semantic_bias_text=fusion_result.narrative,
                         update_status=update_status,
                         keyframes_extracted=keyframes_extracted,
                     )
 
                 if all_highlights:
                     if selection_mode != "semantic":
-                        # Legacy path only. The semantic optimizer has ALREADY
-                        # solved the budget problem: it selected against the
-                        # budget with a coverage and redundancy objective, so
-                        # re-running a score-sorted greedy over its output would
-                        # undo exactly what it optimised for and re-impose the
-                        # front-loading this change removes.
                         all_highlights.sort(
                             key=lambda h: h.get("importance_score", 0), reverse=True
                         )
@@ -1641,46 +1627,110 @@ async def process_merge_job(job_id: str):
                         highlight_segments_result.sort(
                             key=lambda h: (h["video_id"], h["start_time"])
                         )
+                    
+                    highlight_segments_result = _merge_overlapping_clips(highlight_segments_result)
+
                     _reel_seconds = sum(
                         h["end_time"] - h["start_time"] for h in highlight_segments_result
                     )
                     print(f"[Video] {len(highlight_segments_result)} clips kept "
                           f"({_reel_seconds:.0f}s) for a {job.highlight_duration_seconds}s reel "
                           f"[{selection_mode} selection]")
-
-                    # Step 3: Generate the highlight reel
-                    await update_status(
-                        JobStatus.GENERATING_VIDEO, 99,
-                        f"Cutting and stitching {len(highlight_segments_result)} highlight clips..."
-                    )
-
-                    video_path = await video_svc.generate_highlight_reel(
-                        job_id=job.job_id,
-                        highlight_segments=highlight_segments_result,
-                        video_paths=video_paths,
-                        audio_path=None,   # never overlaid; reel keeps source audio
-                        progress_callback=video_progress,
-                    )
-
-                    print(f"[Video] Highlight reel generated: {video_path}")
-
-                    # The reel's own audio IS the summary audio. Extract it so the
-                    # player and Download Audio serve real voices, not synthesis.
-                    if job.generate_audio and video_path:
-                        audio_path = await asyncio.to_thread(
-                            _extract_audio_from_reel, video_path, job.job_id
-                        )
                 else:
-                    job_warning = "Video generation skipped because no highlight segments were identified."
-                    print(f"[Video] {job_warning}")
+                    video_error = True
+                    w_msg = "Video generation skipped because no highlight segments were identified."
+                    job_warning = (job_warning + " | " + w_msg) if job_warning else w_msg
+                    print(f"[Video] {w_msg}")
 
             except Exception as e:
-                job_warning = f"Video generation failed: {e}"
+                video_error = True
+                w_msg = f"Video selection failed: {e}"
+                job_warning = (job_warning + " | " + w_msg) if job_warning else w_msg
+                print(f"[WARN] {w_msg}")
+                import traceback
+                traceback.print_exc()
+
+        if job.generate_video and highlight_segments_result and not video_error:
+            try:
+                # Generate the highlight reel now, right after selection —
+                # ahead of BART/enrichment — so the video is playable while
+                # the text pipeline is still running. Video has no data
+                # dependency on the summary (see selection block above).
+                await update_status(
+                    JobStatus.GENERATING_VIDEO, 65,
+                    f"Cutting and stitching {len(highlight_segments_result)} highlight clips..."
+                )
+
+                video_path = await video_svc.generate_highlight_reel(
+                    job_id=job.job_id,
+                    highlight_segments=highlight_segments_result,
+                    video_paths=video_paths,
+                    audio_path=None,   # never overlaid; reel keeps source audio
+                    progress_callback=video_progress,
+                )
+
+                print(f"[Video] Highlight reel generated: {video_path}")
+
+                # Persist immediately so /video and /result can serve the
+                # video right away — the text summary (BART + enrichment)
+                # has not started yet at this point.
+                job.video_path = video_path
+                job.highlight_segments = highlight_segments_result
+                job.keyframes_extracted = keyframes_extracted
+                job.concepts = job_concepts
+                job.selection_metrics = selection_metrics
+                job.selection_trace = selection_trace
+                job.selection_mode = selection_mode
+                job.status = JobStatus.VIDEO_READY
+                job.progress_percent = 70
+                # Language-abort jobs surface a different message so the user
+                # knows the video is ready but summary won't follow.
+                job.stage_message = (
+                    "Highlight video ready — written summary unavailable for this language."
+                    if _language_abort
+                    else "Highlight video ready — generating AI summary..."
+                )
+                job.updated_at = datetime.utcnow()
+
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": {
+                        "status": JobStatus.VIDEO_READY.value,
+                        "progress_percent": 70,
+                        "stage_message": job.stage_message,
+                        "updated_at": job.updated_at,
+                        "video_path": video_path,
+                        "highlight_segments": highlight_segments_result,
+                        "keyframes_extracted": keyframes_extracted,
+                        "concepts": job_concepts,
+                        "selection_metrics": selection_metrics,
+                        "selection_trace": selection_trace,
+                        "selection_mode": selection_mode,
+                        # Carry language-abort metadata into the VIDEO_READY
+                        # checkpoint so /result can serve summary_unavailable
+                        # as soon as the video is playable.
+                        "summary_unavailable": job.summary_unavailable,
+                        "summary_unavailable_reason": job.summary_unavailable_reason,
+                        "detected_language": job.detected_language,
+                        "warning": job.warning,
+                    }}
+                )
+
+                # MP3 extraction is a separate downloadable artifact, not a
+                # gate on VIDEO_READY — the reel's own audio track is already
+                # embedded and playable. It runs here, after the checkpoint
+                # above, and rides along in the job's final $set once done.
+                if job.generate_audio and video_path:
+                    audio_path = await asyncio.to_thread(
+                        _extract_audio_from_reel, video_path, job.job_id
+                    )
+
+            except Exception as e:
+                job_warning = f"Video stitching failed: {e}"
                 print(f"[WARN] {job_warning}")
                 import traceback
                 traceback.print_exc()
                 video_path = None
-
             finally:
                 import shutil as _shutil
                 _dl_dir = os.path.join("audio_cache", "video_downloads", job_id)
@@ -1688,20 +1738,188 @@ async def process_merge_job(job_id: str):
                     _shutil.rmtree(_dl_dir, ignore_errors=True)
                     print(f"[Video] Cleaned up download dir: {_dl_dir}")
 
-        # COMPLETED
-        # Note: when _language_abort is True, job.status and job_warning were
-        # already set to PARTIAL_SUCCESS before video generation — preserve them.
+        summary_failed = False
+        summary_error_msg = None
         if not _language_abort:
-            if job.generate_video and not video_path:
-                job.status = JobStatus.PARTIAL_SUCCESS
-                job.stage_message = job_warning or "Summary ready, but video highlights were unavailable."
+            try:
+                # --- Transcript Reconstruction & Selected Fusion ---
+                await update_status(
+                    JobStatus.FUSING, 74,
+                    "Reconstructing transcript from selected video segments..."
+                )
+                selected_transcripts_map = {}
+                selected_raw_segments = {}
+                if job.generate_video and highlight_segments_result and not video_error:
+                    for h in highlight_segments_result:
+                        vid = h.get("video_id")
+                        if vid not in selected_raw_segments:
+                            selected_raw_segments[vid] = []
+                        selected_raw_segments[vid].append(h)
+                
+                    for vid, segs in selected_raw_segments.items():
+                        segs.sort(key=lambda x: x.get("start_time", 0))
+                        selected_transcripts_map[vid] = " ".join(s.get("text", "") for s in segs)
+                else:
+                    if job.generate_video and not highlight_segments_result:
+                        print("[WARN] Video selection yielded empty segments. Falling back to full transcript for text summary.")
+                    selected_transcripts_map = transcripts
+                    selected_raw_segments = raw_segments
+
+                # FUSE ONLY THE SELECTED SEGMENTS!
+                fusion_result = fusion_engine.fuse_transcripts(
+                    transcripts=selected_transcripts_map,
+                    target_words=fusion_budget,
+                    include_sources=profile.include_sources,
+                    include_transitions=profile.include_transitions,
+                    raw_segments=selected_raw_segments,
+                )
+
+                # STAGE 4: Summarizing (70-85%) - BART-large-CNN Hierarchical
+                await update_status(
+                    JobStatus.SUMMARIZING,
+                    79,
+                    "Running BART-large-CNN hierarchical summarization on selected content..."
+                )
+
+                from ..services.summarization_service import get_summarization_service
+                
+                with open("/home/weiblocks/.gemini/antigravity/brain/08033a07-29b0-4566-8589-763c97b80c7d/scratch/bart_input.txt", "w") as f:
+                    f.write(fusion_result.narrative)
+                    
+                summarizer_svc = get_summarization_service()
+                summary_text, summarization_decision = await asyncio.to_thread(
+                    summarizer_svc.summarize_with_policy,
+                    fusion_result.narrative,
+                    target_words,
+                    profile,
+                )
+
+                # Store metadata
+                fusion_metadata = FusionMetadata(
+                    total_source_words=fusion_result.metadata.get("total_source_words", 0),
+                    output_words=len(summary_text.split()),
+                    compression_ratio=len(summary_text.split()) / max(fusion_result.metadata.get("total_source_words", 1), 1),
+                    topics_found=fusion_result.topics,
+                    clusters_created=fusion_result.metadata.get("clusters_created", 0),
+                    dedup_ratio=fusion_result.metadata.get("dedup_ratio", 0),
+                    processing_time_seconds=fusion_result.metadata.get("processing_time_seconds", 0),
+                    video_count=len(transcripts),
+                )
+
+                await update_status(
+                    JobStatus.SUMMARIZING,
+                    84,
+                    f"BART summary ready: {len(summary_text.split())} words"
+                )
+
+                # STAGE 4.5: Ollama AI Enrichment (80-90%)
+                rich_output = None
+                _OLLAMA_WALL_TIMEOUT = 120  # hard cap so job never blocks >2 min on this stage
+                try:
+                    from ..services.ollama_service import get_ollama_service
+                    ollama = get_ollama_service()
+
+                    if not settings.ENABLE_OLLAMA_ENRICHMENT:
+                        print("[Ollama] Merge-path enrichment disabled "
+                              "(ENABLE_OLLAMA_ENRICHMENT=false) — using local TF-IDF enrichment")
+                    elif ollama.is_available():
+                        await update_status(
+                            JobStatus.ENRICHING,
+                            88,
+                            f"AI enriching with Ollama/{settings.OLLAMA_MODEL} (chapters, takeaways, quotes)..."
+                        )
+
+                        video_titles = ", ".join(job.video_ids)
+                        rich_output = await asyncio.wait_for(
+                            ollama.generate_rich_summary(
+                                narrative=fusion_result.narrative,
+                                target_words=target_words,
+                                style=job.style,
+                                video_titles=video_titles,
+                            ),
+                            timeout=_OLLAMA_WALL_TIMEOUT,
+                        )
+
+                        if rich_output:
+                            if not rich_output.summary or len(rich_output.summary.split()) < 50:
+                                rich_output.summary = summary_text
+                            else:
+                                summary_text = rich_output.summary
+                            await update_status(
+                                JobStatus.ENRICHING,
+                                93,
+                                f"AI enrichment done: {len(rich_output.chapters)} chapters, "
+                                f"{len(rich_output.key_takeaways)} takeaways"
+                            )
+                        else:
+                            print("[Ollama] returned None — using local fallback")
+                    else:
+                        print(f"[Ollama] Not available. Run: ollama pull {settings.OLLAMA_MODEL}")
+
+                except asyncio.TimeoutError:
+                    print(f"[Ollama] Hard timeout ({_OLLAMA_WALL_TIMEOUT}s) — using local TF-IDF fallback")
+                    rich_output = None
+                except Exception as e:
+                    print(f"[WARN] Ollama enrichment failed: {e}")
+
+                # Always fall back to local TF-IDF if Ollama produced no structured output
+                if not rich_output or not rich_output.tldr or not rich_output.key_takeaways:
+                    print("[LocalEnrich] Generating TLDR+takeaways locally (TF-IDF)...")
+                    rich_output = _generate_local_enrichment(summary_text, job.style)
+            except Exception as e:
+                # Video (if requested) was already generated and persisted
+                # as VIDEO_READY before this stage runs. Don't let a text-
+                # pipeline failure destroy it or bubble to the generic ERROR
+                # handler, which would make the video unreachable — unless
+                # there is no video to preserve, in which case this keeps
+                # the previous (pre-video-first) failure behavior.
+                if video_path:
+                    summary_failed = True
+                    summary_error_msg = str(e)
+                    summary_text = None
+                    rich_output = None
+                    summarization_decision = None
+                    fusion_metadata = FusionMetadata(
+                        total_source_words=sum(len(t.split()) for t in transcripts.values()),
+                        output_words=0,
+                        compression_ratio=0.0,
+                        topics_found=[],
+                        clusters_created=0,
+                        dedup_ratio=0.0,
+                        processing_time_seconds=0.0,
+                        video_count=len(transcripts),
+                    )
+                    print(f"[ERROR] Summary generation failed after video was ready: {summary_error_msg}")
+                    import traceback
+                    traceback.print_exc()
+                else:
+                    raise
+        # COMPLETED
+        # Language-abort path: video generation has now finished (or failed).
+        # PARTIAL_SUCCESS is assigned HERE for the first time — only after the
+        # video stage is done, so the frontend never sees a terminal status
+        # before the video has been generated.
+        if _language_abort:
+            job.status = JobStatus.PARTIAL_SUCCESS
+            if video_path:
+                job.stage_message = "Highlight video ready — written summary unavailable for this language."
             else:
-                job.status = JobStatus.COMPLETED
-                job.stage_message = "Your summary is ready!"
-        # Language-abort jobs already have status=PARTIAL_SUCCESS and a
-        # language-specific warning set; only update if video succeeded.
-        elif video_path:
-            job.stage_message = "Highlight video ready — written summary unavailable for this language."
+                job.stage_message = "Highlight video generation failed — written summary also unavailable for this language."
+        elif summary_failed and video_path:
+            # Video succeeded and was already persisted (VIDEO_READY),
+            # but the text pipeline failed afterward. Reuse
+            # PARTIAL_SUCCESS — same "one artifact missing" meaning as
+            # the video-failed case below, just the other artifact —
+            # instead of losing the video to an ERROR status.
+            job.status = JobStatus.PARTIAL_SUCCESS
+            job.stage_message = "Highlight video ready, but AI summary generation failed."
+            job_warning = job_warning or summary_error_msg
+        elif job.generate_video and not video_path:
+            job.status = JobStatus.PARTIAL_SUCCESS
+            job.stage_message = job_warning or "Summary ready, but video highlights were unavailable."
+        else:
+            job.status = JobStatus.COMPLETED
+            job.stage_message = "Your summary is ready!"
         job.progress_percent = 100
         # summary_text is None (not "") when the language is unsupported. The
         # result page checks for None/empty to show the language-unavailable state
@@ -1745,40 +1963,16 @@ async def process_merge_job(job_id: str):
                 "selection_mode": selection_mode,
                 "warning": job_warning,
                 "completed_at": job.completed_at,
+                # Language-abort metadata — persisted so /result and /evaluate
+                # can serve correct language-unavailable responses after the
+                # job reaches its final PARTIAL_SUCCESS state.
+                "summary_unavailable": job.summary_unavailable,
+                "summary_unavailable_reason": job.summary_unavailable_reason,
+                "detected_language": job.detected_language,
             }}
         )
 
-        # Precompute the quality scorecard now that the job is already marked
-        # complete. The results page requests it the moment it mounts, and
-        # computing it takes ~100s — doing it here turns that request into a
-        # cache read instead of a wait, and the user spends the interval
-        # reading the summary rather than watching a spinner.
-        #
-        # Deliberately after the status update and inside its own try: a
-        # scorecard is a nice-to-have, and a failure here must never turn a
-        # finished job into a failed one.
-        #
-        # Language-abort jobs have summary_text=None, which causes
-        # _build_quality_report to raise 400 "Job has no summary to evaluate".
-        # Skip precompute to avoid that predictable 400 showing up in logs;
-        # the evaluate endpoint will surface the same 400 when called on-demand.
-        if not _language_abort:
-            try:
-                job_doc = await jobs_collection.find_one({"job_id": job_id})
-                if job_doc:
-                    quality_report = await _build_quality_report(job_doc, use_llm=False)
-                    await jobs_collection.update_one(
-                        {"job_id": job_id},
-                        {"$set": {_QUALITY_CACHE_FIELD: quality_report}},
-                    )
-                    print(f"[Quality] Scorecard cached for {job_id} "
-                          f"(summary={quality_report['summary_score']}%, "
-                          f"video={quality_report['video_score']}%)")
-            except Exception as quality_err:
-                print(f"[Quality] Scorecard precompute skipped: {quality_err}")
-        else:
-            print(f"[Quality] Scorecard precompute skipped for {job_id} "
-                  f"— language-unsupported job has no summary to score")
+
 
     except Exception as e:
         # Handle error

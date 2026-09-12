@@ -4,7 +4,7 @@
 // Hugging Face's punctuation model via REST API.
 // --------------------------------------------------
 
-const HUGGINGFACE_API_TOKEN = import.meta.env.VITE_HUGGINGFACE_API_TOKEN;
+const HUGGINGFACE_API_TOKEN = process.env.REACT_APP_HUGGINGFACE_API_TOKEN || '';
 
 /**
  * Punctuates raw transcript text using Hugging Face's fullstop model.
@@ -25,7 +25,6 @@ export async function punctuateText(rawText) {
       body: JSON.stringify({ inputs: rawText }),
     });
 
-    // Handle non-OK response
     if (!response.ok) {
       const errorData = await response.json();
       console.error("❌ Hugging Face API Error:", errorData);
@@ -34,15 +33,14 @@ export async function punctuateText(rawText) {
 
     const data = await response.json();
 
-    // ✅ Return generated_text if present
     if (Array.isArray(data) && data[0]?.generated_text) {
       return data[0].generated_text.trim();
     }
 
     console.warn("⚠️ Unexpected Hugging Face API response format:", data);
-    return rawText; // Fallback
+    return rawText; 
   } catch (error) {
     console.error("❌ Punctuation API request failed:", error.message);
-    return rawText; // Fallback to original
+    return rawText; 
   }
 }

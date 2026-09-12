@@ -24,6 +24,7 @@ def compute_selection_metrics(
     concepts: Sequence = (),
     concepts_covered: Sequence[str] = (),
     segment_vectors: Optional[np.ndarray] = None,
+    baseline_similarity: Optional[float] = None,
     n_bins: int = 10,
 ) -> Dict:
     """
@@ -39,6 +40,9 @@ def compute_selection_metrics(
                          the same order. Supplied -> real redundancy is measured;
                          omitted -> redundancy is reported as None rather than
                          guessed.
+        baseline_similarity: mean nearest-neighbour cosine among ALL candidate
+                         segments of the same video. This is what makes the
+                         redundancy figure mean anything — see below.
 
     Returns a JSON-safe dict.
     """
@@ -108,7 +112,26 @@ def compute_selection_metrics(
         np.fill_diagonal(sims, -1.0)
         peak_per_segment = sims.max(axis=1)
         raw = float(np.clip(peak_per_segment.mean(), 0.0, 1.0))
-        redundancy = round(float(np.clip((raw - 0.30) / 0.70, 0.0, 1.0)) * 100, 1)
+
+        # Redundancy is reported RELATIVE to the video's own baseline: the mean
+        # nearest-neighbour similarity across all candidate segments.
+        #
+        # An absolute scale cannot work here. Cosine similarity between any two
+        # passages of one podcast is high simply because they are one podcast in
+        # one voice on one subject, and how high depends on the encoder — the
+        # configured BAAI/bge-base-en-v1.5 puts unrelated passages around 0.7,
+        # where all-MiniLM puts them near 0.3. Scoring against a fixed floor
+        # reported 59% redundancy for a selection that was in fact more diverse
+        # than the source it came from, which is worse than reporting nothing.
+        #
+        # Against the baseline the number answers the question actually being
+        # asked: are these clips more alike than an arbitrary handful from this
+        # video would be? 0% means at or below the video's own baseline.
+        if baseline_similarity is not None and baseline_similarity < 1.0:
+            excess = (raw - baseline_similarity) / max(1.0 - baseline_similarity, 1e-6)
+            redundancy = round(float(np.clip(excess, 0.0, 1.0)) * 100, 1)
+        else:
+            redundancy = round(float(np.clip((raw - 0.30) / 0.70, 0.0, 1.0)) * 100, 1)
 
     return {
         "requested_seconds": round(float(requested_seconds), 1),
@@ -160,7 +183,13 @@ def format_metrics_report(metrics: Dict, title: str = "Selection metrics") -> st
         f"  Deciles occupied      : {metrics['bins_occupied']}/{metrics['bins_total']}",
         f"  Temporal balance      : {metrics['first_half_share_percent']}% first half / "
         f"{metrics['second_half_share_percent']}% second half",
-        f"  Unique concepts       : {metrics['unique_concepts']}",
+        # "0" alone reads as a successful concept-driven run that happened to
+        # cover nothing. It is not: with no concepts the concept term (largest
+        # single weight) contributed nothing at all, and the report has to say
+        # which of the two happened.
+        f"  Unique concepts       : {metrics['unique_concepts']}"
+        + ("  [NONE EXTRACTED — concept-driven selection disabled]"
+           if not metrics['unique_concepts'] else ""),
         f"  Avg concept weight    : {metrics['avg_concept_importance']}",
         f"  Redundancy            : {redundancy if redundancy is not None else 'n/a'}%",
         f"  Span                  : {mmss(metrics['earliest_timestamp'])} -> "

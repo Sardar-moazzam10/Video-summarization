@@ -1,0 +1,329 @@
+{
+  "target_minutes": 15,
+  "job_id": "audit_15min_1788811684",
+  "video_id": "_QXjl-4IuzY",
+  "timings": {
+    "download_transcript": 0.01,
+    "initial_fusion": 30.78,
+    "video_download": 14.69,
+    "semantic_segmentation": 0.0,
+    "concept_extraction": 0.0,
+    "selection": 0.11,
+    "ffmpeg": 101.47,
+    "audio_extraction": 31.96,
+    "second_fusion": 16.28,
+    "bart": 112.22,
+    "T0_to_T1_video_ready": 149.2,
+    "T0_to_T2_bart_start": 197.7,
+    "T0_to_T3_summary": 309.9,
+    "T0_to_T4_completed": 309.9
+  },
+  "duration": {
+    "requested_seconds": 900,
+    "selected_seconds": 873.4,
+    "pct_of_target": 97.0,
+    "clip_count": 33,
+    "early_stop": false,
+    "final_video_seconds": 873.9
+  },
+  "quality_stages": {
+    "full_transcript_words": 4972,
+    "full_transcript_segments": 631,
+    "source_duration_s": 1486.1,
+    "initial_fusion_words": 821,
+    "initial_fusion_topics": [
+      "It starts to take effect....",
+      "Office. It is good. Keep...",
+      "Had written. This is not...",
+      "Hopefully I will complete it...",
+      "Yes sir. sir maintain that...",
+      "Natural love for new things....",
+      "Part Two the Trap. This...",
+      "I have been sharing my...",
+      "It's here friend let's invest...",
+      "tool to learn a musical..."
+    ],
+    "selected_transcript_words": 2853,
+    "selected_transcript_snippet": "Which book are you reading? Sir confidence. Okay, when did you take it? Sir, I took it yesterday and I know I have three Also completed the chapters. Okay, that's great. Happy reading. Thank you sir. What's the matter Utkarsh ji? Late again today. Hey sir no, I have joined the gym from here So now I will go to workout in the morning only. If I have to do it now, I will come late. Office. It is good. Keep it up. Wow where did this plant come from? Sir, I have installed it. thought about office The environment will become a little greener. Energy She will also be a little positive and will do my",
+    "fused_narrative_words": 956,
+    "fused_narrative_snippet": "Fear of missing out. your mind To avoid hard work, you should Shows trailers of ideas. friend Trading is much easier. this guitar right now Let's leave. This is just a distraction Because your mind is back to that first day Wanting excitement without hard work Is. That's why that work is now less of a burden for you. It starts to take effect. level three value Of despair. the same point when progress It was not happening according to us. us It seems man is so slow and ours Motivation disappears. That's why we have to work Looks boring. Office. It is good. Keep it up. Wow where did this plant c",
+    "fused_narrative_topics": [
+      "Fear of missing out. your...",
+      "Target: Write idea here or...",
+      "will be disciplined. Kept practicing...",
+      "second Disadvantage: You remain a...",
+      "be my decision. after that...",
+      "Second Strategy Burn Your Ships...",
+      "the solution or not? Friend,..."
+    ],
+    "fusion_artifact_count": 4,
+    "bart_output_words": 277,
+    "bart_output_snippet": "University of Scott's study shows that only 8% of people actually keep your New Year's resolution . The Finisher Muscle That Shifts Your Identity will do is a cheat code . When this identity shift comes, When your identity is formed then It becomes easier for you to handle goals Is. Your finisher muscle is weak and strengthen your finisher muscles . The target right now is to convince your brain that you can complete the work. If you can do one thing even for three days if you can't do it then what is the problem? Is it? Your finfer is Muscle Week. If it is strong then what's the solution if i",
+    "bart_full_output": "University of Scott's study shows that only 8% of people actually keep your New Year's resolution . The Finisher Muscle That Shifts Your Identity will do is a cheat code . When this identity shift comes, When your identity is formed then It becomes easier for you to handle goals Is. Your finisher muscle is weak and strengthen your finisher muscles . The target right now is to convince your brain that you can complete the work. If you can do one thing even for three days if you can't do it then what is the problem? Is it? Your finfer is Muscle Week. If it is strong then what's the solution if it is weak? Finisher muscle What is the solution to the problem if it's weak? Small start Start small. Don't go to the gym for an hour straight. You will leave after three days. Your goal is to make your muscles should get better again. Your aim is to give your brain believe that To be disciplined. You remain a beginner. You become a beginner practicing together together together. Kept practicing together with Gave up for a month Gave yourself a chance to become a permanent beginner. Admend: Practice together together and you will be a permanent beginners .  The market always looks for experts. Not for beginners. You must not burn any of your boats. Burn the Ships Method. Not one in 1590 Commander Hermann Cortes landed on the island. Do you know what you did? all of your army Ships were sunk. Why? so as to go back There is no way left. So what can you do in this way yes?",
+    "summarization_decision": {
+      "action": "compress",
+      "reason": "956 words is above the 350-word target (+115% tolerance)",
+      "target_words": 350,
+      "coherence": {
+        "word_count": 956,
+        "sentence_count": 121,
+        "artifact_density": 0.0496,
+        "fragment_rate": 0.2314,
+        "self_similarity_rate": 0.0083,
+        "source_artifacts": 0,
+        "mid_sentence_connectives": 2,
+        "is_coherent": false,
+        "reasons": [
+          "23% of sentences are fragments (> 20%)"
+        ]
+      }
+    },
+    "tldr": "University of Scott's study shows that only 8% of people actually keep your New Year's resolution . The Finisher Muscle That Shifts Your Identity will do is a cheat code .",
+    "tldr_words": 31,
+    "takeaways": [
+      "University of Scott's study shows that only 8% of people actually keep your New Year's resolution .",
+      "When this identity shift comes, When your identity is formed then It becomes easier for you to handle goals Is.",
+      "The target right now is to convince your brain that you can complete the work.",
+      "Kept practicing together with Gave up for a month Gave yourself a chance to become a permanent beginner.",
+      "Not one in 1590 Commander Hermann Cortes landed on the island."
+    ],
+    "chapters": [
+      {
+        "title": "Introduction & Overview",
+        "words": 109
+      },
+      {
+        "title": "Core Discussion",
+        "words": 76
+      },
+      {
+        "title": "Conclusions & Key Points",
+        "words": 69
+      }
+    ],
+    "quality_audit": {
+      "raw_transcript": {
+        "stage": "raw_transcript",
+        "word_count": 4972,
+        "issues": [
+          "repeated bigrams \u00d73: 'Sir, I'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "initial_fusion_narrative": {
+        "stage": "initial_fusion_narrative",
+        "word_count": 821,
+        "issues": [
+          "13 fusion connective(s): ['additionally,', 'furthermore,', 'moreover,', 'in related terms,', 'building on this,']",
+          "repeated bigrams \u00d73: 'It was'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "selected_transcript": {
+        "stage": "selected_transcript",
+        "word_count": 2853,
+        "issues": [
+          "repeated bigrams \u00d73: 'Sir, I'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "fused_narrative": {
+        "stage": "fused_narrative",
+        "word_count": 956,
+        "issues": [
+          "5 fusion connective(s): ['additionally,', 'furthermore,', 'moreover,', 'in related terms,', 'building on this,']",
+          "repeated bigrams \u00d73: 'your mind'",
+          "noise token: \\[music\\]"
+        ]
+      },
+      "bart_output": {
+        "stage": "bart_output",
+        "word_count": 277,
+        "issues": [
+          "repeated bigrams \u00d73: '. The'"
+        ]
+      },
+      "tldr": {
+        "stage": "tldr",
+        "word_count": 31,
+        "issues": []
+      }
+    }
+  },
+  "metrics": {
+    "topics_found": 7,
+    "topics_list": [
+      "Fear of missing out. your...",
+      "Target: Write idea here or...",
+      "will be disciplined. Kept practicing...",
+      "second Disadvantage: You remain a...",
+      "be my decision. after that...",
+      "Second Strategy Burn Your Ships...",
+      "the solution or not? Friend,..."
+    ],
+    "total_source_words": 4972,
+    "selected_text_words": 2853,
+    "fused_narrative_words": 956,
+    "output_words": 277,
+    "target_words": 350,
+    "compression_pct_as_coded": 9.71,
+    "compression_pct_vs_full": 5.57,
+    "compression_formula_coded": "output_words / selected_text_words = 277/2853 = 9.7%",
+    "compression_formula_vs_full": "output_words / full_transcript_words = 277/4972 = 5.6%",
+    "summary_quality_pct": 72.0,
+    "video_quality_pct": 100.0,
+    "quality_detail_check_a": {
+      "name": "Summary fidelity (summary vs original video)",
+      "score": 72.0,
+      "verdict": "FAIR \u2014 captures the gist but misses/dilutes some key points",
+      "keyword_coverage": {
+        "score": 44.0,
+        "hits": [
+          "work",
+          "new",
+          "people",
+          "did",
+          "brain",
+          "don",
+          "start",
+          "thing",
+          "problem",
+          "know",
+          "yes"
+        ],
+        "misses": [
+          "music",
+          "level",
+          "just",
+          "sir",
+          "mind",
+          "like",
+          "let",
+          "time",
+          "happen",
+          "sos",
+          "stage",
+          "going",
+          "pattern",
+          "write"
+        ],
+        "total_keywords": 25,
+        "top_keywords": [
+          "music",
+          "work",
+          "new",
+          "people",
+          "did",
+          "brain",
+          "level",
+          "just",
+          "sir",
+          "mind",
+          "don",
+          "like",
+          "start",
+          "thing",
+          "let",
+          "time",
+          "happen",
+          "sos",
+          "problem",
+          "know",
+          "stage",
+          "going",
+          "pattern",
+          "write",
+          "yes"
+        ]
+      },
+      "semantic_coverage": {
+        "score": 100.0,
+        "covered": 63,
+        "total": 63,
+        "unit": "topic chunks",
+        "threshold": 0.45,
+        "least_covered": []
+      },
+      "llm_judge": {
+        "score": null,
+        "error": "disabled (--no-llm)"
+      }
+    },
+    "quality_detail_check_b": {
+      "name": "Video\u2194Summary match (clips vs summary)",
+      "score": 100.0,
+      "verdict": "GOOD \u2014 the video closely represents its summary (as expected)",
+      "keyword_coverage": {
+        "score": 100.0,
+        "hits": [
+          "beginner",
+          "muscle",
+          "finisher",
+          "way",
+          "burn",
+          "days",
+          "weak",
+          "ships",
+          "practicing",
+          "solution",
+          "problem",
+          "identity",
+          "remain",
+          "brain",
+          "small",
+          "start",
+          "boats",
+          "leave",
+          "left",
+          "yes"
+        ],
+        "misses": [],
+        "total_keywords": 20,
+        "top_keywords": [
+          "beginner",
+          "muscle",
+          "finisher",
+          "way",
+          "burn",
+          "days",
+          "weak",
+          "ships",
+          "practicing",
+          "solution",
+          "problem",
+          "identity",
+          "remain",
+          "brain",
+          "small",
+          "start",
+          "boats",
+          "leave",
+          "left",
+          "yes"
+        ]
+      },
+      "semantic_coverage": {
+        "score": 100.0,
+        "covered": 26,
+        "total": 26,
+        "unit": "summary sentences",
+        "threshold": 0.45,
+        "least_covered": []
+      },
+      "llm_judge": {
+        "score": null,
+        "error": "disabled (--no-llm)"
+      }
+    }
+  },
+  "grounding": {
+    "bart_grounded_in_narrative": true,
+    "bart_grounded_in_selected": true,
+    "bart_grounded_in_full": true,
+    "narrative_reasons": [],
+    "selected_reasons": [],
+    "full_reasons": [],
+    "potential_leak": false
+  },
+  "errors": []
+}

@@ -17,21 +17,10 @@ import { motion } from 'framer-motion';
 // backend remains the source of truth for what is actually generated.
 const DURATIONS = [
   {
-    value: 2,
-    label: '2 min',
-    icon: '🚀',
-    title: 'Express',
-    description: 'Fastest — ideal for a live demo',
-    targetWords: 300,
-    color: 'from-rose-500 to-pink-500',
-    bgColor: 'bg-rose-500/10',
-    borderColor: 'border-rose-500',
-  },
-  {
     value: 5,
     label: '5 min',
     icon: '⚡',
-    title: 'Quick Scan',
+    title: 'Quick Highlights',
     description: 'Key highlights only',
     targetWords: 750,
     color: 'from-amber-500 to-orange-500',
@@ -42,7 +31,7 @@ const DURATIONS = [
     value: 10,
     label: '10 min',
     icon: '📝',
-    title: 'Brief Summary',
+    title: 'Key Concepts',
     description: 'Main ideas with context',
     targetWords: 1500,
     color: 'from-emerald-500 to-teal-500',
@@ -53,7 +42,7 @@ const DURATIONS = [
     value: 15,
     label: '15 min',
     icon: '📚',
-    title: 'Full Coverage',
+    title: 'Balanced Summary',
     description: 'Complete with examples',
     targetWords: 2200,
     color: 'from-blue-500 to-cyan-500',
@@ -64,12 +53,23 @@ const DURATIONS = [
     value: 20,
     label: '20 min',
     icon: '🎓',
-    title: 'Deep Dive',
+    title: 'Detailed Summary',
     description: 'Comprehensive analysis',
     targetWords: 2800,
     color: 'from-purple-500 to-pink-500',
     bgColor: 'bg-purple-500/10',
     borderColor: 'border-purple-500',
+  },
+  {
+    value: 30,
+    label: '30 min',
+    icon: '🏛️',
+    title: 'Comprehensive Summary',
+    description: 'Longest — fullest coverage of the source',
+    targetWords: 4200,
+    color: 'from-indigo-500 to-violet-500',
+    bgColor: 'bg-indigo-500/10',
+    borderColor: 'border-indigo-500',
   },
 ];
 
@@ -79,10 +79,23 @@ const DurationSelector = ({
   disabled = false,
   showTitle = true,
   compact = false,
+  // Durations the source material can actually produce. null = not resolved
+  // yet, so nothing is disabled and the picker behaves exactly as before.
+  // The backend computes this from real media duration and re-checks it on
+  // submit — this only saves the user a round trip and explains why.
+  allowedDurations = null,
+  sourceDurationLabel = '',
 }) => {
   // Look the estimate up from DURATIONS rather than hardcoding it, so adding a
   // profile to the table above is the only edit required.
   const selectedDuration = DURATIONS.find((d) => d.value === value);
+
+  const isAllowed = (minutes) =>
+    !Array.isArray(allowedDurations) || allowedDurations.includes(minutes);
+
+  const tooLongReason = sourceDurationLabel
+    ? `Video is only ${sourceDurationLabel}`
+    : 'Longer than the source video';
 
   return (
     <div className="w-full">
@@ -102,27 +115,32 @@ const DurationSelector = ({
           centered, and flex-1 lets a full row share the width evenly. */}
       <div className="flex flex-wrap justify-center gap-3">
         {DURATIONS.map((duration) => {
-          const isSelected = value === duration.value;
+          const allowed = isAllowed(duration.value);
+          const isSelected = value === duration.value && allowed;
+          const isDisabled = disabled || !allowed;
 
           return (
             <motion.button
               key={duration.value}
-              onClick={() => !disabled && onChange(duration.value)}
-              disabled={disabled}
+              onClick={() => !isDisabled && onChange(duration.value)}
+              disabled={isDisabled}
+              aria-disabled={isDisabled}
+              title={!allowed ? tooLongReason : undefined}
+              data-testid={`duration-option-${duration.value}`}
               className={`
                 relative overflow-hidden rounded-xl p-4 text-left
                 transition-all duration-300 ease-out
                 border-2 flex-1
                 ${compact ? 'basis-32 max-w-[220px]' : 'basis-40 max-w-xs'}
-                ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
                 ${
                   isSelected
                     ? `${duration.borderColor} ${duration.bgColor} shadow-lg`
                     : 'border-dark-700 bg-dark-800/50 hover:border-dark-600 hover:bg-dark-800'
                 }
               `}
-              whileHover={!disabled ? { scale: 1.02, y: -2 } : {}}
-              whileTap={!disabled ? { scale: 0.98 } : {}}
+              whileHover={!isDisabled ? { scale: 1.02, y: -2 } : {}}
+              whileTap={!isDisabled ? { scale: 0.98 } : {}}
               layout
             >
               {/* Gradient Background on Selection */}
@@ -159,14 +177,20 @@ const DurationSelector = ({
                   {duration.title}
                 </h4>
 
-                {/* Description */}
-                <p
-                  className={`text-sm ${
-                    isSelected ? 'text-dark-300' : 'text-dark-400'
-                  }`}
-                >
-                  {duration.description}
-                </p>
+                {/* Description, or why this option cannot be used */}
+                {allowed ? (
+                  <p
+                    className={`text-sm ${
+                      isSelected ? 'text-dark-300' : 'text-dark-400'
+                    }`}
+                  >
+                    {duration.description}
+                  </p>
+                ) : (
+                  <p className="text-sm text-amber-500/90" data-testid={`duration-reason-${duration.value}`}>
+                    {tooLongReason}
+                  </p>
+                )}
 
                 {/* Selection Indicator */}
                 {isSelected && (

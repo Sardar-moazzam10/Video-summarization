@@ -7,6 +7,7 @@ import { fetchVideos } from './youtubeApi.js';
 import MultiSelectBar from './components/merge/MultiSelectBar.jsx';
 import './Background.css';
 import { API_BASE_URL } from './config/api.js';
+import { extractErrorMessage } from './utils/apiError.js';
 
 const EXAMPLE_QUERIES = [
   'Lex Fridman Podcast',
@@ -98,7 +99,9 @@ const SearchPage = () => {
       if (data.job_id) {
         navigate(`/merged-player/${data.job_id}`);
       } else {
-        setErrorMsg(data.detail || 'Server error during summarization. Please retry.');
+        setErrorMsg(
+          extractErrorMessage(data, 'Server error during summarization. Please retry.')
+        );
       }
     } catch {
       setErrorMsg('Connection error. Make sure the backend is running.');

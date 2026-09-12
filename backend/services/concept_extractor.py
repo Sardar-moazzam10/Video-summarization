@@ -37,15 +37,21 @@ import asyncio
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
 
-# Words per LLM chunk. llama3.2:3b has an 8k context; ~700 words of transcript
-# plus the prompt leaves ample room for the JSON answer without truncation.
-CHUNK_WORDS = 700
+# Words per LLM chunk.
+#
+# Sized for prompt-evaluation cost, not for context limits — llama3.2:3b has 8k
+# of context and would happily take three times this. On CPU the prompt is
+# evaluated token by token before a single output token appears, so chunk size
+# is close to a direct multiplier on latency. 450 words keeps a chunk to roughly
+# 600 tokens while still being long enough to contain a whole explanation.
+CHUNK_WORDS = 450
 
 # Overlap between consecutive chunks. A concept introduced at the end of one
 # chunk and explained at the start of the next would otherwise be seen in
@@ -53,13 +59,111 @@ CHUNK_WORDS = 700
 CHUNK_OVERLAP_RATIO = 0.15
 
 # Concept names closer than this in SBERT space are the same concept.
+#
+# This is a FLOOR, not the operating value — see merge_concepts(). An absolute
+# cosine threshold is not portable between embedding models: all-MiniLM-L6-v2
+# spreads unrelated short strings around 0.2-0.4, while the configured default
+# BAAI/bge-base-en-v1.5 packs them above 0.7. Tuned for the former, 0.72 merged
+# every concept of a real 25-minute video into a single cluster named "work".
 CONCEPT_MERGE_THRESHOLD = 0.72
+
+# The operating threshold is the higher of the floor above and this quantile of
+# the observed pairwise similarities, so "unusually similar FOR THIS MODEL AND
+# THIS VIDEO" decides the merge rather than a constant that happens to suit one
+# encoder. 0.95 merges roughly the closest 5% of pairs.
+CONCEPT_MERGE_QUANTILE = 0.95
+
+# If a merge would still collapse the list below this share of its input, the
+# threshold is raised until it does not. Dedup that leaves one concept has not
+# deduplicated, it has erased.
+MIN_MERGE_SURVIVAL = 0.25
+
+# Below this many concepts the similarity distribution is too small to calibrate
+# against, so the absolute floor is used unchanged.
+MIN_CONCEPTS_FOR_ADAPTIVE = 8
 
 # Hard ceiling on LLM calls for one video, so a 3-hour source cannot make the
 # job run for an hour. Beyond this, chunks are sampled evenly across the
 # timeline rather than truncated to the start — truncating would reintroduce
 # exactly the beginning-bias this whole change exists to remove.
 MAX_LLM_CHUNKS = 14
+
+# Concurrent Ollama requests.
+#
+# Not a throughput knob — a correctness one. Ollama serialises generation, so
+# firing all 14 chunk requests at once puts twelve of them in a queue where they
+# burn their per-chunk timeout waiting rather than generating. Every chunk then
+# "times out" having produced nothing, and the whole stage falls back to TF-IDF
+# despite a healthy daemon. Two in flight keeps the daemon busy while leaving
+# each request's timeout measuring the thing it is supposed to measure.
+LLM_CONCURRENCY = 2
+
+# Token cap for one concept-extraction answer. Five concepts with names, reasons
+# and short quotes fit in roughly 300 tokens; the service default of 1536 lets a
+# small model ramble for minutes on CPU and then get killed by a timeout with
+# nothing to show. The prompt asks for JSON and Ollama's format:json stops at the
+# closing brace, so this cap is a backstop rather than the normal exit.
+CONCEPT_NUM_PREDICT = 512
+
+
+# A chunk counts as "discussing" a term only when the term's TF-IDF there is at
+# least this fraction of its strongest chunk. Below that it is a mention, not a
+# discussion, and letting it through widens the concept's time window until
+# temporal grounding stops discriminating.
+TFIDF_STRONG_RATIO = 0.35
+
+
+def _build_token_pattern() -> str:
+    """
+    Script-agnostic TF-IDF token pattern.
+
+    The pattern this replaced was ``\\b[a-zA-Z][a-zA-Z-]{2,}\\b`` — ASCII only.
+    On any non-Latin transcript it matched NOTHING, so TfidfVectorizer produced
+    an empty vocabulary, extract_concepts_tfidf() returned [], and the selector
+    then ran with zero concepts — silently disabling the concept term, which
+    carries the largest single weight in the scoring function. Measured on a
+    real 45,165-character Hindi transcript: 0 tokens matched.
+
+    Two things are needed to fix it:
+
+    1. Unicode letters, not [a-zA-Z]. ``[^\\W\\d_]`` is "word character, minus
+       digits, minus underscore" = a letter in any script, so tokens still
+       cannot begin with a number.
+
+    2. Combining marks. Python's ``\\w`` follows str.isalnum(), which is False
+       for a combining mark, so ``\\w`` alone splits a Devanagari word at every
+       vowel sign: बनिए -> ब, न, ए. Indic, Arabic, Hebrew and Thai orthography
+       all rely on such marks, so the continuation class has to include Unicode
+       category M* explicitly.
+
+    Latin behaviour is unchanged — verified token-for-token against the old
+    pattern on English text.
+    """
+    marks = "".join(
+        chr(cp) for cp in range(0x0300, 0x1AB0)
+        if unicodedata.category(chr(cp)).startswith("M")
+    )
+    marks = re.sub(r"[\\\]\^\-]", lambda m: "\\" + m.group(), marks)
+    # letter (any script) + 2 or more of {word char, combining mark, hyphen}
+    return rf"(?u)\b[^\W\d_][\w{marks}-]{{2,}}"
+
+
+_TOKEN_PATTERN = _build_token_pattern()
+
+
+# Filler that survives sklearn's written-English stop list but carries no
+# meaning in speech. Contractions appear split ("don", "doesn") because the
+# tokeniser drops apostrophes.
+_SPOKEN_FILLER = frozenset("""
+like just really actually basically literally okay yeah yep nope gonna wanna
+gotta kinda sorta maybe right sure well know think thing things stuff lot lots
+say says said saying tell tells told talk talks talking come comes came going
+goes went get gets got give gives gave make makes made take takes took
+look looks looked want wants wanted need needs needed let lets mean means
+guy guys people person everybody somebody anybody thank thanks please sorry
+don doesn didn isn aren wasn weren won wouldn couldn shouldn haven hasn hadn
+ll ve re td um uh ah oh hey yes no nah huh hmm so then now here there
+""".split())
 
 
 CONCEPT_PROMPT = """You are analysing part of a video transcript. Output ONLY valid JSON, no prose, no code fences.
@@ -218,8 +322,20 @@ async def _extract_from_chunk(ollama, chunk: Chunk, max_concepts: int, timeout: 
         chunk_text=chunk.text,
     )
     try:
+        # The HTTP timeout is set slightly BELOW the asyncio one on purpose, so
+        # httpx aborts the request and the worker thread ends. If the asyncio
+        # timeout fired first the coroutine would be cancelled while the thread
+        # carried on generating — holding a slot on a daemon that serialises
+        # requests, and starving every chunk behind it.
         raw = await asyncio.wait_for(
-            asyncio.to_thread(ollama._generate, prompt, True),
+            asyncio.to_thread(
+                lambda: ollama._generate(
+                    prompt,
+                    expect_json=True,
+                    timeout=max(5.0, timeout - 2.0),
+                    num_predict=CONCEPT_NUM_PREDICT,
+                )
+            ),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
@@ -285,12 +401,18 @@ def extract_concepts_tfidf(chunks: List[Chunk], max_concepts: int = 20) -> List[
 
     texts = [c.text for c in chunks]
     try:
+        from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+        # sklearn's list is built for written English and keeps the vocabulary of
+        # speech: on a real 82-minute podcast the top concepts came back as
+        # "light, sleep, like, day, melatonin, just, wanna, don" — three of the
+        # eight being filler. These are not concepts in any video.
+        stop_words = list(ENGLISH_STOP_WORDS | _SPOKEN_FILLER)
         vec = TfidfVectorizer(
-            stop_words="english",
+            stop_words=stop_words,
             ngram_range=(1, 3),
             max_features=4000,
             min_df=1,
-            token_pattern=r"(?u)\b[a-zA-Z][a-zA-Z-]{2,}\b",
+            token_pattern=_TOKEN_PATTERN,   # see _build_token_pattern()
         )
         matrix = vec.fit_transform(texts)
     except Exception:
@@ -301,8 +423,34 @@ def extract_concepts_tfidf(chunks: List[Chunk], max_concepts: int = 20) -> List[
         return []
 
     dense = matrix.toarray()
-    totals = dense.sum(axis=0)
-    order = totals.argsort()[::-1]
+
+    # Rank by LOCALISED salience, not by total mass across the transcript.
+    #
+    # Summing TF-IDF over every chunk answers "which words does this video use a
+    # lot?", and for a lecture the answer is its own title. Measured on a
+    # 75-minute CS229 lecture, the top concepts were: learning, class, data,
+    # learn, algorithms, example, bit, time — words that appear just as freely
+    # while the lecturer is reading out the honour code as while he is teaching
+    # regression. They cannot separate subject matter from administration, and
+    # they span the whole runtime so they cannot localise anything either.
+    #
+    # Peak-times-localisation asks a different question: "which words does this
+    # video use HEAVILY IN ONE PLACE?" On the same lecture that returns
+    # helicopter, malignant, checkers, features, unsupervised learning,
+    # mathematical — concepts that are about something, and whose chunks mark
+    # where that something is discussed. The square root damps the localisation
+    # term so a word appearing exactly once cannot outrank a genuine recurring
+    # topic on rarity alone.
+    present = (dense > 0).sum(axis=0) / max(len(chunks), 1)
+    salience = dense.max(axis=0) * (1.0 - present) ** 0.5
+    if salience.max() <= 0:
+        # Every surviving term appears in every chunk, so nothing is localised
+        # and the whole ranking would collapse to zero. Uniform vocabulary is a
+        # real (if unusual) transcript — a single speaker repeating one topic —
+        # and it should still yield a ranked list, just one with no localising
+        # power. Fall back to raw peak salience.
+        salience = dense.max(axis=0)
+    order = salience.argsort()[::-1]
 
     concepts: List[Concept] = []
     seen_tokens: List[set] = []
@@ -316,15 +464,22 @@ def extract_concepts_tfidf(chunks: List[Chunk], max_concepts: int = 20) -> List[
         # "neural network" after "neural networks" adds nothing.
         if any(len(tokens & prev) / max(len(tokens), 1) > 0.6 for prev in seen_tokens):
             continue
-        # Which chunks actually carry this term — those are its timestamps.
-        hits = np.nonzero(dense[:, pos])[0]
+        # Timestamps come only from chunks where the term is STRONG, not from
+        # every chunk it appears in. A passing mention is not a discussion, and
+        # including it would smear the concept's window across the whole video —
+        # which is what made temporal grounding useless downstream.
+        column = dense[:, pos]
+        peak = column.max()
+        if peak <= 0:
+            continue
+        hits = np.nonzero(column >= peak * TFIDF_STRONG_RATIO)[0]
         if hits.size == 0:
             continue
         seen_tokens.append(tokens)
         concepts.append(Concept(
             name=phrase,
-            importance=float(totals[pos]),
-            reason="Statistically salient phrase across the transcript (TF-IDF).",
+            importance=float(salience[pos]),
+            reason="Locally concentrated phrase — used heavily in part of the transcript (TF-IDF).",
             evidence=[],
             timestamps=[(chunks[h].start, chunks[h].end) for h in hits],
             support=int(hits.size),
@@ -344,7 +499,26 @@ def extract_concepts_tfidf(chunks: List[Chunk], max_concepts: int = 20) -> List[
 # =====================================================================
 
 def _normalise(name: str) -> str:
-    return re.sub(r"[^a-z0-9 ]", "", name.lower()).strip()
+    """
+    Lowercase merge key with punctuation stripped.
+
+    Was ``re.sub(r"[^a-z0-9 ]", "", name.lower())`` — ASCII only, so every
+    non-Latin concept name normalised to the empty string and was then dropped
+    by merge_concepts()'s ``if not key: continue``. That is the second half of
+    the same bug as _build_token_pattern(): after the tokeniser was fixed, a
+    Hindi transcript produced 50 raw concepts and still ranked 0, because all
+    50 keys were "".
+
+    Keeps letters and digits in any script, plus combining marks (which
+    ``isalnum()`` reports False for — see _build_token_pattern). Punctuation,
+    symbols and hyphens are dropped exactly as before, and ASCII names
+    normalise identically to the old implementation.
+    """
+    cleaned = "".join(
+        ch for ch in name.lower()
+        if ch.isalnum() or ch.isspace() or unicodedata.category(ch).startswith("M")
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def merge_concepts(
@@ -406,14 +580,45 @@ def merge_concepts(
     for c, v in zip(merged, unit):
         c.embedding = v
 
+    # Self-calibrate against the observed similarity distribution.
+    similarity_matrix = unit @ unit.T
+    upper = similarity_matrix[np.triu_indices(len(merged), k=1)]
+    # A quantile over two or three concepts describes nothing, and would sit
+    # exactly on the one pair that ought to merge — excluding it. Below this
+    # count the absolute floor is the better estimator.
+    if upper.size and len(merged) >= MIN_CONCEPTS_FOR_ADAPTIVE:
+        # Nudged below the quantile so pairs AT it merge rather than falling on
+        # the wrong side of a strict comparison.
+        adaptive = float(np.quantile(upper, CONCEPT_MERGE_QUANTILE)) - 1e-6
+        if adaptive > threshold:
+            print(f"[Concepts] Merge threshold raised {threshold:.2f} -> {adaptive:.2f} "
+                  f"(p{int(CONCEPT_MERGE_QUANTILE * 100)} of observed similarities)")
+            threshold = adaptive
+
     try:
         from sklearn.cluster import AgglomerativeClustering
-        labels = AgglomerativeClustering(
-            n_clusters=None,
-            distance_threshold=1.0 - threshold,
-            metric="cosine",
-            linkage="average",
-        ).fit_predict(unit)
+
+        labels = None
+        for attempt in range(4):
+            candidate = AgglomerativeClustering(
+                n_clusters=None,
+                distance_threshold=max(1e-6, 1.0 - threshold),
+                metric="cosine",
+                linkage="average",
+            ).fit_predict(unit)
+            survivors = len(set(candidate.tolist()))
+            labels = candidate
+            # The collapse guard is only meaningful on a real list. With two or
+            # three concepts, merging down to one is a legitimate outcome — they
+            # may simply be the same idea named twice.
+            if len(merged) < MIN_CONCEPTS_FOR_ADAPTIVE:
+                break
+            if survivors >= max(2, int(len(merged) * MIN_MERGE_SURVIVAL)):
+                break
+            # Too aggressive: tighten and retry rather than shipping one cluster.
+            threshold = 1.0 - (1.0 - threshold) * 0.5
+            print(f"[Concepts] Merge collapsed {len(merged)} concepts to {survivors} — "
+                  f"tightening threshold to {threshold:.3f}")
     except Exception:
         return merged
 
@@ -552,20 +757,32 @@ async def extract_concepts(
                 print(f"[Concepts] {len(chunks)} chunks -> sampling {len(llm_chunks)} "
                       f"evenly across the timeline (LLM call cap)")
 
-            tasks = [
-                _extract_from_chunk(ollama, ch, max_concepts_per_chunk, per_chunk_timeout)
-                for ch in llm_chunks
-            ]
-            try:
-                results = await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=total_timeout,
-                )
-            except asyncio.TimeoutError:
-                print(f"[Concepts] LLM stage exceeded {total_timeout}s — using partial results")
-                results = []
+            semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
 
-            for res in results:
+            async def _guarded(chunk):
+                async with semaphore:
+                    return await _extract_from_chunk(
+                        ollama, chunk, max_concepts_per_chunk, per_chunk_timeout
+                    )
+
+            tasks = [asyncio.ensure_future(_guarded(ch)) for ch in llm_chunks]
+
+            # asyncio.wait, not wait_for(gather(...)): on a total-timeout the
+            # latter raises and every finished chunk's work is thrown away with
+            # it. Here the completed set is kept and only the stragglers are
+            # cancelled, so a slow daemon costs coverage, not everything.
+            done, pending = await asyncio.wait(tasks, timeout=total_timeout)
+            if pending:
+                print(f"[Concepts] LLM stage hit {total_timeout}s with {len(pending)} "
+                      f"chunk(s) outstanding — keeping the {len(done)} that finished")
+                for task in pending:
+                    task.cancel()
+
+            for task in done:
+                try:
+                    res = task.result()
+                except Exception:
+                    continue
                 if isinstance(res, list):
                     raw.extend(res)
 

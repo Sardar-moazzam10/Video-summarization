@@ -136,7 +136,7 @@ const HistoryPage = () => {
         </aside>
 
         {/* Main Content */}
-        <main className="panel-main" style={{ maxWidth: '800px' }}>
+        <main className="panel-main" style={{ maxWidth: '800px', width: '100%', minWidth: 0 }}>
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -146,7 +146,7 @@ const HistoryPage = () => {
             <p className="panel-subheading">Your summaries, searches, watched videos, and transcripts</p>
 
             {/* Filter Tabs + Clear Button */}
-            <div style={styles.toolbar}>
+            <div className="history-toolbar" style={styles.toolbar}>
               <div style={styles.filterTabs}>
                 {filterTabs.map((tab) => (
                   <button
@@ -222,7 +222,7 @@ const HistoryPage = () => {
 
             {/* History List */}
             {!loading && (
-              <div style={styles.historyList}>
+              <div className="history-cards-list" style={styles.historyList}>
                 <AnimatePresence mode="popLayout">
                   {filteredHistory.map((item, index) => {
                     const config = typeConfig[item.type] || typeConfig.search;
@@ -237,6 +237,7 @@ const HistoryPage = () => {
                         exit={{ opacity: 0, x: -20 }}
                         transition={{ duration: 0.2, delay: index * 0.03 }}
                         onClick={() => handleClick(item)}
+                        className="history-card"
                         style={styles.historyCard}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.borderColor = config.border;
@@ -254,7 +255,7 @@ const HistoryPage = () => {
 
                         {/* Content */}
                         <div style={styles.cardContent}>
-                          <div style={styles.cardHeader}>
+                          <div className="history-card-header" style={styles.cardHeader}>
                             <span style={{ ...styles.typeBadge, background: config.bg, color: config.color, border: `1px solid ${config.border}` }}>
                               {config.label}
                             </span>
@@ -400,6 +401,7 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '8px',
+    position: 'relative',
   },
   historyCard: {
     display: 'flex',

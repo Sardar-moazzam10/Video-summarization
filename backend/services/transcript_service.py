@@ -13,6 +13,7 @@ Also handles:
   - Retry logic for transient failures
 """
 
+import asyncio
 import re
 import os
 import sys
@@ -23,7 +24,7 @@ import subprocess
 import tempfile
 import time
 from datetime import datetime
-from typing import Optional, List
+from typing import Awaitable, Callable, Optional, List
 
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -206,12 +207,21 @@ class TranscriptService:
         self.cookie_path = os.path.abspath("cookies.txt")
         self._whisper_model = None
 
-    async def get_transcript(self, video_id: str) -> Optional[dict]:
+    async def get_transcript(
+        self,
+        video_id: str,
+        progress_cb: Optional[Callable[[str], Awaitable[None]]] = None,
+    ) -> Optional[dict]:
         """
         Get transcript with caching and 3-tier fallbacks.
 
         Args:
             video_id: YouTube video ID or full URL
+            progress_cb: Optional async callback(message) invoked at points a
+                caller might want to surface as job progress (e.g. before the
+                translation stage, which can take up to
+                TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS). Best-effort — a
+                failing callback is swallowed so it can never break the fetch.
 
         Returns:
             Dict with transcript, source, and cached flag, or None
@@ -234,13 +244,19 @@ class TranscriptService:
             print(f"[Transcript] Cached transcript for {video_id} failed the sanity "
                   f"check — refetching instead of reusing it")
 
-        # Tier 1: YouTube Transcript API (fastest)
-        transcript = self._fetch_youtube_api(video_id)
+        # Tier 1: YouTube Transcript API (fastest). Off the event loop —
+        # this makes network calls with time.sleep backoff, and running it
+        # inline would block every other request on this process for the
+        # full retry duration (same class of bug fixed for translation/
+        # Whisper below).
+        transcript = await asyncio.to_thread(self._fetch_youtube_api, video_id)
         source = "youtube_api"
 
-        # Tier 2: yt-dlp subtitle extraction
+        # Tier 2: yt-dlp subtitle extraction. Off the event loop — this
+        # shells out via subprocess.run with up to a 90s timeout per
+        # language tried, which would otherwise stall the whole server.
         if not transcript:
-            transcript = self._fetch_ytdlp(video_id)
+            transcript = await asyncio.to_thread(self._fetch_ytdlp, video_id)
             source = "yt_dlp"
 
         # Language gate.
@@ -271,25 +287,95 @@ class TranscriptService:
             lang = self._detect_transcript_language(transcript)
             if lang != "en":
                 print(f"[Transcript] {video_id} captions are '{lang}' — translating captions")
-                transcript = self._translate_transcript_to_english(transcript, lang)
+                if progress_cb:
+                    try:
+                        await progress_cb(f"Translating '{lang}' captions for {video_id}...")
+                    except Exception:
+                        pass
+
+                # Runs off the event loop (asyncio.to_thread) so the synchronous,
+                # network-bound translation work can't stall the SSE progress
+                # stream for every other job on this process, and is capped by
+                # TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS so a slow/blocked
+                # translation pass can never hang this stage indefinitely — the
+                # untranslated transcript is used instead, and the language
+                # re-check right after (plus process_merge_job's own NLLB retry)
+                # catches it downstream.
+                from ..core.config import get_settings
+                timeout = get_settings().TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS
+                try:
+                    transcript = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self._translate_transcript_to_english, transcript, lang
+                        ),
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"[Transcript] Translation timed out after {timeout}s for "
+                          f"{video_id} — keeping original-language text")
 
                 if self._detect_transcript_language(transcript) == "en":
                     source = f"{source}+translated"
                 else:
-                    print("[Transcript] Caption translation did not yield English — "
-                          "re-transcribing with Whisper (task=translate)")
-                    whisper_transcript = self._fetch_whisper(video_id)
-                    if whisper_transcript:
-                        transcript = whisper_transcript
-                        source = "whisper_translate"
-                    else:
-                        print("[Transcript] Whisper unavailable too — keeping the "
-                              "best-effort translation")
-                        source = f"{source}+partial"
+                    # Whisper's task="translate" is the only remaining option
+                    # that reliably produces correct English, but it
+                    # re-transcribes the WHOLE audio track at ~3.4x realtime
+                    # on CPU — for a long video that is many minutes, a
+                    # multi-minute stall no timeout policy can shrink (it
+                    # either finishes with a real transcript or is abandoned
+                    # with nothing). So it only runs automatically for videos
+                    # short enough to plausibly finish within
+                    # WHISPER_TRANSLATE_MAX_VIDEO_SECONDS; longer videos keep
+                    # the best-effort (still non-English) transcript instead
+                    # of silently burning a quarter of an hour on it.
+                    est_duration = 0.0
+                    if transcript:
+                        last = transcript[-1]
+                        est_duration = float(last.get("start", 0) or 0) + \
+                            float(last.get("duration", 0) or 0)
 
-        # Tier 3: Whisper speech-to-text (last resort)
+                    from ..core.config import get_settings
+                    whisper_budget = get_settings().WHISPER_TRANSLATE_MAX_VIDEO_SECONDS
+
+                    if est_duration and est_duration > whisper_budget:
+                        print(f"[Transcript] Caption translation did not yield English "
+                              f"and {video_id} is ~{est_duration/60:.1f} min — over the "
+                              f"{whisper_budget/60:.1f} min Whisper-translate budget, so "
+                              f"skipping it and keeping the best-effort transcript")
+                        source = f"{source}+partial"
+                    else:
+                        print("[Transcript] Caption translation did not yield English — "
+                              "re-transcribing with Whisper (task=translate)")
+                        if progress_cb:
+                            try:
+                                await progress_cb(
+                                    f"Re-transcribing {video_id} with Whisper "
+                                    f"(translate) — this can take a few minutes..."
+                                )
+                            except Exception:
+                                pass
+                        # Off the event loop: Whisper is CPU-bound and would
+                        # otherwise block the SSE progress stream for its
+                        # entire run, same class of bug as the translation
+                        # call above.
+                        whisper_transcript = await asyncio.to_thread(
+                            self._fetch_whisper, video_id
+                        )
+                        if whisper_transcript:
+                            transcript = whisper_transcript
+                            source = "whisper_translate"
+                        else:
+                            print("[Transcript] Whisper unavailable too — keeping the "
+                                  "best-effort translation")
+                            source = f"{source}+partial"
+
+        # Tier 3: Whisper speech-to-text (last resort). Off the event loop —
+        # this is the slowest, most CPU-bound path (audio download + local
+        # transcription); running it inline blocks the entire process, so
+        # every other in-flight request (including other videos in the same
+        # search) appears frozen until this one finishes.
         if not transcript:
-            transcript = self._fetch_whisper(video_id)
+            transcript = await asyncio.to_thread(self._fetch_whisper, video_id)
             source = "whisper"
 
         if not transcript:
@@ -511,7 +597,11 @@ class TranscriptService:
                 if os.path.exists(self.cookie_path):
                     cmd.extend(["--cookies", self.cookie_path])
 
-                subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                
+                if proc.returncode != 0:
+                    print(f"[Transcript] yt-dlp failed for {video_id}: {proc.stderr.strip()}")
+                    return None
 
                 # Find the downloaded audio file
                 actual_audio = None
@@ -520,8 +610,8 @@ class TranscriptService:
                         actual_audio = os.path.join(tmpdir, fname)
                         break
 
-                if not actual_audio or not os.path.exists(actual_audio):
-                    print(f"[Transcript] Audio download failed for {video_id}")
+                if not actual_audio or not os.path.exists(actual_audio) or os.path.getsize(actual_audio) < 1024:
+                    print(f"[Transcript] Audio download failed (or file empty) for {video_id}")
                     return None
 
                 print(f"[Transcript] Audio downloaded, running Whisper for {video_id}...")

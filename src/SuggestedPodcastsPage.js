@@ -6,6 +6,7 @@ import VideoList from './VideoList.js';
 import MultiSelectBar from './components/merge/MultiSelectBar.jsx';
 import './SuggestedPage.css';
 import { API_BASE_URL } from './config/api.js';
+import { extractErrorMessage } from './utils/apiError.js';
 
 const suggestedTopics = [
   'Technology', 'Entertainment', 'Health', 'Business', 'Sports',
@@ -92,7 +93,7 @@ const SuggestedPodcastsPage = () => {
       if (data.job_id) {
         navigate(`/merged-player/${data.job_id}`);
       } else {
-        setError(data.detail || 'Server error. Please retry.');
+        setError(extractErrorMessage(data, 'Server error. Please retry.'));
       }
     } catch {
       setError('Connection error. Make sure the backend is running.');
