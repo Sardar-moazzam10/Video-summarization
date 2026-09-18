@@ -711,9 +711,9 @@ class FusionEngine:
                 content = f"{transition_phrases[transition_idx % len(transition_phrases)]} {content}"
                 transition_idx += 1
 
-            # Check if adding this would exceed target
+            # Check if adding this would exceed target (always allow first cluster to prevent empty narrative)
             content_words = len(content.split())
-            if current_words + content_words <= target_words * 1.1:  # 10% buffer
+            if current_words == 0 or current_words + content_words <= target_words * 1.1:  # 10% buffer
                 narrative_parts.append(content)
                 current_words += content_words
 

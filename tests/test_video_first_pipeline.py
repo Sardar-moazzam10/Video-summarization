@@ -113,7 +113,9 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
         mock_fetch.return_value = ({"test_vid": EN_TEXT}, {"test_vid": []})
         mock_dl.return_value = {"test_vid": "path.mp4"}
 
-        await process_merge_job(job.job_id)
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+
+            await process_merge_job(job.job_id)
 
     return db_writes
 

@@ -57,6 +57,21 @@ def _ytdlp_cmd() -> Optional[List[str]]:
 # transformers 4.x and 5.x and bypasses task-registry validation entirely.
 # Mirrors the approach already used in services/summarization_service.py.
 
+# =============================================================================
+# DEAD CODE — T5-small summarizer
+#
+# TranscriptService.summarize() is the only caller of get_summarizer() /
+# _load_summarizer(). As of the Phase 1 audit (2026-09-12), TranscriptService
+# .summarize() has ZERO callers in any production code path (confirmed by grep
+# across all backend/*.py and api/*.py). The method is labelled "legacy endpoint"
+# in its own docstring — it was never migrated off, just abandoned.
+#
+# T5-small loads ~240 MB on first call. That call never happens in the live
+# pipeline. The model sits here as dead weight.
+#
+# Safe to delete after a full route-handler audit confirms no /summarize
+# endpoint calls it. Tracked: Phase 1 stabilization / task 4.
+# =============================================================================
 _summarizer_model = None
 _summarizer_tokenizer = None
 
@@ -66,18 +81,32 @@ _SUMMARIZER_MAX_INPUT_TOKENS = 512   # t5-small's encoder window
 
 
 def _load_summarizer():
-    """Lazy-load the T5 tokenizer + model once per process."""
+    """Lazy-load the T5 tokenizer + model once per process.
+
+    .. deprecated::
+        Supports TranscriptService.summarize(), which has no active callers in
+        the production pipeline. Do not add new callers. See dead-code note above.
+        Scheduled for deletion in Phase 2 after route-handler audit.
+    """
+    import warnings
+    warnings.warn(
+        "_load_summarizer() called — T5-small is considered dead code. "
+        "TranscriptService.summarize() should not be called from production paths. "
+        "See the dead-code comment in transcript_service.py.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     global _summarizer_model, _summarizer_tokenizer
 
     if _summarizer_model is None:
-        import warnings
+        import warnings as _w
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
         from ..core.config import get_hf_token
 
         hf_token = get_hf_token()  # None when unset → anonymous, same as before
         print(f"[Transcript] Loading summarizer: {_SUMMARIZER_MODEL_NAME}")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+        with _w.catch_warnings():
+            _w.simplefilter("ignore")
             _summarizer_tokenizer = AutoTokenizer.from_pretrained(_SUMMARIZER_MODEL_NAME, token=hf_token)
             _summarizer_model = AutoModelForSeq2SeqLM.from_pretrained(_SUMMARIZER_MODEL_NAME, token=hf_token)
         _summarizer_model.eval()

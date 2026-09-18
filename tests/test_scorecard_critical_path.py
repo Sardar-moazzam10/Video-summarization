@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from backend.api.merge import process_merge_job, _active_jobs
 from backend.models.job import MergeJob
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -37,7 +37,7 @@ async def test_process_merge_job_does_not_await_scorecard(mock_db, active_job):
         # We need to stub out the heavy parts so the test runs fast.
         with patch("backend.services.video_service.VideoService.download_videos", new_callable=AsyncMock) as mock_dl, \
              patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock) as mock_fetch, \
-             patch("backend.api.merge.get_fusion_engine") as mock_fusion, \
+             patch("backend.api.merge.get_fusion_engine") as mock_fusion, patch("backend.services.vector_store.get_vector_store", new_callable=AsyncMock), \
              patch("backend.api.merge.run_semantic_selection", new_callable=AsyncMock) as mock_select, \
              patch("backend.services.summarization_service.SummarizationService.summarize_with_policy") as mock_sum_policy, \
              patch("backend.services.summarization_service.SummarizationService.hierarchical_summarize") as mock_sum_hier, \
@@ -47,6 +47,13 @@ async def test_process_merge_job_does_not_await_scorecard(mock_db, active_job):
             # Setup mocks
             mock_fetch.return_value = ({"test_vid": "This is a completely normal English sentence that will correctly be detected as English by the language detector."}, {"test_vid": []})
             mock_select.return_value = {"highlights": []}
+            
+            fake_fusion_result = MagicMock()
+            fake_fusion_result.metadata = {"total_source_words": 1, "clusters_created": 0, "dedup_ratio": 0.0, "processing_time_seconds": 0.0}
+            fake_fusion_result.topics = []
+            fake_fusion_result.narrative = ""
+            mock_fusion.return_value.fuse_transcripts.return_value = fake_fusion_result
+            
             mock_sum_hier.return_value = "Summary"
             mock_sum_policy.return_value = ("Summary", {"action": "pass"})
             mock_dl.return_value = {"test_vid": "path.mp4"}

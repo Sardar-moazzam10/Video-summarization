@@ -90,7 +90,7 @@ NEAR_COPY_TARGET_MULTIPLE = 1.5
 # calibration on that same job put drift onset around ~180 words in, so
 # 0.25 (~212 tokens here) was tried next to leave headroom above that.
 # Tighten further if a future real job still leaks boilerplate under it.
-MAX_MIN_LENGTH_INPUT_FRACTION = 0.25
+MAX_MIN_LENGTH_INPUT_FRACTION = 0.35
 ABSOLUTE_MIN_LENGTH_TOKENS = 20
 
 
@@ -214,7 +214,7 @@ def _get_pipeline():
                 max_length=max_length,
                 min_length=min_length,
                 do_sample=do_sample,
-                num_beams=2,
+                num_beams=num_beams,
                 length_penalty=length_penalty,
                 early_stopping=early_stopping,
                 no_repeat_ngram_size=no_repeat_ngram_size,
@@ -440,7 +440,8 @@ class SummarizationService:
         pipe = _get_pipeline()
 
         # Convert word targets to token estimates (1 word ≈ 1.3 tokens)
-        max_length = min(config.max_output_length, max(int(target_words * 1.3), 100))
+        # Give ample headroom (2.0x) so model emits EOS naturally instead of hitting a hard ceiling.
+        max_length = min(config.max_output_length, max(int(target_words * 2.0), 150))
 
         # The style wants at least this many tokens... but never more than a
         # fraction of what THIS input actually contains — see
@@ -469,13 +470,15 @@ class SummarizationService:
                 repetition_penalty=repetition_penalty,
                 do_sample=False,
             )
-            return result[0]["summary_text"]
+            return self._ensure_complete_sentences(result[0]["summary_text"])
 
         def _fallback() -> str:
             # The pre-existing safe path: a plain truncation carries no risk of
             # inventing or looping text, unlike another model call.
+            # Truncated safely at sentence boundary to avoid broken thoughts.
             words = text.split()
-            return " ".join(words[:target_words])
+            truncated = " ".join(words[:target_words])
+            return self._ensure_complete_sentences(truncated)
 
         def _quality_issue(candidate: str) -> str:
             # Loop degeneration (existing guard) first — cheap, purely lexical.
@@ -585,6 +588,25 @@ class SummarizationService:
         lines = text.split('\n')
         lines = [l.strip() for l in lines if len(l.strip()) > 10]
         return ' '.join(lines).strip()
+
+    @staticmethod
+    def _ensure_complete_sentences(text: str) -> str:
+        text = text.strip()
+        if not text:
+            return text
+        if text[-1] in ".!?":
+            return text
+            
+        import re
+        # Find the last valid sentence boundary (punctuation followed by space or end of string)
+        matches = list(re.finditer(r'[.!?](?:\s+|$)', text))
+        if matches:
+            last_idx = matches[-1].start() + 1
+            return text[:last_idx].strip()
+            
+        if ' ' in text:
+            return text.rsplit(' ', 1)[0] + "..."
+        return text + "..."
 
 
 def _split_sentences(text: str) -> list:

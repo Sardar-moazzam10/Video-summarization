@@ -338,7 +338,7 @@ class TestRetryAndFallback:
         result = service._summarize_chunk(source_text, target_words=30, config=config)
 
         assert len(model.calls) == 2, "should try once, retry once, then stop"
-        assert result == " ".join(source_text.split()[:30])
+        assert result == " ".join(source_text.split()[:30]).rsplit(" ", 1)[0] + "..."
 
     def test_clean_output_is_not_retried(self, fake_backend):
         model, tokenizer = fake_backend
@@ -365,7 +365,7 @@ class TestRetryAndFallback:
         source_text = "word" + " word2" * 49
 
         result = service._summarize_chunk(source_text, target_words=20, config=config)
-        assert result == " ".join(source_text.split()[:20])
+        assert result == " ".join(source_text.split()[:20]).rsplit(" ", 1)[0] + "..."
 
     def test_smooth_path_uses_rewrite_mode_so_near_copy_is_not_flagged(self, fake_backend):
         """
@@ -510,7 +510,7 @@ class TestGroundingIntegration:
         result = service._summarize_chunk(source_text, target_words=30, config=config)
 
         assert len(model.calls) == 2, "should try once, retry once, then stop — never loop"
-        assert result == " ".join(source_text.split()[:30])
+        assert result == " ".join(source_text.split()[:30]).rsplit(" ", 1)[0] + "..."
 
     def test_grounded_output_is_not_retried(self, fake_backend, monkeypatch):
         model, tokenizer = fake_backend
@@ -712,3 +712,39 @@ class TestTokenizerConcurrencySafety:
 
         assert errors, "expected the unguarded fake tokenizer to race under concurrent load"
         assert any("Already borrowed" in str(e) for e in errors)
+
+class TestTruncation:
+
+    def test_ensure_complete_sentences_removes_trailing_fragment(self):
+        # A partial word cut
+        text = "This is a sentence. And here is another that gets cut mid-wo"
+        assert svc.SummarizationService._ensure_complete_sentences(text) == "This is a sentence."
+        
+        # A full word cut mid-thought
+        text2 = "This is a sentence. And here is another that gets"
+        assert svc.SummarizationService._ensure_complete_sentences(text2) == "This is a sentence."
+        
+        # Ends with punctuation
+        text3 = "This is a sentence. This is fine."
+        assert svc.SummarizationService._ensure_complete_sentences(text3) == "This is a sentence. This is fine."
+        
+        # No punctuation at all
+        text4 = "a fragment with no punctuation at all"
+        assert svc.SummarizationService._ensure_complete_sentences(text4) == "a fragment with no punctuation at..."
+        
+    def test_fallback_truncates_at_sentence_boundary(self, fake_backend, monkeypatch):
+        # Trigger fallback by simulating generation exception
+        import pytest
+        def fail(*args, **kwargs):
+            raise RuntimeError("Fake generation error")
+        monkeypatch.setattr(fake_backend[0], 'generate', fail)
+        
+        service = svc.get_summarization_service()
+        config = get_summarization_config(get_profile(30))
+        
+        input_text = "Here is sentence one. Here is sentence two. Here is sentence three. Here is sentence four."
+        # We want to truncate to exactly 10 words. 
+        # "Here is sentence one. Here is sentence two. Here is" (10 words)
+        # Should truncate back to sentence two.
+        result = service._summarize_chunk(input_text, target_words=10, config=config, mode="compress")
+        assert result == "Here is sentence one. Here is sentence two."

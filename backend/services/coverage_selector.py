@@ -525,7 +525,7 @@ def select_segments(
     weights: Optional[SelectionWeights] = None,
     summary_embedding: Optional[np.ndarray] = None,
     embedder=None,
-    total_duration: float = 0.0,
+    total_duration: float | dict = 0.0,
     n_bins: int = DEFAULT_BINS,
 ) -> SelectionResult:
     """
@@ -580,9 +580,14 @@ def select_segments(
               f"({budget_seconds:.0f}s) — keeping {len(kept)}/{len(ordered)} segments")
         return result
 
-    if total_duration <= 0:
-        total_duration = max(float(getattr(s, "end_time", 0.0)) for s in segments)
-    total_duration = max(total_duration, 1.0)
+    if isinstance(total_duration, dict):
+        sum_duration = sum(total_duration.values())
+    else:
+        if total_duration <= 0:
+            total_duration = max(float(getattr(s, "end_time", 0.0)) for s in segments) if segments else 0.0
+        sum_duration = max(total_duration, 1.0)
+    
+    capacity = sum_duration / n_bins
 
     vectors = _embed_segments(segments, embedder=embedder)
     affinity = build_concept_affinity(segments, concepts, vectors, embedder=embedder)
@@ -591,6 +596,42 @@ def select_segments(
         if vectors is not None
         else np.full(len(segments), 0.5)
     )
+
+    # --- concept signal quality diagnostic ---
+    # Logs how much of the nominal concept weight actually reaches the optimizer.
+    # TF-IDF concepts tend to span large fractions of the transcript, so their
+    # locality weight (1 - covered_fraction) collapses toward zero, and the
+    # effective contribution is far below the configured SELECT_CONCEPT_WEIGHT.
+    # This log makes that degradation visible without changing any scores.
+    if len(concepts):
+        covered_fracs = [
+            min(
+                sum(float(b) - float(a) for a, b in (getattr(c, "timestamps", None) or []))
+                / max(sum_duration, 1.0),
+                1.0,
+            )
+            for c in concepts
+        ]
+        mean_locality = 1.0 - float(np.mean(covered_fracs))
+        mean_affinity = float(affinity.mean()) if affinity.size else 0.0
+        concept_source = (
+            "llm"
+            if any(getattr(c, "source", "") == "llm" for c in concepts)
+            else "tfidf"
+        )
+        eff_weight = weights.concept * mean_affinity
+        print(
+            f"[Selector] Concept signal: {len(concepts)} concepts ({concept_source}), "
+            f"mean_locality={mean_locality:.2f}, mean_affinity={mean_affinity:.2f} "
+            f"→ effective_concept_weight={eff_weight:.3f} "
+            f"(nominal {weights.concept:.2f}"
+            + (
+                " — TF-IDF concepts are broad; enable ENABLE_CONCEPT_LLM for stronger signal"
+                if concept_source == "tfidf" and mean_locality < 0.40
+                else ""
+            )
+            + ")"
+        )
 
     concept_importance = np.asarray(
         [float(getattr(c, "importance", 0.0)) for c in concepts], dtype=float
@@ -710,20 +751,21 @@ def select_segments(
         """
         Concave temporal-coverage gain from adding every segment in `indices`.
 
-        sqrt() is the whole trick. Adding the first 30 seconds to an empty bin
-        gains sqrt(30) = 5.48; adding 30 more to a bin that already has 60 gains
-        sqrt(90) - sqrt(60) = 1.74. Under-represented regions are worth ~3x more
-        without any bin ever being mandatory.
-
-        Takes a set because a candidate may commit to a whole concept
-        occurrence; for the single-segment case this is identical to the
-        original per-segment computation.
+        By normalising against bin capacity and taking the mean across bins,
+        the total coverage value is strictly bounded to [0, 1] (1.0 = 100% of
+        the video covered). Marginal gain is bounded to [0, 1] and scales
+        correctly with other metrics.
         """
-        before = np.sqrt(bin_seconds).sum()
+        
+        def coverage_value(bins):
+            # Safe divide: capacity is > 0 since total_duration >= 1.0
+            return float(np.mean(np.sqrt(bins / capacity)))
+            
+        before = coverage_value(bin_seconds)
         trial = bin_seconds.copy()
         for i in indices:
             _accumulate_bins(trial, segments[i], total_duration, n_bins)
-        return float(np.sqrt(trial).sum() - before)
+        return coverage_value(trial) - before
 
     # Normaliser for the temporal term.
     #
@@ -808,7 +850,19 @@ def select_segments(
             if len(concepts):
                 content_value = max(content_value, float(affinity[members].max()))
             gated = COVERAGE_VALUE_FLOOR + (1.0 - COVERAGE_VALUE_FLOOR) * content_value
-            temporal_gain = (bin_gain(members) / max_bin_gain) * gated
+            # --- Phase 2C Normalization ---
+            # Extensive components (concept, coverage) naturally return tiny marginal gains 
+            # because they represent 1/N of the global objective. To put them on a comparable 
+            # scale [0, 1] as intensive components (semantic, coherence), we scale them up 
+            # by the expected number of clips needed to fill the budget.
+            N_expected = max(budget_seconds / typical, 1.0)
+            
+            concept_scaled = concept_gain * N_expected
+            
+            # The coverage function `bin_gain` averages across bins, so its marginal value is 
+            # essentially `(1/N_bins) * sqrt(duration / capacity)`. We scale it so a typical 
+            # clip returns ~1.0. 
+            temporal_scaled = bin_gain(members) * N_expected * gated
 
             if vectors is not None and selected:
                 redundancy = float(max(
@@ -818,41 +872,36 @@ def select_segments(
             else:
                 redundancy = 0.0
 
-            # Relevance is discounted by redundancy before the explicit penalty
-            # is applied. Subtracting a penalty alone is not enough: a segment
-            # identical to one already selected still scored FULL relevance,
-            # because relevance measures "is this on-topic?" and a duplicate of
-            # an on-topic segment trivially is. The tenth explanation of
-            # overfitting was therefore still claiming credit for being about
-            # overfitting. Redundancy now cancels the relevance a duplicate is
-            # double-counting, and the penalty term prices the duplication on
-            # top of that.
-            #
-            # Concept gain needs no such treatment — it is submodular already,
-            # so a covered concept cannot be claimed twice. Temporal coverage is
-            # deliberately NOT discounted: footage from an untouched region is
-            # new footage no matter how familiar the words are.
-            gain = (
-                weights.concept * concept_gain
-                + weights.semantic * group_relevance * (1.0 - redundancy)
-                + weights.coverage * temporal_gain
-                + weights.coherence * group_coherence
-                - weights.redundancy * redundancy
-                - weights.duration_penalty * (dur / longest)
-            )
+            density = 0.0
+            if dur > 0:
+                gain = (
+                    weights.concept * concept_scaled
+                    + weights.semantic * group_relevance
+                    + weights.coverage * temporal_scaled
+                    + weights.coherence * group_coherence
+                    - weights.redundancy * redundancy
+                    - weights.duration_penalty * (dur / longest)
+                )
+                density = gain / dur
 
-            # Cost-benefit greedy: value per second, not value.
-            density = gain / dur
             if density > best_density:
                 best_density = density
                 best_idx = idx
                 best_commitment = commitment
                 best_parts = {
-                    "concept": round(concept_gain, 4),
+                    "concept": round(concept_scaled, 4),
                     "semantic": round(group_relevance, 4),
-                    "coverage": round(temporal_gain, 4),
+                    "coverage": round(temporal_scaled, 4),
                     "coherence": round(group_coherence, 4),
                     "redundancy": round(redundancy, 4),
+                    # Weighted contributions (what actually entered the gain formula)
+                    "concept_weighted":   round(weights.concept * concept_scaled, 4),
+                    "semantic_weighted":  round(weights.semantic * group_relevance, 4),
+                    "coverage_weighted":  round(weights.coverage * temporal_scaled, 4),
+                    "coherence_weighted": round(weights.coherence * group_coherence, 4),
+                    "redundancy_penalty": round(weights.redundancy * redundancy, 4),
+                    "duration_penalty":   round(weights.duration_penalty * (dur / longest), 4),
+                    # Summary
                     "gain": round(gain, 4),
                     "gain_per_second": round(density, 6),
                     "committed_segments": len(commitment),
@@ -915,6 +964,24 @@ def select_segments(
             **best_parts,
         })
 
+        # Per-pick log — one compact line so selection decisions are visible in
+        # server logs without scrolling through the full trace dict.
+        _seg = segments[best_idx]
+        print(
+            f"  [Pick #{len(selected):02d}] "
+            f"{getattr(_seg, 'video_id', '?')} "
+            f"{getattr(_seg, 'start_time', 0):.1f}s–{getattr(_seg, 'end_time', 0):.1f}s "
+            f"| gain={best_parts['gain']:+.4f} ({best_parts['gain_per_second']:+.6f}/s) "
+            f"| cncpt={best_parts['concept']:.3f}→{best_parts['concept_weighted']:.3f} "
+            f"sem={best_parts['semantic']:.3f}→{best_parts['semantic_weighted']:.3f} "
+            f"cov={best_parts['coverage']:.3f}→{best_parts['coverage_weighted']:.3f} "
+            f"cohr={best_parts['coherence']:.3f}→{best_parts['coherence_weighted']:.3f} "
+            f"redund=-{best_parts['redundancy_penalty']:.3f} "
+            f"dur_pen=-{best_parts['duration_penalty']:.3f} "
+            f"| commits={best_parts['committed_segments']} "
+            f"budget_left={budget_seconds - total_selected:.0f}s"
+        )
+
         # Drop anything that overlaps the pick. Overlapping clips would show the
         # viewer the same footage twice.
         for idx in list(remaining):
@@ -922,7 +989,13 @@ def select_segments(
                 remaining.discard(idx)
 
     chosen = [segments[i] for i in selected]
-    chosen.sort(key=lambda s: (getattr(s, "video_id", ""), s.start_time))
+    try:
+        from .narrative_sorter import sort_segments
+        chosen = sort_segments(chosen, embedder)
+        result.segments = chosen
+    except Exception as e:
+        print(f"[Selector] Narrative sort failed: {e}, falling back")
+        chosen.sort(key=lambda s: (getattr(s, "video_id", ""), s.start_time))
 
     if vectors is not None and len(segments) > 2:
         all_sims = vectors @ vectors.T
@@ -942,12 +1015,36 @@ def select_segments(
           f"{budget_seconds:.0f}s budget ({total_selected / budget_seconds * 100:.0f}%), "
           f"{len(result.concepts_covered)}/{len(concepts)} concepts covered")
 
+    # Weighted-contribution summary: shows which scoring term actually drove selection.
+    # Format: raw_avg × weight = effective_contribution
+    if result.trace:
+        _trace_keys = ("concept", "semantic", "coverage", "coherence", "redundancy")
+        _avg = {
+            k: sum(t.get(k, 0.0) for t in result.trace) / len(result.trace)
+            for k in _trace_keys
+        }
+        w = weights
+        print(
+            f"[Selector] Avg weighted contributions over {len(result.trace)} picks: "
+            f"concept={_avg['concept']:.3f}×{w.concept}={_avg['concept']*w.concept:.3f} | "
+            f"semantic={_avg['semantic']:.3f}×{w.semantic}={_avg['semantic']*w.semantic:.3f} | "
+            f"coverage={_avg['coverage']:.3f}×{w.coverage}={_avg['coverage']*w.coverage:.3f} | "
+            f"coherence={_avg['coherence']:.3f}×{w.coherence}={_avg['coherence']*w.coherence:.3f} | "
+            f"redundancy_penalty={_avg['redundancy']:.3f}×{w.redundancy}={_avg['redundancy']*w.redundancy:.3f}"
+        )
+
     return result
 
 
-def _accumulate_bins(bins: np.ndarray, segment, total_duration: float, n_bins: int) -> None:
+def _accumulate_bins(bins: np.ndarray, segment, total_duration, n_bins: int) -> None:
     """Add a segment's seconds into the temporal bins it spans."""
-    width = total_duration / n_bins
+    if isinstance(total_duration, dict):
+        vid_duration = total_duration.get(getattr(segment, "video_id", ""), 1.0)
+    else:
+        vid_duration = total_duration
+    vid_duration = max(vid_duration, 1.0)
+    
+    width = vid_duration / n_bins
     start = float(getattr(segment, "start_time", 0.0))
     end = float(getattr(segment, "end_time", 0.0))
     for b in range(n_bins):

@@ -1,0 +1,133 @@
+{
+  "job_id": "6c03fda4-db88-43f6-a820-5014169f7279",
+  "llm_used": false,
+  "summary_score": 58.4,
+  "video_score": 100.0,
+  "check_a": {
+    "name": "Summary fidelity (summary vs original video)",
+    "score": 58.4,
+    "verdict": "FAIR \u2014 captures the gist but misses/dilutes some key points",
+    "keyword_coverage": {
+      "score": 20.0,
+      "hits": [
+        "like",
+        "learning",
+        "model",
+        "data",
+        "machine"
+      ],
+      "misses": [
+        "neural",
+        "networks",
+        "mimic",
+        "backpropagation",
+        "different",
+        "based",
+        "cards",
+        "graphics",
+        "certain",
+        "hardware",
+        "today",
+        "looking",
+        "types",
+        "architectures",
+        "function",
+        "biology",
+        "advanced",
+        "trained",
+        "just",
+        "neurons"
+      ],
+      "total_keywords": 25,
+      "top_keywords": [
+        "neural",
+        "networks",
+        "like",
+        "learning",
+        "mimic",
+        "backpropagation",
+        "model",
+        "different",
+        "based",
+        "cards",
+        "graphics",
+        "data",
+        "certain",
+        "hardware",
+        "today",
+        "machine",
+        "looking",
+        "types",
+        "architectures",
+        "function",
+        "biology",
+        "advanced",
+        "trained",
+        "just",
+        "neurons"
+      ]
+    },
+    "semantic_coverage": {
+      "score": 96.7,
+      "covered": 29,
+      "total": 30,
+      "unit": "topic chunks",
+      "threshold": 0.45,
+      "least_covered": [
+        {
+          "similarity": 0.44,
+          "text": "song's tempo genre intensity and the gender of voice for simplicity let's just use tempo and intensity for now so here tempo is on the x axis ranging from relax..."
+        }
+      ]
+    },
+    "llm_judge": {
+      "score": null,
+      "error": "disabled (--no-llm)"
+    }
+  },
+  "check_b": {
+    "name": "Video\u2194Summary match (clips vs summary)",
+    "score": 100.0,
+    "verdict": "GOOD \u2014 the video closely represents its summary (as expected)",
+    "keyword_coverage": {
+      "score": 100.0,
+      "hits": [
+        "data",
+        "model",
+        "future",
+        "learning",
+        "like",
+        "machine",
+        "make",
+        "outcomes"
+      ],
+      "misses": [],
+      "total_keywords": 8,
+      "top_keywords": [
+        "data",
+        "model",
+        "future",
+        "learning",
+        "like",
+        "machine",
+        "make",
+        "outcomes"
+      ]
+    },
+    "semantic_coverage": {
+      "score": 100.0,
+      "covered": 3,
+      "total": 3,
+      "unit": "summary sentences",
+      "threshold": 0.45,
+      "least_covered": []
+    },
+    "llm_judge": {
+      "score": null,
+      "error": "disabled (--no-llm)"
+    }
+  },
+  "source_words": 2390,
+  "summary_words": 78,
+  "num_clips": 3
+}

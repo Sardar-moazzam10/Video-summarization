@@ -1,0 +1,92 @@
+{
+  "video": "7eh4d6sabA0",
+  "target_min": 5,
+  "budget_s": 300,
+  "sel_count": 5,
+  "sel_seconds": 274.08,
+  "fill_pct": 91.36,
+  "deciles": [
+    0,
+    1,
+    8
+  ],
+  "clips": [
+    {
+      "start": 0.0,
+      "end": 40.399,
+      "text": "[Music] if you're looking for a machine learning tutorial with python and jupyter notebook this tutorial is for you you're going to learn how to solve a real world problem using machine learning and python we're going to start off with a brief introduction to machine learning then we're going to talk about the tools you need and after that we're going to jump straight into the problem we're going to solve you'll learn how to build a model that can learn and predict the kind of music people like so by the end of this one hour tutorial you will have a good understanding of machine learning basics and you'll be able to learn more intermediate to advanced level concepts you don't need any prior knowledge in machine learning but you need to know python fairly well if you don't i've got a couple of"
+    },
+    {
+      "start": 338.639,
+      "end": 358.8,
+      "text": "you follow in a machine learning project next we'll look at the libraries and tools for machine learning in this lecture we're going to look at the popular python libraries that we use in machine learning projects the first one is numpy which provides a"
+    },
+    {
+      "start": 2408.96,
+      "end": 2431.7599999999998,
+      "text": "piece of code that you see here is not what we want to run every time we have a new user or every time we want to make recommendations to an existing user because training a model can sometimes be really time consuming in this example we're dealing with a very small data set that has only 20 records but in real applications we might have a data set with thousands or millions of samples"
+    },
+    {
+      "start": 2454.0,
+      "end": 2544.7200000000003,
+      "text": "me show you how to do this it's very very easy on the top from sklearn.externals module we import lib this job live object has methods for saving and loading models so after we train our model we simply call joblib dot dump and give it two arguments our model and the name of the file in which we want to store this model let's call that music dash recommender dot job lib that's all we have to do now temporarily i'm going to comment out this line we don't want to make any predictions we just want to store our trained model in a file so let's run this cell with control and slash okay look in the output we have an array that contains the name of our model file so this is the return value of the dump method now back to our desktop right next to my notebook you can see our job live file this is where our model is stored it's simply a binary file now back to our jupyter notebook as i told you before in a real application we don't want to train a model every time so let's comment out these few lines so i've selected these few lines on mac we can press command and slash on windows control slash okay these lines are commented out now this time instead of dumping our model"
+    },
+    {
+      "start": 2633.52,
+      "end": 2733.52,
+      "text": "tree dot export underline graph vis now here are a few arguments we need to pass the first argument is our model the second is the name of the output file so here we're going to use keyword arguments because this method takes so many parameters and we want to selectively pass keyword arguments without worrying about their order so the parameter we're going to set is out underline file let's set this to music dash recommender dot d o t this is the dot format which is a graph description language you'll see that shortly the other parameter we want to set is feature underline names we set this to an array of two strings age and gender these are the features or the columns of our data set so they are the properties or features of our data okay the other parameter is class names so class underline names we should set this to the list of classes or labels we have in our output data set like hip hop jazz classical and so on so this y data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes now we should sort this alphabetically so we call the sorted function and pass the result a y dot unique the next parameter is label we set this"
+    }
+  ],
+  "sel_transcript": "[Music] if you're looking for a machine learning tutorial with python and jupyter notebook this tutorial is for you you're going to learn how to solve a real world problem using machine learning and python we're going to start off with a brief introduction to machine learning then we're going to talk about the tools you need and after that we're going to jump straight into the problem we're going to solve you'll learn how to build a model that can learn and predict the kind of music people like so by the end of this one hour tutorial you will have a good understanding of machine learning basics and you'll be able to learn more intermediate to advanced level concepts you don't need any prior knowledge in machine learning but you need to know python fairly well if you don't i've got a couple of you follow in a machine learning project next we'll look at the libraries and tools for machine learning in this lecture we're going to look at the popular python libraries that we use in machine learning projects the first one is numpy which provides a piece of code that you see here is not what we want to run every time we have a new user or every time we want to make recommendations to an existing user because training a model can sometimes be really time consuming in this example we're dealing with a very small data set that has only 20 records but in real applications we might have a data set with thousands or millions of samples me show you how to do this it's very very easy on the top from sklearn.externals module we import lib this job live object has methods for saving and loading models so after we train our model we simply call joblib dot dump and give it two arguments our model and the name of the file in which we want to store this model let's call that music dash recommender dot job lib that's all we have to do now temporarily i'm going to comment out this line we don't want to make any predictions we just want to store our trained model in a file so let's run this cell with control and slash okay look in the output we have an array that contains the name of our model file so this is the return value of the dump method now back to our desktop right next to my notebook you can see our job live file this is where our model is stored it's simply a binary file now back to our jupyter notebook as i told you before in a real application we don't want to train a model every time so let's comment out these few lines so i've selected these few lines on mac we can press command and slash on windows control slash okay these lines are commented out now this time instead of dumping our model tree dot export underline graph vis now here are a few arguments we need to pass the first argument is our model the second is the name of the output file so here we're going to use keyword arguments because this method takes so many parameters and we want to selectively pass keyword arguments without worrying about their order so the parameter we're going to set is out underline file let's set this to music dash recommender dot d o t this is the dot format which is a graph description language you'll see that shortly the other parameter we want to set is feature underline names we set this to an array of two strings age and gender these are the features or the columns of our data set so they are the properties or features of our data okay the other parameter is class names so class underline names we should set this to the list of classes or labels we have in our output data set like hip hop jazz classical and so on so this y data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes now we should sort this alphabetically so we call the sorted function and pass the result a y dot unique the next parameter is label we set this",
+  "fusion_words": 748,
+  "fusion_narrative": "externals module we import lib this job live object has methods for saving and loading models so after we train our model we simply call joblib dot dump and give it two arguments our model and the name of the file in which we want to store this model let's call that music dash recommender dot job lib that's all we have to do now temporarily i'm going to comment out this line we don't want to make any predictions we just want to store our trained model in a file so let's run this cell with control and slash. okay look in the output we have an array that contains the name of our model file so this is the return value of the dump method now back to our desktop right next to my notebook you can see our job live file this is where our model is stored it's simply a binary file now back to our jupyter notebook as i told you before in a real application we don't want to train a model every time so let's comment out these few lines so i've selected these few lines on mac we can press command and. slash on windows control slash okay these lines are commented out now this time instead of dumping our model tree dot export underline graph vis now here are a few arguments we need to pass the first argument is our model the second is the name of the output file so here we're going to use keyword arguments because this method takes so many parameters and we want to selectively pass keyword arguments without worrying about their order so the parameter we're going to set is out underline file let's set this to music dash recommender dot d o t. this is the dot format which is a graph description language you'll see that shortly the other parameter we want to set is feature underline names we set this to an array of two strings age and gender these are the features or the columns of our data set so they are the properties or features of our data okay the other parameter is class names so class underline names we should set this to the list of classes or labels we have in our output data set like hip hop jazz classical and so on so this y data\n\nAdditionally, [Music] if you're looking for a machine learning tutorial with python and jupyter notebook this tutorial is for you you're going to learn how to solve a real world problem using machine learning and python we're going to start off with a brief introduction to machine learning then we're going to talk about the tools you need and after that we're going to jump straight into the problem we're going to solve you'll learn how to build a model that can learn and predict the kind of music people like so by the end of this one hour tutorial you. will have a good understanding of machine learning basics and you'll be able to learn more intermediate to advanced level concepts you don't need any prior knowledge in machine learning but you need to know python fairly well if you don't i've got a couple of you follow in a machine learning project next we'll look at the libraries and tools for machine learning in this lecture we're going to look at the popular python libraries that we use in machine learning projects the first one is numpy which provides a piece of code that you see here is not. what we want to run every time we have a new user or every time we want to make recommendations to an existing user because training a model can sometimes be really time consuming in this example we're dealing with a very small data set that has only 20 records but in real applications we might have a data set with thousands or millions of samples me show you how to do this it's very very easy on the top from sklearn\n\nFurthermore, set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes now we should sort this alphabetically so we call the sorted function and pass the result a y dot unique the next parameter is label we set this",
+  "bart_words": 74,
+  "summary": "This tutorial is for you you're going to learn how to solve a real world problem using machine learning and python . You'll learn how you can build a model that can learn and predict the kind of music people like . In this lecture we'll look at the libraries and tools for machine learning in this lecture . We'll also look at popular python libraries that we use in machine learning projects .",
+  "concepts": [
+    [
+      "best",
+      1.0
+    ],
+    [
+      "shape",
+      0.71
+    ],
+    [
+      "cell press",
+      0.69
+    ],
+    [
+      "persistence",
+      0.67
+    ],
+    [
+      "model persistence",
+      0.67
+    ],
+    [
+      "cells delete",
+      0.66
+    ],
+    [
+      "continue",
+      0.63
+    ],
+    [
+      "persist",
+      0.61
+    ],
+    [
+      "persist load",
+      0.61
+    ],
+    [
+      "jump started",
+      0.6
+    ]
+  ],
+  "timings": {
+    "selection": 5.58095977999983,
+    "fusion": 5.624464608999915,
+    "bart": 55.2265540820008
+  }
+}

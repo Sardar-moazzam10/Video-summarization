@@ -168,7 +168,8 @@ async def _run_job(job_id="test_grounding"):
     _active_jobs[job_id] = _make_job(job_id)
     with patch("backend.api.merge.get_jobs_collection",
                return_value=_make_db_mock(job_id)):
-        await process_merge_job(job_id)
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            await process_merge_job(job_id)
 
 
 # ─── Test 2 ── process_merge_job can call run_semantic_selection successfully ─
@@ -253,7 +254,8 @@ async def test_integration_error_does_not_silently_fall_back_to_legacy():
         _active_jobs["test_integration_err"] = _make_job("test_integration_err")
         with patch("backend.api.merge.get_jobs_collection",
                    return_value=_make_db_mock("test_integration_err")):
-            await process_merge_job("test_integration_err")
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await process_merge_job("test_integration_err")
             # The job must complete in an error state — we check that the
             # legacy scorer was NOT called (i.e. no silent fallback).
 

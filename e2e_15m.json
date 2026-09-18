@@ -1,0 +1,1056 @@
+{
+  "job_id": "21ec4375-ab0d-45dc-8d78-33326f929de8",
+  "user_id": "test_user",
+  "status": "completed",
+  "progress_percent": 100,
+  "stage_message": "Your summary is ready!",
+  "video_ids": [
+    "7eh4d6sabA0"
+  ],
+  "target_duration_minutes": 15,
+  "duration_style": "brief",
+  "generate_audio": false,
+  "generate_video": true,
+  "highlight_duration_seconds": 900,
+  "style": "educational",
+  "highlight_segments": [
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 131.44,
+      "end_time": 178.0,
+      "importance_score": 0.2492,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "model or an engine and give it lots and lots of data for example we give you thousands or tens of thousands of pictures of cats and dogs our model will then find and learn patterns in the input data so we can give it a new picture of a cat that it hasn't seen before and ask it is it a cat or a dog or a horse and it will tell us with a certain level of accuracy the more input data we give it the more accurate our model is going to be so that was a very basic example but machine learning has other applications in self-driving cars robotics language processing vision processing forecasting things like stock market trends and the weather games and so on so that's the basic idea about machine learning next we'll look at machine learning in action"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 182.159,
+      "end_time": 341.039,
+      "importance_score": 0.2434,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "a machine learning project involves a number of steps the first step is to import our data which often comes in the form of a csv file you might have a database with lots of data we can simply export that data and store it in a csv file for the purpose of our machine learning project so we import our data next we need to clean it and this involves tasks such as removing duplicated data if you have duplicates in the data we don't want to feed this to our model because otherwise our model will learn bad patterns in the data and it will produce the wrong result so we should make sure that our input data is in a good and clean shape if there are data that is irrelevant we should remove them if they are duplicated or incomplete we can remove or modify them if our data is text-based like the name of countries or genres of music or cats and dogs we need to convert them to numerical values so this step really depends on the kind of data we're working with every project is different now that we have a clean data set we need to split it into two segments one for training our model and the other for testing it to make sure that our model produces the right result for example if you have a thousand pictures of cats and dogs we can reserve eighty percent for training and the other 20 for testing the next step is to create a model and this involves selecting an algorithm to analyze the data there are so many different machine learning algorithms out there such as decision trees neural networks and so on each algorithm has pros and cons in terms of accuracy and performance so the algorithm you choose depends on the kind of problem you're trying to solve and your input data now the good news is that we don't have to explicitly program an algorithm there are libraries out there that provide these algorithms one of the most popular ones which we are going to look at in this tutorial is scikit-learn so we build a model using an algorithm next we need to train our model so we fitted our training data our model will then look for the patterns in the data so next we can ask it to make predictions back to our example of cats and dogs we can ask our model is this a cat or a dog and our model will make a prediction now the prediction is not always accurate in fact when you start out it's very likely that your predictions are inaccurate so we need to evaluate the predictions and measure their accuracy then we need to get back to our model and either select a different algorithm that is going to produce a more accurate result for the kind of problem we're trying to solve or fine-tune the parameters of our model so each algorithm has parameters that we can modify to optimize the accuracy so these are the high level steps that"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 389.28,
+      "end_time": 428.88,
+      "importance_score": 0.3341,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "library is scikit-learn which is one of the most popular machine learning libraries that provides all these common algorithms like decision trees neural networks and so on now when working with machine learning projects we use an environment called jupiter for writing our code technically we can still use vs code or any other code editors but these editors are not ideal for machine learning projects because we frequently need to inspect the data and that is really hard in environments like vs code and terminal if you're working with a table of 10 or 20 columns visualizing this data in a terminal window is really really difficult and messy so that's why we use jupiter it makes it"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 558.8,
+      "end_time": 640.32,
+      "importance_score": 0.2997,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "you're going to see different folders so someone on your machine you need to create a jupyter notebook i'm going to go to desktop here's my desktop i don't have anything here and then click new i want to create a notebook for python 3. in this notebook we can write python code and execute it line by line we can easily visualize our data as you will see over the next few videos so let's go ahead with this all right here's our first notebook you can see by default it's called untitled let's change that to hello world so this is going to be the hello world of our machine learning project let's rename this now if you look at your desktop you can see this file helloworld.i pi nb this is a jupiter notebook it's kind of similar to our pi files where we write our python code but it includes additional data that jupiter uses to execute our code so back to our notebook let's do a print hello world and then click this run button here and here's the result printed in jupyter so we don't have to navigate back and forth between the terminal window we can see all the result right here next i'm going to show you how to load a data set from a csv file in jupyter"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 791.2,
+      "end_time": 832.399,
+      "importance_score": 0.2541,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "so this returns a data frame object which is like an excel spreadsheet let me show you so we store it here and then we can simply type df to inspect it so one more time let's run this program here's our data frame with these rows and columns so we have rank name platform and so on now this data frame object has lots of attributes and methods that we're not going to cover in this tutorial that's really beyond the scope of what we're going to do so i'll leave it up to you to read panda's documentation or follow other tutorials to learn about pandas data frames but in this lecture i'm going to show you some of the most useful methods"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 892.24,
+      "end_time": 978.959,
+      "importance_score": 0.2896,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "returning basically it's returning some basic information about each column in this data set so as you saw earlier we have columns like rank year and so on these are the columns with numerical values now for each column we have the count which is the number of records in that column you can see our rank column has 16 598 records whereas the year column has 16 327 records so this shows that some of our records don't have the value for the year column we have no values so in a real data science or machine learning project we'll have to use some techniques to clean up our data set one option is to remove the records that don't have a value for the year column or we can assign them a default value that really depends on the project now another attribute for each column is mean so this is the average of all the values now in the case of the rank column this value doesn't really matter but look at the year so the average year for all these video games in our data set is 2006 and this might be important in the problem we're trying to solve we also have standard deviation which is a measure to quantify the amount of variation in our set of values below that we have min as an example the minimum value for the year column is 1980. so quite often when we work with a new data set we call the describe method to get some"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 1454.4,
+      "end_time": 1503.12,
+      "importance_score": 0.4273,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "it's just some random made up data it's not real so we have a table with three columns age gender and genre gender can either be one which represents a male or zero which represents a female here i'm making a few assumptions i'm assuming that men between 20 and 25 like hip-hop men between 26 and 30 like jazz and after the age of 30 they like classical music for women i'm assuming that if they're between 20 and 25 they like dance music if they're between 26 and 30 they like acoustic music and just like men after the age of 30 they like classical music once again this is a made-up pattern it's not the representation of the reality so let's go ahead and download this csv"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 1562.32,
+      "end_time": 1620.0,
+      "importance_score": 0.3385,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "beautiful next minute to prepare or clean the data and that's the topic for the next lecture the second step in a machine learning project is cleaning or preparing the data and that involves tasks such as removing duplicates null values and so on now in this particular data set we don't have to do any kind of cleaning because we don't have any duplicates and as you can see all rows have values for all columns so we don't have null values but there is one thing we need to do we should split this data set into two separate data sets one with the first two columns which we refer to as the input set and the other with the last column which we refer to as the output set so when we train a model we give it two separate data sets the input set and the output set the output set which is in this case the genre column contains"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 2010.32,
+      "end_time": 2042.559,
+      "importance_score": 0.2266,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "split our data set into two sets one for training and the other for testing because right now we're passing the entire data set for training the model and we're using two samples for making predictions that is not enough to calculate the accuracy of a model a general rule of thumb is to allocate 70 to 80 percent of our data for training and the other twenty to thirty percent for testing then instead of passing only two samples for making predictions we can pass the data set we have for"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 2364.32,
+      "end_time": 2455.839,
+      "importance_score": 0.2358,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "a table of three columns but if you want to build a model to tell if a picture is a cat or a dog or a horse or a lion we'll need millions of pictures the more animals we want to support the more pictures we need in the next lecture we're going to talk about model persistence so this is a very basic implementation of building and training a model to make predictions now to simplify things i have removed all the code that we wrote in the last lecture for calculating the accuracy because in this lecture we're going to focus on a different topic so basically we import our data set create a model train it and then ask it to make predictions now this piece of code that you see here is not what we want to run every time we have a new user or every time we want to make recommendations to an existing user because training a model can sometimes be really time consuming in this example we're dealing with a very small data set that has only 20 records but in real applications we might have a data set with thousands or millions of samples training a model for that might take seconds minutes or even hours so that is why model persistence is important once in a while we build and train our model and then we'll save it to a file now next time we want to make predictions we simply load the model from the file and ask it to make predictions that model is already trained we don't need to retrain it it's like an intelligent person so let"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 2543.119,
+      "end_time": 2574.88,
+      "importance_score": 0.2404,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "we're going to load it so we call the load method we don't have the model we simply pass the name of our model file this returns our trained model now with these two lines we can simply make predictions so earlier we assumed that men between 20 and 25 like hip-hop music let's print predictions and see if our model is behaving correctly or not so control and enter there you go so this is how we persist and load"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 2576.839,
+      "end_time": 2733.52,
+      "importance_score": 0.288,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "models earlier in this section i told you that decision trees are the easiest to understand and that's why we started machine learning with decision trees in this lecture we're going to export our model in a visual format so you will see how this model makes predictions that is really really cool let me show you so once again i've simplified this code so we simply import our data set create input and output sets create a model and train it that's all we are doing now i want you to follow along with me type everything exactly as i show you in this lecture don't worry about what everything means we're going to come back to it shortly so on the top from sklearn import tree this object has a method for exporting our decision tree in a graphical format so after we train our model let's call tree dot export underline graph vis now here are a few arguments we need to pass the first argument is our model the second is the name of the output file so here we're going to use keyword arguments because this method takes so many parameters and we want to selectively pass keyword arguments without worrying about their order so the parameter we're going to set is out underline file let's set this to music dash recommender dot d o t this is the dot format which is a graph description language you'll see that shortly the other parameter we want to set is feature underline names we set this to an array of two strings age and gender these are the features or the columns of our data set so they are the properties or features of our data okay the other parameter is class names so class underline names we should set this to the list of classes or labels we have in our output data set like hip hop jazz classical and so on so this y data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes now we should sort this alphabetically so we call the sorted function and pass the result a y dot unique the next parameter is label we set this"
+    }
+  ],
+  "segments": [],
+  "summary_text": "A machine learning project involves a number of steps the first step is to import our data which often comes in the form of a csv file . This involves selecting an algorithm to analyze the data and then creating a model . The result is printed in jupyter so we don't have to navigate back and forth between the terminal and terminal windows . In this lecture i'm going to show you some of the most useful methods. It's just some random made up data it's not real so we have a table with three columns age gender and genre gender can either represent a male or zero which represents a female here i'm making a few assumptions i'm assuming that men between 20 and 25 like hip-hop men between 26 and 30 like jazz and after the age of 30 they like classical music for women. If they're between 26-30 they like acoustic music, after the ages of 30 are just like men just like acoustic guitar and if they're just like acrobatic music. If you're between 27 and 28, you can either be one which  represents a male . If you have a . male or 0, you need to . listen to music and so on to listen to classical music. You need to be careful about what you want to say. If there are data that is irrelevant we should remove them if they are duplicated or . modify them if you have any data that are missing. If your data is incomplete or otherwise you can simply type df to inspect it. The data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes . The next parameter is label we set this to the list of genres or labels we have in our output data set like hip hop jazz classical and so on . The other parameters are age and gender these are the features or the columns of the data set . The algorithm has parameters that we can modify to optimize the accuracy so that's why we use jupiter it makes it easier to use .",
+  "rich_output": {
+    "summary": "A machine learning project involves a number of steps the first step is to import our data which often comes in the form of a csv file . This involves selecting an algorithm to analyze the data and then creating a model . The result is printed in jupyter so we don't have to navigate back and forth between the terminal and terminal windows . In this lecture i'm going to show you some of the most useful methods. It's just some random made up data it's not real so we have a table with three columns age gender and genre gender can either represent a male or zero which represents a female here i'm making a few assumptions i'm assuming that men between 20 and 25 like hip-hop men between 26 and 30 like jazz and after the age of 30 they like classical music for women. If they're between 26-30 they like acoustic music, after the ages of 30 are just like men just like acoustic guitar and if they're just like acrobatic music. If you're between 27 and 28, you can either be one which  represents a male . If you have a . male or 0, you need to . listen to music and so on to listen to classical music. You need to be careful about what you want to say. If there are data that is irrelevant we should remove them if they are duplicated or . modify them if you have any data that are missing. If your data is incomplete or otherwise you can simply type df to inspect it. The data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes . The next parameter is label we set this to the list of genres or labels we have in our output data set like hip hop jazz classical and so on . The other parameters are age and gender these are the features or the columns of the data set . The algorithm has parameters that we can modify to optimize the accuracy so that's why we use jupiter it makes it easier to use .",
+    "key_takeaways": [
+      "A machine learning project involves a number of steps the first step is to import our data which often comes in the form of a csv file .",
+      "It's just some random made up data it's not real so we have a table with three columns age gender and genre gender can either represent a male or zero which represents a female here i'm making a few assumptions i'm assuming that men between 20 and 25 like hip-hop men between 26 and 30 like jazz and after the age of 30 they like classical music for women.",
+      "The data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes .",
+      "The next parameter is label we set this to the list of genres or labels we have in our output data set like hip hop jazz classical and so on .",
+      "The algorithm has parameters that we can modify to optimize the accuracy so that's why we use jupiter it makes it easier to use ."
+    ],
+    "best_quotes": [],
+    "chapters": [
+      {
+        "title": "Introduction & Overview",
+        "text": "A machine learning project involves a number of steps the first step is to import our data which often comes in the form of a csv file . This involves selecting an algorithm to analyze the data and then creating a model . The result is printed in jupyter so we don't have to navigate back and forth between the terminal and terminal windows . In this lecture i'm going to show you some of the most useful methods. It's just some random made up data it's not real so we have a table with three columns age gender and genre gender can either represent a male or zero which represents a female here i'm making a few assumptions i'm assuming that men between 20 and 25 like hip-hop men between 26 and 30 like jazz and after the age of 30 they like classical music for women."
+      },
+      {
+        "title": "Core Discussion",
+        "text": "If they're between 26-30 they like acoustic music, after the ages of 30 are just like men just like acoustic guitar and if they're just like acrobatic music. If you're between 27 and 28, you can either be one which  represents a male . male or 0, you need to . listen to music and so on to listen to classical music. You need to be careful about what you want to say."
+      },
+      {
+        "title": "Conclusions & Key Points",
+        "text": "If there are data that is irrelevant we should remove them if they are duplicated or . modify them if you have any data that are missing. If your data is incomplete or otherwise you can simply type df to inspect it. The data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes . The next parameter is label we set this to the list of genres or labels we have in our output data set like hip hop jazz classical and so on . The other parameters are age and gender these are the features or the columns of the data set . The algorithm has parameters that we can modify to optimize the accuracy so that's why we use jupiter it makes it easier to use ."
+      }
+    ],
+    "who_should_watch": "",
+    "who_can_skip": "",
+    "action_steps": [],
+    "tldr": "A machine learning project involves a number of steps the first step is to import our data which often comes in the form of a csv file . This involves selecting an algorithm to analyze the data and then creating a model .",
+    "style_applied": "educational"
+  },
+  "fusion_metadata": {
+    "total_source_words": 2545,
+    "output_words": 382,
+    "compression_ratio": 0.150098231827112,
+    "topics_found": [
+      "going to focus on a...",
+      "so this returns a data...",
+      "it's just some random made...",
+      "selectively pass keyword arguments without...",
+      "parameters of our model so...",
+      "in a terminal window is..."
+    ],
+    "clusters_created": 6,
+    "dedup_ratio": 0.9354838709677419,
+    "conflicts_detected": [],
+    "processing_time_seconds": 10.281761,
+    "video_count": 1
+  },
+  "keyframes_extracted": {},
+  "concepts": [
+    {
+      "concept": "cell",
+      "importance": 1.0,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ],
+        [
+          1124.8,
+          1294.9
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          2213.4,
+          2410.1
+        ]
+      ],
+      "support": 5,
+      "aliases": [
+        "cells"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "rules",
+      "importance": 0.7099,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.0,
+          178.0
+        ],
+        [
+          338.6,
+          516.7
+        ],
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          2010.3,
+          2215.0
+        ],
+        [
+          2732.4,
+          2933.2
+        ],
+        [
+          2898.8,
+          2984.6
+        ]
+      ],
+      "support": 10,
+      "aliases": [
+        "library",
+        "true",
+        "test",
+        "testing",
+        "libraries"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "command mode",
+      "importance": 0.5681,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ],
+        [
+          1124.8,
+          1294.9
+        ],
+        [
+          1293.6,
+          1456.6
+        ]
+      ],
+      "support": 4,
+      "aliases": [
+        "command"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "model",
+      "importance": 0.5213,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          131.4,
+          341.0
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          1829.1,
+          2011.4
+        ],
+        [
+          2213.4,
+          2410.1
+        ],
+        [
+          2364.3,
+          2544.7
+        ],
+        [
+          2543.1,
+          2733.5
+        ]
+      ],
+      "support": 7,
+      "aliases": [
+        "model file"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "training",
+      "importance": 0.5,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.0,
+          178.0
+        ],
+        [
+          131.4,
+          341.0
+        ],
+        [
+          338.6,
+          516.7
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          2010.3,
+          2215.0
+        ],
+        [
+          2213.4,
+          2410.1
+        ],
+        [
+          2364.3,
+          2544.7
+        ]
+      ],
+      "support": 13,
+      "aliases": [
+        "learning",
+        "machine learning",
+        "data training"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "underline",
+      "importance": 0.4421,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2010.3,
+          2215.0
+        ],
+        [
+          2543.1,
+          2733.5
+        ]
+      ],
+      "support": 4,
+      "aliases": [
+        "underline test",
+        "underline train"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "column",
+      "importance": 0.4161,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          829.1,
+          1017.5
+        ]
+      ],
+      "support": 2,
+      "aliases": [
+        "year column"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "csv",
+      "importance": 0.388,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          667.0,
+          832.4
+        ],
+        [
+          1422.2,
+          1620.0
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "segment",
+      "importance": 0.349,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          829.1,
+          1017.5
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "anaconda",
+      "importance": 0.3309,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "tree",
+      "importance": 0.3292,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          2543.1,
+          2733.5
+        ],
+        [
+          2732.4,
+          2933.2
+        ],
+        [
+          2898.8,
+          2984.6
+        ]
+      ],
+      "support": 4,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "algorithm",
+      "importance": 0.3219,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          131.4,
+          341.0
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          1422.2,
+          1620.0
+        ],
+        [
+          1618.0,
+          1832.0
+        ]
+      ],
+      "support": 4,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "year old",
+      "importance": 0.3048,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1829.1,
+          2011.4
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "condition",
+      "importance": 0.3024,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2732.4,
+          2933.2
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "node",
+      "importance": 0.2888,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2732.4,
+          2933.2
+        ],
+        [
+          2898.8,
+          2984.6
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "pandas",
+      "importance": 0.2818,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ],
+        [
+          667.0,
+          832.4
+        ],
+        [
+          1422.2,
+          1620.0
+        ]
+      ],
+      "support": 3,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "install",
+      "importance": 0.281,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "mode",
+      "importance": 0.276,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "dot",
+      "importance": 0.2746,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2543.1,
+          2733.5
+        ],
+        [
+          2732.4,
+          2933.2
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "function",
+      "importance": 0.2665,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1124.8,
+          1294.9
+        ],
+        [
+          2010.3,
+          2215.0
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "notebook",
+      "importance": 0.2527,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          515.8,
+          715.2
+        ],
+        [
+          667.0,
+          832.4
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "old male",
+      "importance": 0.2518,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          1829.1,
+          2011.4
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "shortcuts",
+      "importance": 0.2398,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "parameter",
+      "importance": 0.2365,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          2543.1,
+          2733.5
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "continue",
+      "importance": 0.2363,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    }
+  ],
+  "selection_metrics": {
+    "requested_seconds": 900.0,
+    "actual_seconds": 880.6,
+    "duration_accuracy_percent": 97.8,
+    "num_segments": 16,
+    "num_cuts": 15,
+    "timeline_coverage_percent": 29.5,
+    "bins_occupied": 10,
+    "bins_total": 10,
+    "temporal_histogram": [
+      164.5,
+      120.3,
+      87.7,
+      83.6,
+      37.9,
+      68.5,
+      32.2,
+      23.3,
+      215.1,
+      47.4
+    ],
+    "first_half_share_percent": 56.1,
+    "second_half_share_percent": 43.9,
+    "unique_concepts": 25,
+    "concepts_covered": [
+      "algorithm",
+      "anaconda",
+      "cell",
+      "column",
+      "command mode",
+      "condition",
+      "continue",
+      "csv",
+      "dot",
+      "function",
+      "install",
+      "mode",
+      "model",
+      "node",
+      "notebook",
+      "old male",
+      "pandas",
+      "parameter",
+      "rules",
+      "segment"
+    ],
+    "avg_concept_importance": 0.3748,
+    "redundancy_percent": 0.0,
+    "earliest_timestamp": 131.4,
+    "latest_timestamp": 2733.5,
+    "avg_segment_seconds": 55.0,
+    "min_segment_seconds": 22.8,
+    "max_segment_seconds": 100.0,
+    "per_video": {
+      "7eh4d6sabA0": {
+        "candidates": 59,
+        "selected": 16,
+        "seconds": 880.6,
+        "budget": 900.0,
+        "concepts_found": 25,
+        "concepts_covered": [
+          "cell",
+          "rules",
+          "command mode",
+          "model",
+          "training",
+          "underline",
+          "column",
+          "csv",
+          "segment",
+          "anaconda",
+          "tree",
+          "algorithm",
+          "year old",
+          "condition",
+          "node",
+          "pandas",
+          "install",
+          "mode",
+          "dot",
+          "function",
+          "notebook",
+          "old male",
+          "shortcuts",
+          "parameter",
+          "continue"
+        ],
+        "concept_signal": "available",
+        "concepts_completed": [
+          "model",
+          "model (sub-thought)",
+          "rules (sub-thought)"
+        ],
+        "concepts_omitted_for_budget": [
+          "cell",
+          "rules",
+          "model"
+        ]
+      }
+    },
+    "weights": {
+      "concept": 0.32,
+      "semantic": 0.2,
+      "coverage": 0.28,
+      "coherence": 0.1,
+      "redundancy": 0.25,
+      "duration_penalty": 0.05,
+      "min_budget_fill": 0.9
+    }
+  },
+  "selection_trace": [
+    {
+      "rank": 1,
+      "start_time": 791.2,
+      "end_time": 832.4,
+      "duration": 41.2,
+      "concept": 10.7265,
+      "semantic": 0.5339,
+      "coverage": 0.7097,
+      "coherence": 0.627,
+      "redundancy": 0.0,
+      "concept_weighted": 3.4325,
+      "semantic_weighted": 0.1068,
+      "coverage_weighted": 0.1987,
+      "coherence_weighted": 0.0627,
+      "redundancy_penalty": 0.0,
+      "duration_penalty": 0.0206,
+      "gain": 3.7801,
+      "gain_per_second": 0.091752,
+      "committed_segments": 1
+    },
+    {
+      "rank": 2,
+      "start_time": 1562.3,
+      "end_time": 1620.0,
+      "duration": 57.7,
+      "concept": 1.1209,
+      "semantic": 0.7041,
+      "coverage": 0.7709,
+      "coherence": 0.6692,
+      "redundancy": 0.8207,
+      "concept_weighted": 0.3587,
+      "semantic_weighted": 0.1408,
+      "coverage_weighted": 0.2159,
+      "coherence_weighted": 0.0669,
+      "redundancy_penalty": 0.2052,
+      "duration_penalty": 0.0288,
+      "gain": 0.5483,
+      "gain_per_second": 0.009505,
+      "committed_segments": 1
+    },
+    {
+      "rank": 5,
+      "start_time": 2543.1,
+      "end_time": 2733.5,
+      "duration": 191.6,
+      "concept": 3.0451,
+      "semantic": 0.6488,
+      "coverage": 1.9362,
+      "coherence": 0.6346,
+      "redundancy": 0.8599,
+      "concept_weighted": 0.9744,
+      "semantic_weighted": 0.1298,
+      "coverage_weighted": 0.5421,
+      "coherence_weighted": 0.0635,
+      "redundancy_penalty": 0.215,
+      "duration_penalty": 0.0958,
+      "gain": 1.399,
+      "gain_per_second": 0.0073,
+      "committed_segments": 3
+    },
+    {
+      "rank": 6,
+      "start_time": 892.2,
+      "end_time": 979.0,
+      "duration": 86.7,
+      "concept": 0.4062,
+      "semantic": 0.5228,
+      "coverage": 0.9983,
+      "coherence": 0.6448,
+      "redundancy": 0.8697,
+      "concept_weighted": 0.13,
+      "semantic_weighted": 0.1046,
+      "coverage_weighted": 0.2795,
+      "coherence_weighted": 0.0645,
+      "redundancy_penalty": 0.2174,
+      "duration_penalty": 0.0434,
+      "gain": 0.3177,
+      "gain_per_second": 0.003664,
+      "committed_segments": 1
+    },
+    {
+      "rank": 7,
+      "start_time": 1454.4,
+      "end_time": 1503.1,
+      "duration": 48.7,
+      "concept": 0.1087,
+      "semantic": 0.2142,
+      "coverage": 0.6941,
+      "coherence": 0.7136,
+      "redundancy": 0.7475,
+      "concept_weighted": 0.0348,
+      "semantic_weighted": 0.0428,
+      "coverage_weighted": 0.1943,
+      "coherence_weighted": 0.0714,
+      "redundancy_penalty": 0.1869,
+      "duration_penalty": 0.0244,
+      "gain": 0.1321,
+      "gain_per_second": 0.002711,
+      "committed_segments": 1
+    },
+    {
+      "rank": 8,
+      "start_time": 558.8,
+      "end_time": 640.3,
+      "duration": 81.5,
+      "concept": 0.0,
+      "semantic": 0.5782,
+      "coverage": 0.9132,
+      "coherence": 0.6498,
+      "redundancy": 0.8346,
+      "concept_weighted": 0.0,
+      "semantic_weighted": 0.1156,
+      "coverage_weighted": 0.2557,
+      "coherence_weighted": 0.065,
+      "redundancy_penalty": 0.2086,
+      "duration_penalty": 0.0408,
+      "gain": 0.1869,
+      "gain_per_second": 0.002293,
+      "committed_segments": 1
+    },
+    {
+      "rank": 11,
+      "start_time": 2364.3,
+      "end_time": 2455.8,
+      "duration": 94.2,
+      "concept": 0.1904,
+      "semantic": 0.736,
+      "coverage": 0.78,
+      "coherence": 0.6127,
+      "redundancy": 0.9085,
+      "concept_weighted": 0.0609,
+      "semantic_weighted": 0.1472,
+      "coverage_weighted": 0.2184,
+      "coherence_weighted": 0.0613,
+      "redundancy_penalty": 0.2271,
+      "duration_penalty": 0.0471,
+      "gain": 0.2136,
+      "gain_per_second": 0.002266,
+      "committed_segments": 3
+    },
+    {
+      "rank": 14,
+      "start_time": 131.4,
+      "end_time": 341.0,
+      "duration": 207.0,
+      "concept": 0.0,
+      "semantic": 0.8993,
+      "coverage": 1.6144,
+      "coherence": 0.6448,
+      "redundancy": 0.9134,
+      "concept_weighted": 0.0,
+      "semantic_weighted": 0.1799,
+      "coverage_weighted": 0.452,
+      "coherence_weighted": 0.0645,
+      "redundancy_penalty": 0.2283,
+      "duration_penalty": 0.1035,
+      "gain": 0.3645,
+      "gain_per_second": 0.001761,
+      "committed_segments": 3
+    },
+    {
+      "rank": 15,
+      "start_time": 2010.3,
+      "end_time": 2042.6,
+      "duration": 32.2,
+      "concept": 0.096,
+      "semantic": 0.6205,
+      "coverage": 0.5745,
+      "coherence": 0.6133,
+      "redundancy": 0.8507,
+      "concept_weighted": 0.0307,
+      "semantic_weighted": 0.1241,
+      "coverage_weighted": 0.1609,
+      "coherence_weighted": 0.0613,
+      "redundancy_penalty": 0.2127,
+      "duration_penalty": 0.0161,
+      "gain": 0.1482,
+      "gain_per_second": 0.004597,
+      "committed_segments": 1
+    },
+    {
+      "rank": 16,
+      "start_time": 389.3,
+      "end_time": 428.9,
+      "duration": 39.6,
+      "concept": 0.3641,
+      "semantic": 0.7737,
+      "coverage": 0.2118,
+      "coherence": 0.667,
+      "redundancy": 0.8236,
+      "concept_weighted": 0.1165,
+      "semantic_weighted": 0.1547,
+      "coverage_weighted": 0.0593,
+      "coherence_weighted": 0.0667,
+      "redundancy_penalty": 0.2059,
+      "duration_penalty": 0.0198,
+      "gain": 0.1716,
+      "gain_per_second": 0.004333,
+      "committed_segments": 1
+    }
+  ],
+  "summarization_decision": {
+    "action": "compress",
+    "reason": "1076 words is above the 350-word target (+115% tolerance)",
+    "target_words": 350,
+    "coherence": {
+      "word_count": 1076,
+      "sentence_count": 10,
+      "artifact_density": 0.5,
+      "fragment_rate": 0.0,
+      "self_similarity_rate": 0.0,
+      "source_artifacts": 0,
+      "mid_sentence_connectives": 5,
+      "is_coherent": false,
+      "reasons": [
+        "5 fusion connectives across 10 sentences (0 sentence-initial, 5 mid-sentence) \u2014 50% > 12%"
+      ]
+    }
+  },
+  "selection_mode": "semantic",
+  "audio_path": null,
+  "subtitle_path": null,
+  "video_path": "audio_cache/highlights/highlight_21ec4375-ab0d-45dc-8d78-33326f929de8.mp4",
+  "created_at": "2026-09-15 18:13:59.559000",
+  "updated_at": "2026-09-15 18:18:12.099000",
+  "started_at": null,
+  "completed_at": "2026-09-15 18:18:12.104000",
+  "error": null,
+  "warning": null,
+  "retry_count": 0,
+  "max_retries": 3,
+  "summary_unavailable": false,
+  "summary_unavailable_reason": null,
+  "detected_language": null
+}

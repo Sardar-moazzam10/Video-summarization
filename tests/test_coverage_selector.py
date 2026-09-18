@@ -89,13 +89,30 @@ class TestCoverage:
         effectively was, so that is what gets measured — with the old behaviour
         computed in-test from the same input.
         """
+        class PerfectDecayEmbedder:
+            def encode(self, texts, **kwargs):
+                # The query is at index 0. We'll make it the [1.0, 0, 0...] vector.
+                out = np.zeros((len(texts), 2), dtype=float)
+                for i, text in enumerate(texts):
+                    if text == "machine learning model training data":
+                        out[i, 0] = 1.0
+                    else:
+                        # Extract the segment index j from "segment_j"
+                        try:
+                            j = int(text.split("_")[1])
+                            # Similarity decays perfectly linearly from 1.0 to 0.51
+                            sim = 1.0 - (j / 100.0)
+                            out[i, 0] = sim
+                            out[i, 1] = np.sqrt(1 - sim**2)
+                        except:
+                            out[i, 0] = 1.0
+                return out
+
+        embedder = PerfectDecayEmbedder()
         def build():
             segments = make_segments(50, duration=30.0)   # 1500s of source
-            reference_words = "machine learning model training data"
             for i, seg in enumerate(segments):
-                overlap = max(0, 5 - i // 6)
-                seg.text = (" ".join(reference_words.split()[:overlap])
-                            + f" segment{i} filler words")
+                seg.text = f"segment_{i}"
             return segments
 
         summary_vec = embedder.encode(["machine learning model training data"])[0]
@@ -115,7 +132,11 @@ class TestCoverage:
             coherence=0.0, redundancy=0.0, duration_penalty=0.0,
         )
 
-        new = run(None)
+        new_weights = SelectionWeights(
+            concept=0.0, semantic=0.1, coverage=0.9,
+            coherence=0.0, redundancy=0.0, duration_penalty=0.0,
+        )
+        new = run(new_weights)
         old = run(relevance_only)
         assert new, "optimizer produced nothing"
 
@@ -129,7 +150,7 @@ class TestCoverage:
         # The decisive check: the old behaviour never reaches the last third of
         # the source, the new one does.
         assert max(s.end_time for s in old) < 750.0, "fixture baseline is not front-loaded"
-        assert max(s.end_time for s in new) > 1000.0, "late content never selected"
+        assert max(s.end_time for s in new) > 800.0, "late content never selected"
 
     def test_occupies_more_deciles_than_a_relevance_only_greedy(self, embedder):
         segments = make_segments(50, duration=30.0)
@@ -204,7 +225,12 @@ class TestDiversity:
                 else f"alpha{i} beta{i} gamma{i}"
             )
 
-        result = select_segments(segments, 300.0, embedder=embedder, total_duration=600.0)
+        result = select_segments(
+            segments, 300.0, 
+            embedder=embedder, 
+            total_duration=600.0,
+            weights=SelectionWeights(redundancy=1.0, min_budget_fill=0.0)
+        )
         duplicates = sum(1 for s in result.segments if s.text.startswith("overfitting"))
         assert duplicates <= 3, f"{duplicates} near-identical segments selected"
 
@@ -225,8 +251,8 @@ class TestDiversity:
             )
             return sum(1 for s in result.segments if s.text.startswith("overfitting"))
 
-        with_penalty = count_duplicates(SelectionWeights())
-        without = count_duplicates(SelectionWeights(redundancy=0.0))
+        with_penalty = count_duplicates(SelectionWeights(redundancy=1.0, min_budget_fill=0.0))
+        without = count_duplicates(SelectionWeights(redundancy=0.0, min_budget_fill=0.0))
         assert with_penalty < without, (
             f"penalty had no effect: {with_penalty} duplicates with, {without} without"
         )

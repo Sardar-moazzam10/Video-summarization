@@ -1,0 +1,844 @@
+{
+  "job_id": "081adda9-a650-422a-9342-847ca3ad9888",
+  "user_id": "test_user",
+  "status": "completed",
+  "progress_percent": 100,
+  "stage_message": "Your summary is ready!",
+  "video_ids": [
+    "7eh4d6sabA0"
+  ],
+  "target_duration_minutes": 5,
+  "duration_style": "brief",
+  "generate_audio": false,
+  "generate_video": true,
+  "highlight_duration_seconds": 300,
+  "style": "educational",
+  "highlight_segments": [
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 791.2,
+      "end_time": 832.399,
+      "importance_score": 0.2541,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "so this returns a data frame object which is like an excel spreadsheet let me show you so we store it here and then we can simply type df to inspect it so one more time let's run this program here's our data frame with these rows and columns so we have rank name platform and so on now this data frame object has lots of attributes and methods that we're not going to cover in this tutorial that's really beyond the scope of what we're going to do so i'll leave it up to you to read panda's documentation or follow other tutorials to learn about pandas data frames but in this lecture i'm going to show you some of the most useful methods"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 1562.32,
+      "end_time": 1620.0,
+      "importance_score": 0.3385,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "beautiful next minute to prepare or clean the data and that's the topic for the next lecture the second step in a machine learning project is cleaning or preparing the data and that involves tasks such as removing duplicates null values and so on now in this particular data set we don't have to do any kind of cleaning because we don't have any duplicates and as you can see all rows have values for all columns so we don't have null values but there is one thing we need to do we should split this data set into two separate data sets one with the first two columns which we refer to as the input set and the other with the last column which we refer to as the output set so when we train a model we give it two separate data sets the input set and the output set the output set which is in this case the genre column contains"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 2543.119,
+      "end_time": 2574.88,
+      "importance_score": 0.2404,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "we're going to load it so we call the load method we don't have the model we simply pass the name of our model file this returns our trained model now with these two lines we can simply make predictions so earlier we assumed that men between 20 and 25 like hip-hop music let's print predictions and see if our model is behaving correctly or not so control and enter there you go so this is how we persist and load"
+    },
+    {
+      "video_id": "7eh4d6sabA0",
+      "start_time": 2576.839,
+      "end_time": 2733.52,
+      "importance_score": 0.288,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "models earlier in this section i told you that decision trees are the easiest to understand and that's why we started machine learning with decision trees in this lecture we're going to export our model in a visual format so you will see how this model makes predictions that is really really cool let me show you so once again i've simplified this code so we simply import our data set create input and output sets create a model and train it that's all we are doing now i want you to follow along with me type everything exactly as i show you in this lecture don't worry about what everything means we're going to come back to it shortly so on the top from sklearn import tree this object has a method for exporting our decision tree in a graphical format so after we train our model let's call tree dot export underline graph vis now here are a few arguments we need to pass the first argument is our model the second is the name of the output file so here we're going to use keyword arguments because this method takes so many parameters and we want to selectively pass keyword arguments without worrying about their order so the parameter we're going to set is out underline file let's set this to music dash recommender dot d o t this is the dot format which is a graph description language you'll see that shortly the other parameter we want to set is feature underline names we set this to an array of two strings age and gender these are the features or the columns of our data set so they are the properties or features of our data okay the other parameter is class names so class underline names we should set this to the list of classes or labels we have in our output data set like hip hop jazz classical and so on so this y data set includes all the genres or all the classes of our data but they're repeated a few times in this data set so here we call y dot unique this returns the unique list of classes now we should sort this alphabetically so we call the sorted function and pass the result a y dot unique the next parameter is label we set this"
+    }
+  ],
+  "segments": [],
+  "summary_text": "Sklearn import tree has a method for exporting our decision tree in a graphical format . After we train our model we give it two separate data sets the input set and the output set . The data frame object has lots of attributes and methods that we're not going to cover in this tutorial that's really beyond the scope of what we're going to do . In this lecture i'm going to show you how this model makes predictions that is really really cool let me show you .",
+  "rich_output": {
+    "summary": "Sklearn import tree has a method for exporting our decision tree in a graphical format . After we train our model we give it two separate data sets the input set and the output set . The data frame object has lots of attributes and methods that we're not going to cover in this tutorial that's really beyond the scope of what we're going to do . In this lecture i'm going to show you how this model makes predictions that is really really cool let me show you .",
+    "key_takeaways": [
+      "Sklearn import tree has a method for exporting our decision tree in a graphical format .",
+      "After we train our model we give it two separate data sets the input set and the output set .",
+      "The data frame object has lots of attributes and methods that we're not going to cover in this tutorial that's really beyond the scope of what we're going to do .",
+      "In this lecture i'm going to show you how this model makes predictions that is really really cool let me show you ."
+    ],
+    "best_quotes": [],
+    "chapters": [
+      {
+        "title": "Introduction & Overview",
+        "text": "Sklearn import tree has a method for exporting our decision tree in a graphical format ."
+      },
+      {
+        "title": "Core Discussion",
+        "text": "After we train our model we give it two separate data sets the input set and the output set ."
+      },
+      {
+        "title": "Conclusions & Key Points",
+        "text": "The data frame object has lots of attributes and methods that we're not going to cover in this tutorial that's really beyond the scope of what we're going to do . In this lecture i'm going to show you how this model makes predictions that is really really cool let me show you ."
+      }
+    ],
+    "who_should_watch": "",
+    "who_can_skip": "",
+    "action_steps": [],
+    "tldr": "Sklearn import tree has a method for exporting our decision tree in a graphical format . After we train our model we give it two separate data sets the input set and the output set .",
+    "style_applied": "educational"
+  },
+  "fusion_metadata": {
+    "total_source_words": 765,
+    "output_words": 90,
+    "compression_ratio": 0.11764705882352941,
+    "topics_found": [
+      "i show you in this...",
+      "so this returns a data...",
+      "we're going to load it..."
+    ],
+    "clusters_created": 3,
+    "dedup_ratio": 1.0,
+    "conflicts_detected": [],
+    "processing_time_seconds": 4.015316,
+    "video_count": 1
+  },
+  "keyframes_extracted": {},
+  "concepts": [
+    {
+      "concept": "cell",
+      "importance": 1.0,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ],
+        [
+          1124.8,
+          1294.9
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          2213.4,
+          2410.1
+        ]
+      ],
+      "support": 5,
+      "aliases": [
+        "cells"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "rules",
+      "importance": 0.7099,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.0,
+          178.0
+        ],
+        [
+          338.6,
+          516.7
+        ],
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          2010.3,
+          2215.0
+        ],
+        [
+          2732.4,
+          2933.2
+        ],
+        [
+          2898.8,
+          2984.6
+        ]
+      ],
+      "support": 10,
+      "aliases": [
+        "library",
+        "true",
+        "test",
+        "testing",
+        "libraries"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "command mode",
+      "importance": 0.5681,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ],
+        [
+          1124.8,
+          1294.9
+        ],
+        [
+          1293.6,
+          1456.6
+        ]
+      ],
+      "support": 4,
+      "aliases": [
+        "command"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "model",
+      "importance": 0.5213,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          131.4,
+          341.0
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          1829.1,
+          2011.4
+        ],
+        [
+          2213.4,
+          2410.1
+        ],
+        [
+          2364.3,
+          2544.7
+        ],
+        [
+          2543.1,
+          2733.5
+        ]
+      ],
+      "support": 7,
+      "aliases": [
+        "model file"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "training",
+      "importance": 0.5,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.0,
+          178.0
+        ],
+        [
+          131.4,
+          341.0
+        ],
+        [
+          338.6,
+          516.7
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          2010.3,
+          2215.0
+        ],
+        [
+          2213.4,
+          2410.1
+        ],
+        [
+          2364.3,
+          2544.7
+        ]
+      ],
+      "support": 13,
+      "aliases": [
+        "learning",
+        "machine learning",
+        "data training"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "underline",
+      "importance": 0.4421,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2010.3,
+          2215.0
+        ],
+        [
+          2543.1,
+          2733.5
+        ]
+      ],
+      "support": 4,
+      "aliases": [
+        "underline test",
+        "underline train"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "column",
+      "importance": 0.4161,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          829.1,
+          1017.5
+        ]
+      ],
+      "support": 2,
+      "aliases": [
+        "year column"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "csv",
+      "importance": 0.388,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          667.0,
+          832.4
+        ],
+        [
+          1422.2,
+          1620.0
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "segment",
+      "importance": 0.349,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          829.1,
+          1017.5
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "anaconda",
+      "importance": 0.3309,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "tree",
+      "importance": 0.3292,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          2543.1,
+          2733.5
+        ],
+        [
+          2732.4,
+          2933.2
+        ],
+        [
+          2898.8,
+          2984.6
+        ]
+      ],
+      "support": 4,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "algorithm",
+      "importance": 0.3219,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          131.4,
+          341.0
+        ],
+        [
+          1293.6,
+          1456.6
+        ],
+        [
+          1422.2,
+          1620.0
+        ],
+        [
+          1618.0,
+          1832.0
+        ]
+      ],
+      "support": 4,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "year old",
+      "importance": 0.3048,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1829.1,
+          2011.4
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "condition",
+      "importance": 0.3024,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2732.4,
+          2933.2
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "node",
+      "importance": 0.2888,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2732.4,
+          2933.2
+        ],
+        [
+          2898.8,
+          2984.6
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "pandas",
+      "importance": 0.2818,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ],
+        [
+          667.0,
+          832.4
+        ],
+        [
+          1422.2,
+          1620.0
+        ]
+      ],
+      "support": 3,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "install",
+      "importance": 0.281,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "mode",
+      "importance": 0.276,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "dot",
+      "importance": 0.2746,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          2543.1,
+          2733.5
+        ],
+        [
+          2732.4,
+          2933.2
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "function",
+      "importance": 0.2665,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1124.8,
+          1294.9
+        ],
+        [
+          2010.3,
+          2215.0
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "notebook",
+      "importance": 0.2527,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          515.8,
+          715.2
+        ],
+        [
+          667.0,
+          832.4
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "old male",
+      "importance": 0.2518,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          1829.1,
+          2011.4
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "shortcuts",
+      "importance": 0.2398,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          976.5,
+          1164.1
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "parameter",
+      "importance": 0.2365,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          1618.0,
+          1832.0
+        ],
+        [
+          2543.1,
+          2733.5
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "continue",
+      "importance": 0.2363,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          338.6,
+          516.7
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    }
+  ],
+  "selection_metrics": {
+    "requested_seconds": 300.0,
+    "actual_seconds": 290.5,
+    "duration_accuracy_percent": 96.8,
+    "num_segments": 5,
+    "num_cuts": 4,
+    "timeline_coverage_percent": 9.7,
+    "bins_occupied": 4,
+    "bins_total": 10,
+    "temporal_histogram": [
+      0.0,
+      0.0,
+      41.2,
+      0.0,
+      0.0,
+      57.7,
+      0.0,
+      0.0,
+      144.2,
+      47.4
+    ],
+    "first_half_share_percent": 14.2,
+    "second_half_share_percent": 85.8,
+    "unique_concepts": 25,
+    "concepts_covered": [
+      "algorithm",
+      "anaconda",
+      "cell",
+      "column",
+      "command mode",
+      "condition",
+      "continue",
+      "csv",
+      "dot",
+      "function",
+      "install",
+      "mode",
+      "model",
+      "node",
+      "notebook",
+      "old male",
+      "pandas",
+      "parameter",
+      "rules",
+      "segment"
+    ],
+    "avg_concept_importance": 0.3748,
+    "redundancy_percent": 0.0,
+    "earliest_timestamp": 791.2,
+    "latest_timestamp": 2733.5,
+    "avg_segment_seconds": 58.1,
+    "min_segment_seconds": 31.8,
+    "max_segment_seconds": 100.0,
+    "per_video": {
+      "7eh4d6sabA0": {
+        "candidates": 59,
+        "selected": 5,
+        "seconds": 290.5,
+        "budget": 300.0,
+        "concepts_found": 25,
+        "concepts_covered": [
+          "cell",
+          "rules",
+          "command mode",
+          "model",
+          "training",
+          "underline",
+          "column",
+          "csv",
+          "segment",
+          "anaconda",
+          "tree",
+          "algorithm",
+          "year old",
+          "condition",
+          "node",
+          "pandas",
+          "install",
+          "mode",
+          "dot",
+          "function",
+          "notebook",
+          "old male",
+          "shortcuts",
+          "parameter",
+          "continue"
+        ],
+        "concept_signal": "available",
+        "concepts_completed": [
+          "model"
+        ],
+        "concepts_omitted_for_budget": [
+          "rules",
+          "model",
+          "cell"
+        ]
+      }
+    },
+    "weights": {
+      "concept": 0.32,
+      "semantic": 0.2,
+      "coverage": 0.28,
+      "coherence": 0.1,
+      "redundancy": 0.25,
+      "duration_penalty": 0.05,
+      "min_budget_fill": 0.9
+    }
+  },
+  "selection_trace": [
+    {
+      "rank": 1,
+      "start_time": 791.2,
+      "end_time": 832.4,
+      "duration": 41.2,
+      "concept": 3.5755,
+      "semantic": 0.5339,
+      "coverage": 0.2366,
+      "coherence": 0.627,
+      "redundancy": 0.0,
+      "concept_weighted": 1.1442,
+      "semantic_weighted": 0.1068,
+      "coverage_weighted": 0.0662,
+      "coherence_weighted": 0.0627,
+      "redundancy_penalty": 0.0,
+      "duration_penalty": 0.0206,
+      "gain": 1.3593,
+      "gain_per_second": 0.032993,
+      "committed_segments": 1
+    },
+    {
+      "rank": 2,
+      "start_time": 1562.3,
+      "end_time": 1620.0,
+      "duration": 57.7,
+      "concept": 0.3736,
+      "semantic": 0.7041,
+      "coverage": 0.257,
+      "coherence": 0.6692,
+      "redundancy": 0.8207,
+      "concept_weighted": 0.1196,
+      "semantic_weighted": 0.1408,
+      "coverage_weighted": 0.072,
+      "coherence_weighted": 0.0669,
+      "redundancy_penalty": 0.2052,
+      "duration_penalty": 0.0288,
+      "gain": 0.1652,
+      "gain_per_second": 0.002865,
+      "committed_segments": 1
+    },
+    {
+      "rank": 5,
+      "start_time": 2543.1,
+      "end_time": 2733.5,
+      "duration": 191.6,
+      "concept": 1.015,
+      "semantic": 0.6488,
+      "coverage": 0.6454,
+      "coherence": 0.6346,
+      "redundancy": 0.8599,
+      "concept_weighted": 0.3248,
+      "semantic_weighted": 0.1298,
+      "coverage_weighted": 0.1807,
+      "coherence_weighted": 0.0635,
+      "redundancy_penalty": 0.215,
+      "duration_penalty": 0.0958,
+      "gain": 0.3879,
+      "gain_per_second": 0.002024,
+      "committed_segments": 3
+    }
+  ],
+  "summarization_decision": {
+    "action": "compress",
+    "reason": "570 words is above the 150-word target (+115% tolerance)",
+    "target_words": 150,
+    "coherence": {
+      "word_count": 570,
+      "sentence_count": 5,
+      "artifact_density": 0.0,
+      "fragment_rate": 0.0,
+      "self_similarity_rate": 0.0,
+      "source_artifacts": 0,
+      "mid_sentence_connectives": 0,
+      "is_coherent": true,
+      "reasons": []
+    }
+  },
+  "selection_mode": "semantic",
+  "audio_path": null,
+  "subtitle_path": null,
+  "video_path": "audio_cache/highlights/highlight_081adda9-a650-422a-9342-847ca3ad9888.mp4",
+  "created_at": "2026-09-15 18:08:27.204000",
+  "updated_at": "2026-09-15 18:10:47.244000",
+  "started_at": null,
+  "completed_at": "2026-09-15 18:10:47.247000",
+  "error": null,
+  "warning": null,
+  "retry_count": 0,
+  "max_retries": 3,
+  "summary_unavailable": false,
+  "summary_unavailable_reason": null,
+  "detected_language": null
+}

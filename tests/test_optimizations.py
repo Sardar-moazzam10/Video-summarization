@@ -56,4 +56,4 @@ async def test_bart_inference_mode_and_beams():
         
         mock_model.generate.assert_called_once()
         _, kwargs = mock_model.generate.call_args
-        assert kwargs.get("num_beams") == 2
+        assert kwargs.get("num_beams") == 4

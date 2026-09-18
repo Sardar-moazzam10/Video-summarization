@@ -410,11 +410,13 @@ class VideoService:
 
         vf = (
             f"scale=1280:720:force_original_aspect_ratio=decrease,"
-            f"pad=1280:720:-1:-1:color=black"
+            f"pad=1280:720:-1:-1:color=black,"
+            f"tpad=stop_mode=clone:stop_duration=2"
         )
         af = (
             f"afade=t=in:st=0:d={fade_d:.3f},"
-            f"afade=t=out:st={fade_out_start:.3f}:d={fade_d:.3f}"
+            f"afade=t=out:st={fade_out_start:.3f}:d={fade_d:.3f},"
+            f"apad"
         )
 
         cmd = [
@@ -423,7 +425,7 @@ class VideoService:
             "-i", src,
             "-t",  f"{duration:.3f}",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             "-r", "30",
             "-vf", vf,
             "-af", af,
@@ -514,10 +516,10 @@ class VideoService:
             "-f", "lavfi",
             "-i", "color=c=black:size=1280x720:rate=30:duration=0.4",
             "-f", "lavfi",
-            "-i", "anullsrc=r=44100:cl=stereo",
+            "-i", "anullsrc=r=48000:cl=stereo",
             "-t", "0.4",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             "-shortest",
             out,
         ]

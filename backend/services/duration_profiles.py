@@ -289,14 +289,14 @@ def get_summarization_config(profile: DurationProfile) -> SummarizationConfig:
             max_output_length=600,
             min_output_length=200,
             num_beams=4,
-            length_penalty=1.5,
+            length_penalty=2.0,
             repetition_penalty=1.3
         ),
         SummaryStyle.STANDARD: SummarizationConfig(
             max_output_length=900,
             min_output_length=350,
             num_beams=4,
-            length_penalty=2.0,
+            length_penalty=2.5,
             repetition_penalty=1.3
         ),
         SummaryStyle.COMPREHENSIVE: SummarizationConfig(

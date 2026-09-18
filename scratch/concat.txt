@@ -1,0 +1,2 @@
+file '/home/weiblocks/Desktop/Video-summarization/scratch/clip_0003.mp4'
+file '/home/weiblocks/Desktop/Video-summarization/scratch/clip_0004.mp4'

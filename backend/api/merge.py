@@ -1029,7 +1029,6 @@ async def run_semantic_selection(
     durations = {vid: _source_duration(segs) for vid, segs in raw_segments.items() if segs}
     if not durations:
         return None
-    budgets = _allocate_budgets(durations, budget)
 
     # --- Reference vector for the relevance term ---
     # semantic_bias_text is the FIRST-PASS fusion output over the full
@@ -1053,6 +1052,8 @@ async def run_semantic_selection(
     all_trace = []
     per_video = {}
 
+    global_segments = []
+
     for vid, segs in raw_segments.items():
         if not segs:
             continue
@@ -1071,67 +1072,63 @@ async def run_semantic_selection(
             continue
         print(f"[Semantic] {vid}: {len(segs)} caption entries -> {len(segments)} complete thoughts "
               f"(avg {sum(s.duration for s in segments) / len(segments):.0f}s)")
+        global_segments.extend(segments)
 
-        # --- 2. concept extraction ---
-        await say(f"Extracting key concepts from {vid}...")
-        try:
-            concepts = await extract_concepts(
-                segments,
-                total_duration=durations.get(vid, 0.0),
-                top_k=settings.CONCEPT_TOP_K,
-                use_llm=settings.ENABLE_CONCEPT_LLM,
-                per_chunk_timeout=settings.CONCEPT_CHUNK_TIMEOUT_SECONDS,
-                total_timeout=settings.CONCEPT_TOTAL_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:
-            print(f"[Semantic] Concept extraction failed for {vid}: {exc}")
-            concepts = []
-
-        # An empty concept list is NOT a normal outcome to pass over quietly.
-        # The concept term carries the largest single weight in the optimizer,
-        # so with no concepts the selection silently degrades to relevance +
-        # temporal coverage only — which is what produced a reel that spread
-        # evenly across the timeline and cut an important discussion in half.
-        # Say so explicitly rather than letting "0/0 concepts covered" read
-        # like a successful concept-driven run.
-        if not concepts:
-            print(f"[Semantic] WARNING: 0 concepts extracted for {vid} — "
-                  f"concept-driven selection is DISABLED for this video; "
-                  f"falling back to relevance + temporal coverage only")
-
-        # --- 3. budgeted selection ---
-        await say(f"Selecting the best {budgets[vid]:.0f}s from {vid}...")
-        result = await asyncio.to_thread(
-            select_segments,
-            segments,
-            budgets[vid],
-            concepts,
-            weights,
-            summary_embedding,
-            None,
-            durations.get(vid, 0.0),
+    # --- 2. concept extraction (Global) ---
+    await say(f"Extracting key concepts globally across {len(raw_segments)} videos...")
+    total_len = sum(durations.values())
+    try:
+        concepts = await extract_concepts(
+            global_segments,
+            total_duration=total_len,
+            top_k=settings.CONCEPT_TOP_K,
+            use_llm=settings.ENABLE_CONCEPT_LLM,
+            per_chunk_timeout=settings.CONCEPT_CHUNK_TIMEOUT_SECONDS,
+            total_timeout=settings.CONCEPT_TOTAL_TIMEOUT_SECONDS,
         )
-        if not result.segments:
-            print(f"[Semantic] {vid}: optimizer returned nothing — skipping")
-            continue
+    except Exception as exc:
+        print(f"[Semantic] Concept extraction failed globally: {exc}")
+        concepts = []
 
+    if not concepts:
+        print(f"[Semantic] WARNING: 0 concepts extracted globally — "
+              f"concept-driven selection is DISABLED; falling back to relevance + temporal coverage only")
+
+    # --- 3. budgeted selection (Global) ---
+    await say(f"Selecting the best {budget:.0f}s from the global candidate pool...")
+    result = await asyncio.to_thread(
+        select_segments,
+        global_segments,
+        budget,
+        concepts,
+        weights,
+        summary_embedding,
+        None,
+        durations,  # Dict of video durations
+    )
+
+    if result.segments:
         baselines.append(result.baseline_similarity)
         all_selected.extend(result.segments)
         all_concepts.extend(concepts)
         all_trace.extend(result.trace)
-        per_video[vid] = {
-            "candidates": len(segments),
-            "selected": len(result.segments),
-            "seconds": round(result.total_duration, 1),
-            "budget": round(budgets[vid], 1),
-            "concepts_found": len(concepts),
-            "concepts_covered": result.concepts_covered,
-            # Distinguishes "concepts were used" from "there were none", so a
-            # 0/0 result can never be presented as concept-driven selection.
-            "concept_signal": result.concept_signal,
-            "concepts_completed": result.concepts_completed,
-            "concepts_omitted_for_budget": result.concepts_omitted_for_budget,
-        }
+
+        # Approximate per-video stats
+        for vid in raw_segments:
+            vid_selected = [s for s in result.segments if getattr(s, "video_id", "") == vid]
+            vid_cands = [s for s in global_segments if getattr(s, "video_id", "") == vid]
+            if not vid_cands:
+                continue
+            per_video[vid] = {
+                "candidates": len(vid_cands),
+                "selected": len(vid_selected),
+                "seconds": round(sum(s.duration for s in vid_selected), 1),
+                "budget": 0.0,
+                "concepts_found": len(concepts),
+                "concepts_covered": result.concepts_covered,
+                "concept_signal": result.concept_signal,
+                "concepts_omitted_for_budget": result.concepts_omitted_for_budget,
+            }
 
     if not all_selected:
         return None
@@ -1377,6 +1374,15 @@ async def process_merge_job(job_id: str):
                 f"Transcript language '{langs}' is not supported by the summarizer — "
                 f"written summary unavailable. Generating highlight video only."
             )
+            job_warning = (
+                f"This video's transcript is in '{langs}' and could not be translated. "
+                f"Written summary unavailable ('{langs}' transcript). "
+                f"Generating video highlights..."
+            )
+            job.warning = job_warning
+            job.summary_unavailable = True
+            job.summary_unavailable_reason = "UNSUPPORTED_LANGUAGE"
+            job.detected_language = langs
 
             # summary_text is intentionally left as None here, not "", so
             # the result page can distinguish 'job ran but language unsupported'
@@ -1432,7 +1438,7 @@ async def process_merge_job(job_id: str):
                     # current processing state (ANALYZING / TRANSCRIBING) so the
                     # frontend does not interpret this as a terminal result.
                     "stage_message": job.stage_message,
-                    "warning": job_warning,
+                    
                     "summary_unavailable": True,
                     "summary_unavailable_reason": "UNSUPPORTED_LANGUAGE",
                     "detected_language": langs,
@@ -1450,6 +1456,8 @@ async def process_merge_job(job_id: str):
             _language_abort = True
         else:
             _language_abort = False
+
+        selection_bias_fusion = None
 
         if not _language_abort:
             # STAGE 2: Analyzing (30-40%)
@@ -1483,19 +1491,35 @@ async def process_merge_job(job_id: str):
             # activates Tier 1 (segment-boundary chunking) in _extract_sentences(),
             # which is the fix for 0-sentence extraction on English auto-captions.
             fusion_engine = get_fusion_engine()
-            fusion_result = fusion_engine.fuse_transcripts(
+            # FIRST PASS — full transcript → used ONLY as semantic-bias reference for
+            # segment selection. NOT the BART input. The second pass (below, after
+            # selection) fuses the SELECTED segments and feeds that to BART.
+            selection_bias_fusion = fusion_engine.fuse_transcripts(
                 transcripts=transcripts,
                 target_words=fusion_budget,
                 include_sources=profile.include_sources,
                 include_transitions=profile.include_transitions,
                 raw_segments=raw_segments,
             )
+            if selection_bias_fusion:
+                print(
+                    f"[Fusion 1/2] Full-transcript pass: "
+                    f"{len(selection_bias_fusion.topics)} topics, "
+                    f"{len(selection_bias_fusion.narrative.split())} words "
+                    f"— selection bias only, NOT fed to BART"
+                )
 
-            await update_status(
-                JobStatus.FUSING,
-                70,
-                f"Fusion complete: {len(fusion_result.topics)} topics identified"
-            )
+                await update_status(
+                    JobStatus.FUSING,
+                    70,
+                    f"Fusion complete: {len(selection_bias_fusion.topics)} topics identified"
+                )
+            else:
+                await update_status(
+                    JobStatus.FUSING,
+                    70,
+                    "Fusion complete"
+                )
 
         if not _language_abort:
             # -------------------------------------------------------------
@@ -1559,7 +1583,7 @@ async def process_merge_job(job_id: str):
                         run_semantic_selection(
                             job=job,
                             raw_segments={v: raw_segments.get(v, []) for v in unique_video_ids},
-                            semantic_bias_text=fusion_result.narrative if fusion_result else "",
+                            semantic_bias_text=selection_bias_fusion.narrative if selection_bias_fusion else "",
                             progress=video_progress,
                         )
                     )
@@ -1611,7 +1635,7 @@ async def process_merge_job(job_id: str):
                         job=job,
                         video_paths=video_paths,
                         raw_segments=raw_segments,
-                        semantic_bias_text=fusion_result.narrative,
+                        semantic_bias_text=selection_bias_fusion.narrative if selection_bias_fusion else "",
                         update_status=update_status,
                         keyframes_extracted=keyframes_extracted,
                     )
@@ -1706,6 +1730,7 @@ async def process_merge_job(job_id: str):
                         "selection_metrics": selection_metrics,
                         "selection_trace": selection_trace,
                         "selection_mode": selection_mode,
+                "warning": job_warning,
                         # Carry language-abort metadata into the VIDEO_READY
                         # checkpoint so /result can serve summary_unavailable
                         # as soon as the video is playable.
@@ -1765,13 +1790,22 @@ async def process_merge_job(job_id: str):
                     selected_transcripts_map = transcripts
                     selected_raw_segments = raw_segments
 
-                # FUSE ONLY THE SELECTED SEGMENTS!
+                # SECOND PASS — fuse ONLY the selected segments → this is the BART input.
+                # Kept separate from the first-pass (selection_bias_fusion) so the two
+                # purposes never mix: the first pass informs WHAT to pick, the second
+                # pass produces WHAT to summarize.
                 fusion_result = fusion_engine.fuse_transcripts(
                     transcripts=selected_transcripts_map,
                     target_words=fusion_budget,
                     include_sources=profile.include_sources,
                     include_transitions=profile.include_transitions,
                     raw_segments=selected_raw_segments,
+                )
+                print(
+                    f"[Fusion 2/2] Selected-segments pass: "
+                    f"{len(fusion_result.topics)} topics, "
+                    f"{len(fusion_result.narrative.split())} words "
+                    f"— this is the BART input"
                 )
 
                 # STAGE 4: Summarizing (70-85%) - BART-large-CNN Hierarchical
@@ -1782,10 +1816,8 @@ async def process_merge_job(job_id: str):
                 )
 
                 from ..services.summarization_service import get_summarization_service
-                
-                with open("/home/weiblocks/.gemini/antigravity/brain/08033a07-29b0-4566-8589-763c97b80c7d/scratch/bart_input.txt", "w") as f:
-                    f.write(fusion_result.narrative)
-                    
+
+                print(f"[BART] Input narrative: {len(fusion_result.narrative.split())} words")
                 summarizer_svc = get_summarization_service()
                 summary_text, summarization_decision = await asyncio.to_thread(
                     summarizer_svc.summarize_with_policy,
@@ -1962,6 +1994,8 @@ async def process_merge_job(job_id: str):
                 "summarization_decision": summarization_decision,
                 "selection_mode": selection_mode,
                 "warning": job_warning,
+                
+                
                 "completed_at": job.completed_at,
                 # Language-abort metadata — persisted so /result and /evaluate
                 # can serve correct language-unavailable responses after the
@@ -1975,9 +2009,10 @@ async def process_merge_job(job_id: str):
 
 
     except Exception as e:
-        # Handle error
         error_msg = str(e)
         print(f"[ERROR] Job {job_id} failed: {error_msg}")
+        import traceback
+        traceback.print_exc()
 
         if job_id in _active_jobs:
             job = _active_jobs[job_id]

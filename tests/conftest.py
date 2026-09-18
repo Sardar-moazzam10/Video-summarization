@@ -33,6 +33,7 @@ class FakeEmbedder:
                 # (PYTHONHASHSEED), so hash() would give this fixture a different
                 # vocabulary on every run and make the assertions below flaky.
                 out[i, zlib.crc32(word.encode()) % self.dim] += 1.0
+            
             norm = np.linalg.norm(out[i])
             if norm > 0:
                 out[i] /= norm

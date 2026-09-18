@@ -1,0 +1,876 @@
+{
+  "job_id": "fe31051a-61e4-43a3-8811-2bf67203727f",
+  "user_id": "test_user",
+  "status": "completed",
+  "progress_percent": 100,
+  "stage_message": "Your summary is ready!",
+  "video_ids": [
+    "ukzFI9rgwfU",
+    "PeMlggyqz0Y",
+    "qYNweeDHiyU"
+  ],
+  "target_duration_minutes": 10,
+  "duration_style": "brief",
+  "generate_audio": false,
+  "generate_video": true,
+  "highlight_duration_seconds": 600,
+  "style": "educational",
+  "highlight_segments": [
+    {
+      "video_id": "PeMlggyqz0Y",
+      "start_time": 0.12,
+      "end_time": 104.399,
+      "importance_score": 0.2365,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "machine learning teach a computer how to perform a task without explicitly programming it to perform said task instead feed data into an algorithm to gradually improve outcomes with experience similar to how organic life learns the term was coined in 1959 by Arthur Samuel at IBM who is developing artificial intelligence that could play checkers half a century later and predictive models are embedded in many of the products we use every day which perform two fundamental jobs one is to classify data like is there another car on the road or does this patient have cancer the other is to make predictions about future outcomes like will the stock go up or which YouTube video do you want to watch next the first step in the process is to acquire and clean up data lots and lots of data the better the data represents the problem the better the results garbage in garbage out the data needs to have some kind of signal to be valuable to the algorithm for making predictions and data scientists perform a job called feature engineering to transform raw data into features that better represent the underlying problem the next step is to separate the data into a training set and testing set the training data is fed into an algorithm to build a model then the testing data is used to validate the accuracy or error of the model the next step is to choose an algorithm which might be a simple statistical model like linear or logistic regression or a decision tree that assigns different weights to features in the data or you might get fancy with a convolutional neural network which is an algorithm that also assigns weights to Features but also takes the input data and creates a additional features automatically and that's extremely useful for data sets that contain things like images or natural language where manual feature engineering is virtually impossible every one of these algorithms learns to get better by comparing its"
+    },
+    {
+      "video_id": "qYNweeDHiyU",
+      "start_time": 289.36,
+      "end_time": 478.0,
+      "importance_score": 0.2995,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "next layer of our Vin diagram involves deep learning well it's deep learning in the sense that with deep learning we use these things called neural networks neural networks are ways that in a computer we simulate and mimic the way the human brain works at least to the extent that we understand how the brain works and it's called Deep because we have multiple layers of those neural networks and the interesting thing about these is they will simulate the way a brain operates but I don't know if you've noticed but human brains can be a little bit unpredictable you put certain things in you don't always get the very same thing out and deep learning is the same way in some cases we're not actually able to fully understand why we get the results we do uh because there are so many layers to the neural network it's a little bit hard to to decompose and figure out exactly what's in there but this has become a very important part and a very important advancement that also reached some popularity during the 2010s and as something that we use still today as the basis for our next area of AI the most recent advancements in the field of artificial in intelligence all really are in this space the area of generative AI now I'm going to introduce a term that you may not be familiar with it's the idea of foundation models Foundation models is where we get some of these kinds of things for instance an example of a foundation model would be a large language model which is where we take language and we model it and we make predictions in this technology where if I see certain types of of words then I can sort of predict what the next set of words will be I'm going to oversimplify here for the sake of Simplicity but think about this as a little bit like the autoc complete when you start typing something in and then it predicts what your next word will be except in this case with large language models they're not predicting the next word they're predicting the next sentence the next paragraph the next entire document so there's a really an amazing exponential leap in what these things are able to do and we call all of these Technologies generative because they are generating new content um some people have actually made the argument that the generative AI isn't really generative that that these Technologies are really just regurgitating existing information and putting it in different format well let me give you an analogy um if you take music for instance then every note has already been invented so in a sense every song is just a recombination some other permutation of all the notes that already exist already and just putting them in a different order well we don't say new new music doesn't exist people are still composing and creating new songs from the existing information I'm going to say geni is similar it's a it's an analogy so there'll be some imperfections in it but you get the general idea actually new content can be generated out of these and there are a lot of different forms that this can"
+    },
+    {
+      "video_id": "ukzFI9rgwfU",
+      "start_time": 0.24,
+      "end_time": 177.28,
+      "importance_score": 0.3921,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "we know humans learn from their past experiences and machines follow instructions given by humans but what if humans can train the machines to learn from the past data and do what humans can do and much faster well that's called machine learning but it's a lot more than just learning it's also about understanding and reasoning so today we will learn about the basics of machine learning so that's paul he loves listening to new songs he either likes them or dislikes them paul decides this on the basis of the song's tempo genre intensity and the gender of voice for simplicity let's just use tempo and intensity for now so here tempo is on the x axis ranging from relaxed to fast whereas intensity is on the y axis ranging from light to soaring we see that paul likes the song with fast tempo and soaring intensity while he dislikes the song with relaxed tempo and light intensity so now we know paul's choices let's say paul listens to a new song let's name it as song a song a has fast tempo and a soaring intensity so it lies somewhere here looking at the data can you guess whether paul will like the song or not correct so paul likes this song by looking at paul's past choices we were able to classify the unknown song very easily right let's say now paul listens to a new song let's label it as song b so song b lies somewhere here with medium tempo and medium intensity neither relaxed nor fast neither light nor soaring now can you guess whether paul likes it or not not able to guess whether paul will like it or dislike it are the choices unclear correct we could easily classify song a but when the choice became complicated as in the case of song b yes and that's where machine learning comes in let's see how in the same example for song b if we draw a circle around the song b we see that there are four votes for like whereas one would for dislike if we go for the majority votes we can say that paul will definitely like the song that's all this was a basic machine learning algorithm also it's called k nearest neighbors so this is just a small example in one of the many machine learning algorithms quite easy right believe me it is but what happens when the choices become complicated as in the case of song b that's when machine learning comes in it learns the data builds the prediction model and when the new data point comes in it can easily predict for it more the data better the model higher will be the accuracy there are many ways in which the machine learns it could be either supervised learning unsupervised learning or reinforcement learning let's first quickly understand supervised learning suppose your friend gives you one"
+    },
+    {
+      "video_id": "ukzFI9rgwfU",
+      "start_time": 359.28,
+      "end_time": 468.199,
+      "importance_score": 0.3074,
+      "reason": "Complete semantic segment selected by coverage-aware optimizer",
+      "text": "humongous data available everybody is online either making a transaction or just surfing the internet and that's generating a huge amount of data every minute and that data my friend is the key to analysis also the memory handling capabilities of computers have largely increased which helps them to process such huge amount of data at hand without any delay and yes computers now have great computational powers so there are a lot of applications of machine learning out there to name a few machine learning is used in healthcare where diagnostics are predicted for doctor's review the sentiment analysis that the tech giants are doing on social media is another interesting application of machine learning fraud detection in the finance sector and also to predict customer churn in the e-commerce sector while booking a gap you must have encountered surge pricing often where it says the fair of your trip has been updated continue booking yes please i'm getting late for office well that's an interesting machine learning model which is used by global taxi giant uber and others where they have differential pricing in real time based on demand the number of cars available bad weather rush r etc so they use the surge pricing model to ensure that those who need a cab can get one also it uses predictive modeling to predict where the demand will be high with the goal that drivers can take care of the demand and search pricing can be minimized great hey siri can you remind me to book a cab at 6 pm today ok i'll remind you thanks no problem comment below some interesting everyday examples around you where machines are learning and doing amazing jobs so that's all for machine learning basics today from my site keep watching this space for more interesting videos until then happy learning"
+    }
+  ],
+  "segments": [],
+  "summary_text": "Machine learning is to make predictions about future outcomes like will the stock go up or which YouTube video do you want to watch next . The first step in the process is to acquire and clean up data lots and lots of data . Data scientists perform a job called feature engineering to transform raw data into features that better represent the underlying problem . The next step is to separate the data into a training set and testing set . Training data is fed into an algorithm to build a model then the testing data is used to validate the accuracy or error of the model . When the new data point comes in it can easily predict for it more the data better the model higher will be the accuracy .",
+  "rich_output": {
+    "summary": "Machine learning is to make predictions about future outcomes like will the stock go up or which YouTube video do you want to watch next . The first step in the process is to acquire and clean up data lots and lots of data . Data scientists perform a job called feature engineering to transform raw data into features that better represent the underlying problem . The next step is to separate the data into a training set and testing set . Training data is fed into an algorithm to build a model then the testing data is used to validate the accuracy or error of the model . When the new data point comes in it can easily predict for it more the data better the model higher will be the accuracy .",
+    "key_takeaways": [
+      "Machine learning is to make predictions about future outcomes like will the stock go up or which YouTube video do you want to watch next .",
+      "The first step in the process is to acquire and clean up data lots and lots of data .",
+      "Data scientists perform a job called feature engineering to transform raw data into features that better represent the underlying problem .",
+      "Training data is fed into an algorithm to build a model then the testing data is used to validate the accuracy or error of the model .",
+      "When the new data point comes in it can easily predict for it more the data better the model higher will be the accuracy ."
+    ],
+    "best_quotes": [],
+    "chapters": [
+      {
+        "title": "Introduction & Overview",
+        "text": "Machine learning is to make predictions about future outcomes like will the stock go up or which YouTube video do you want to watch next . The first step in the process is to acquire and clean up data lots and lots of data ."
+      },
+      {
+        "title": "Core Discussion",
+        "text": "Data scientists perform a job called feature engineering to transform raw data into features that better represent the underlying problem . The next step is to separate the data into a training set and testing set ."
+      },
+      {
+        "title": "Conclusions & Key Points",
+        "text": "Training data is fed into an algorithm to build a model then the testing data is used to validate the accuracy or error of the model . When the new data point comes in it can easily predict for it more the data better the model higher will be the accuracy ."
+      }
+    ],
+    "who_should_watch": "",
+    "who_can_skip": "",
+    "action_steps": [],
+    "tldr": "Machine learning is to make predictions about future outcomes like will the stock go up or which YouTube video do you want to watch next . The first step in the process is to acquire and clean up data lots and lots of data .",
+    "style_applied": "educational"
+  },
+  "fusion_metadata": {
+    "total_source_words": 1692,
+    "output_words": 134,
+    "compression_ratio": 0.07919621749408984,
+    "topics_found": [
+      "algorithms quite easy right believe...",
+      "voice for simplicity let's just...",
+      "this space for more interesting..."
+    ],
+    "clusters_created": 3,
+    "dedup_ratio": 0.9473684210526315,
+    "conflicts_detected": [],
+    "processing_time_seconds": 23.187389,
+    "video_count": 3
+  },
+  "keyframes_extracted": {},
+  "concepts": [
+    {
+      "concept": "data",
+      "importance": 1.0,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.1,
+          171.4
+        ],
+        [
+          39.3,
+          64.1
+        ],
+        [
+          175.5,
+          362.0
+        ],
+        [
+          359.3,
+          61.2
+        ],
+        [
+          438.9,
+          597.6
+        ]
+      ],
+      "support": 7,
+      "aliases": [
+        "video",
+        "image"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "paul",
+      "importance": 0.9494,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.2,
+          177.3
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "song",
+      "importance": 0.8704,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.2,
+          177.3
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "problem",
+      "importance": 0.8534,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.1,
+          171.4
+        ],
+        [
+          39.3,
+          64.1
+        ],
+        [
+          359.3,
+          61.2
+        ]
+      ],
+      "support": 5,
+      "aliases": [
+        "error",
+        "try",
+        "trying"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "new",
+      "importance": 0.6341,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.1,
+          171.4
+        ],
+        [
+          0.2,
+          177.3
+        ],
+        [
+          39.3,
+          64.1
+        ],
+        [
+          175.5,
+          362.0
+        ],
+        [
+          289.4,
+          478.0
+        ],
+        [
+          438.9,
+          597.6
+        ]
+      ],
+      "support": 8,
+      "aliases": [
+        "deep"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "coin",
+      "importance": 0.5856,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          175.5,
+          362.0
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "particularly",
+      "importance": 0.5837,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          143.2,
+          292.2
+        ]
+      ],
+      "support": 3,
+      "aliases": [
+        "particularly useful",
+        "learning particularly"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "artificial intelligence",
+      "importance": 0.5756,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.1,
+          171.4
+        ],
+        [
+          39.3,
+          64.1
+        ]
+      ],
+      "support": 3,
+      "aliases": [
+        "intelligence"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "intensity",
+      "importance": 0.5538,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.2,
+          177.3
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "tempo",
+      "importance": 0.5538,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.2,
+          177.3
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "foundation",
+      "importance": 0.4966,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          289.4,
+          478.0
+        ],
+        [
+          438.9,
+          597.6
+        ]
+      ],
+      "support": 4,
+      "aliases": [
+        "foundation models"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "neural",
+      "importance": 0.472,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          289.4,
+          478.0
+        ]
+      ],
+      "support": 3,
+      "aliases": [
+        "brain",
+        "neural networks"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "little",
+      "importance": 0.4266,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.1,
+          171.4
+        ],
+        [
+          289.4,
+          478.0
+        ]
+      ],
+      "support": 4,
+      "aliases": [
+        "little bit"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "looking",
+      "importance": 0.4217,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.2,
+          177.3
+        ],
+        [
+          143.2,
+          292.2
+        ],
+        [
+          438.9,
+          597.6
+        ]
+      ],
+      "support": 3,
+      "aliases": [
+        "attention"
+      ],
+      "source": "tfidf"
+    },
+    {
+      "concept": "voice",
+      "importance": 0.4117,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          438.9,
+          597.6
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "pricing",
+      "importance": 0.3855,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          359.3,
+          61.2
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "bit",
+      "importance": 0.3569,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.1,
+          171.4
+        ],
+        [
+          289.4,
+          478.0
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "supervised",
+      "importance": 0.3536,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.2,
+          177.3
+        ],
+        [
+          175.5,
+          362.0
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "artificial",
+      "importance": 0.3444,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.1,
+          171.4
+        ],
+        [
+          39.3,
+          64.1
+        ]
+      ],
+      "support": 2,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "feedback",
+      "importance": 0.3347,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          175.5,
+          362.0
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "grams",
+      "importance": 0.3347,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          175.5,
+          362.0
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "wickets",
+      "importance": 0.3347,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          175.5,
+          362.0
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "way",
+      "importance": 0.3295,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          289.4,
+          478.0
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "unsupervised learning",
+      "importance": 0.3246,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          175.5,
+          362.0
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    },
+    {
+      "concept": "fast",
+      "importance": 0.3165,
+      "reason": "Locally concentrated phrase \u2014 used heavily in part of the transcript (TF-IDF).",
+      "evidence": [],
+      "timestamps": [
+        [
+          0.2,
+          177.3
+        ]
+      ],
+      "support": 1,
+      "aliases": [],
+      "source": "tfidf"
+    }
+  ],
+  "selection_metrics": {
+    "requested_seconds": 600.0,
+    "actual_seconds": 605.7,
+    "duration_accuracy_percent": 99.1,
+    "num_segments": 15,
+    "num_cuts": 14,
+    "timeline_coverage_percent": 49.6,
+    "bins_occupied": 8,
+    "bins_total": 10,
+    "temporal_histogram": [
+      128.5,
+      55.1,
+      7.2,
+      124.3,
+      90.3,
+      0.0,
+      0.0,
+      65.9,
+      131.8,
+      2.5
+    ],
+    "first_half_share_percent": 66.9,
+    "second_half_share_percent": 33.1,
+    "unique_concepts": 25,
+    "concepts_covered": [
+      "artificial",
+      "artificial intelligence",
+      "bit",
+      "coin",
+      "data",
+      "fast",
+      "feedback",
+      "foundation",
+      "grams",
+      "intensity",
+      "little",
+      "looking",
+      "neural",
+      "new",
+      "particularly",
+      "paul",
+      "pricing",
+      "problem",
+      "song",
+      "supervised"
+    ],
+    "avg_concept_importance": 0.5121,
+    "redundancy_percent": 0.0,
+    "earliest_timestamp": 0.2,
+    "latest_timestamp": 1102.1,
+    "avg_segment_seconds": 40.4,
+    "min_segment_seconds": 21.9,
+    "max_segment_seconds": 80.9,
+    "per_video": {
+      "ukzFI9rgwfU": {
+        "candidates": 9,
+        "selected": 6,
+        "seconds": 294.8,
+        "budget": 0.0,
+        "concepts_found": 25,
+        "concepts_covered": [
+          "data",
+          "paul",
+          "song",
+          "problem",
+          "new",
+          "coin",
+          "particularly",
+          "artificial intelligence",
+          "intensity",
+          "tempo",
+          "foundation",
+          "neural",
+          "little",
+          "looking",
+          "voice",
+          "pricing",
+          "bit",
+          "supervised",
+          "artificial",
+          "feedback",
+          "grams",
+          "wickets",
+          "way",
+          "unsupervised learning",
+          "fast"
+        ],
+        "concept_signal": "available",
+        "concepts_omitted_for_budget": [
+          "particularly",
+          "data",
+          "new"
+        ]
+      },
+      "PeMlggyqz0Y": {
+        "candidates": 6,
+        "selected": 4,
+        "seconds": 110.7,
+        "budget": 0.0,
+        "concepts_found": 25,
+        "concepts_covered": [
+          "data",
+          "paul",
+          "song",
+          "problem",
+          "new",
+          "coin",
+          "particularly",
+          "artificial intelligence",
+          "intensity",
+          "tempo",
+          "foundation",
+          "neural",
+          "little",
+          "looking",
+          "voice",
+          "pricing",
+          "bit",
+          "supervised",
+          "artificial",
+          "feedback",
+          "grams",
+          "wickets",
+          "way",
+          "unsupervised learning",
+          "fast"
+        ],
+        "concept_signal": "available",
+        "concepts_omitted_for_budget": [
+          "particularly",
+          "data",
+          "new"
+        ]
+      },
+      "qYNweeDHiyU": {
+        "candidates": 16,
+        "selected": 5,
+        "seconds": 200.2,
+        "budget": 0.0,
+        "concepts_found": 25,
+        "concepts_covered": [
+          "data",
+          "paul",
+          "song",
+          "problem",
+          "new",
+          "coin",
+          "particularly",
+          "artificial intelligence",
+          "intensity",
+          "tempo",
+          "foundation",
+          "neural",
+          "little",
+          "looking",
+          "voice",
+          "pricing",
+          "bit",
+          "supervised",
+          "artificial",
+          "feedback",
+          "grams",
+          "wickets",
+          "way",
+          "unsupervised learning",
+          "fast"
+        ],
+        "concept_signal": "available",
+        "concepts_omitted_for_budget": [
+          "particularly",
+          "data",
+          "new"
+        ]
+      }
+    },
+    "weights": {
+      "concept": 0.32,
+      "semantic": 0.2,
+      "coverage": 0.28,
+      "coherence": 0.1,
+      "redundancy": 0.25,
+      "duration_penalty": 0.05,
+      "min_budget_fill": 0.9
+    }
+  },
+  "selection_trace": [
+    {
+      "rank": 4,
+      "start_time": 0.2,
+      "end_time": 177.3,
+      "duration": 183.6,
+      "concept": 11.01,
+      "semantic": 0.6011,
+      "coverage": 4.3867,
+      "coherence": 0.6384,
+      "redundancy": 0.0,
+      "concept_weighted": 3.5232,
+      "semantic_weighted": 0.1202,
+      "coverage_weighted": 1.2283,
+      "coherence_weighted": 0.0638,
+      "redundancy_penalty": 0.0,
+      "duration_penalty": 0.0972,
+      "gain": 4.8384,
+      "gain_per_second": 0.026353,
+      "committed_segments": 4
+    },
+    {
+      "rank": 9,
+      "start_time": 289.4,
+      "end_time": 478.0,
+      "duration": 200.2,
+      "concept": 1.9534,
+      "semantic": 0.4249,
+      "coverage": 3.7515,
+      "coherence": 0.64,
+      "redundancy": 0.8325,
+      "concept_weighted": 0.6251,
+      "semantic_weighted": 0.085,
+      "coverage_weighted": 1.0504,
+      "coherence_weighted": 0.064,
+      "redundancy_penalty": 0.2081,
+      "duration_penalty": 0.1059,
+      "gain": 1.5104,
+      "gain_per_second": 0.007545,
+      "committed_segments": 5
+    },
+    {
+      "rank": 11,
+      "start_time": 359.3,
+      "end_time": 468.2,
+      "duration": 111.2,
+      "concept": 0.0435,
+      "semantic": 0.432,
+      "coverage": 1.8284,
+      "coherence": 0.5418,
+      "redundancy": 0.8035,
+      "concept_weighted": 0.0139,
+      "semantic_weighted": 0.0864,
+      "coverage_weighted": 0.512,
+      "coherence_weighted": 0.0542,
+      "redundancy_penalty": 0.2009,
+      "duration_penalty": 0.0588,
+      "gain": 0.4068,
+      "gain_per_second": 0.003659,
+      "committed_segments": 2
+    },
+    {
+      "rank": 15,
+      "start_time": 0.1,
+      "end_time": 104.4,
+      "duration": 110.7,
+      "concept": 0.0,
+      "semantic": 0.5839,
+      "coverage": 1.3279,
+      "coherence": 0.6139,
+      "redundancy": 0.8568,
+      "concept_weighted": 0.0,
+      "semantic_weighted": 0.1168,
+      "coverage_weighted": 0.3718,
+      "coherence_weighted": 0.0614,
+      "redundancy_penalty": 0.2142,
+      "duration_penalty": 0.0586,
+      "gain": 0.2772,
+      "gain_per_second": 0.002503,
+      "committed_segments": 4
+    }
+  ],
+  "summarization_decision": {
+    "action": "compress",
+    "reason": "642 words is above the 250-word target (+115% tolerance)",
+    "target_words": 250,
+    "coherence": {
+      "word_count": 642,
+      "sentence_count": 6,
+      "artifact_density": 0.3333,
+      "fragment_rate": 0.0,
+      "self_similarity_rate": 0.0,
+      "source_artifacts": 0,
+      "mid_sentence_connectives": 2,
+      "is_coherent": false,
+      "reasons": [
+        "2 fusion connectives across 6 sentences (0 sentence-initial, 2 mid-sentence) \u2014 33% > 12%"
+      ]
+    }
+  },
+  "selection_mode": "semantic",
+  "audio_path": null,
+  "subtitle_path": null,
+  "video_path": "audio_cache/highlights/highlight_fe31051a-61e4-43a3-8811-2bf67203727f.mp4",
+  "created_at": "2026-09-15 20:33:19.376000",
+  "updated_at": "2026-09-15 20:37:59.876000",
+  "started_at": null,
+  "completed_at": "2026-09-15 20:37:59.882000",
+  "error": null,
+  "warning": null,
+  "retry_count": 0,
+  "max_retries": 3,
+  "summary_unavailable": false,
+  "summary_unavailable_reason": null,
+  "detected_language": null
+}

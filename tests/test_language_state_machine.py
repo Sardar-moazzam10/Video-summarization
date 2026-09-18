@@ -119,6 +119,7 @@ class TestNoPrematurePartialSuccess:
             patch("backend.api.merge.get_fusion_engine", return_value=MagicMock()),
             patch("langdetect.detect", return_value="hi"),
             patch("backend.api.merge._active_jobs", {"test-lang-sm-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             from backend.api.merge import process_merge_job
             await process_merge_job("test-lang-sm-001")
@@ -156,6 +157,7 @@ class TestNoPrematurePartialSuccess:
             patch("backend.api.merge.get_fusion_engine", return_value=MagicMock()),
             patch("langdetect.detect", return_value="hi"),
             patch("backend.api.merge._active_jobs", {"test-lang-sm-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             from backend.api.merge import process_merge_job
             await process_merge_job("test-lang-sm-001")
@@ -201,6 +203,7 @@ class TestNoPrematurePartialSuccess:
             patch("backend.api.merge.get_fusion_engine", return_value=MagicMock()),
             patch("langdetect.detect", return_value="hi"),
             patch("backend.api.merge._active_jobs", {"test-lang-sm-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             from backend.api.merge import process_merge_job
             await process_merge_job("test-lang-sm-001")
@@ -324,6 +327,7 @@ class TestEnglishPipelineUnchanged:
             patch("backend.api.merge.get_fusion_engine") as fake_ff,
             patch("langdetect.detect", return_value="en"),
             patch("backend.api.merge._active_jobs", {"test-en-unchanged-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
             patch("backend.services.summarization_service.get_summarization_service") as fake_ss,
             patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
         ):
@@ -378,6 +382,7 @@ class TestEnglishPipelineUnchanged:
             patch("backend.api.merge.get_fusion_engine") as fake_ff,
             patch("langdetect.detect", return_value="en"),
             patch("backend.api.merge._active_jobs", {"test-en-no-unavailable-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
             patch("backend.services.summarization_service.get_summarization_service") as fake_ss,
             patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
         ):

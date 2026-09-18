@@ -178,12 +178,13 @@ class TestLanguageAbortPath:
         fusion_called = []
 
         with (
-            patch("backend.api.merge.get_jobs_collection", return_value=AsyncMock(return_value=jobs_collection)),
+            patch("backend.api.merge.get_jobs_collection", return_value=jobs_collection),
             patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock,
                   return_value=(text_map, seg_map)),
-            patch("backend.api.merge.get_fusion_engine") as fake_fusion_factory,
+            patch("backend.api.merge.get_fusion_engine") as fake_fusion_factory, patch("backend.services.vector_store.get_vector_store"),
             patch("langdetect.detect", return_value="hi"),
             patch("backend.api.merge._active_jobs", {"test-hindi-job-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             # Fusion engine must NOT be called
             fake_fusion_engine = MagicMock()
@@ -229,12 +230,13 @@ class TestLanguageAbortPath:
         job = _make_job(generate_video=False)
 
         with (
-            patch("backend.api.merge.get_jobs_collection", return_value=AsyncMock(return_value=jobs_collection)),
+            patch("backend.api.merge.get_jobs_collection", return_value=jobs_collection),
             patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock,
                   return_value=(text_map, seg_map)),
-            patch("backend.api.merge.get_fusion_engine", return_value=MagicMock()),
+            patch("backend.api.merge.get_fusion_engine", return_value=MagicMock()), patch("backend.services.vector_store.get_vector_store"),
             patch("langdetect.detect", return_value="hi"),
             patch("backend.api.merge._active_jobs", {"test-hindi-job-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             from backend.api.merge import process_merge_job
             await process_merge_job("test-hindi-job-001")
@@ -269,12 +271,13 @@ class TestLanguageAbortPath:
         job = _make_job(generate_video=False)
 
         with (
-            patch("backend.api.merge.get_jobs_collection", return_value=AsyncMock(return_value=jobs_collection)),
+            patch("backend.api.merge.get_jobs_collection", return_value=jobs_collection),
             patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock,
                   return_value=(text_map, seg_map)),
-            patch("backend.api.merge.get_fusion_engine", return_value=MagicMock()),
+            patch("backend.api.merge.get_fusion_engine", return_value=MagicMock()), patch("backend.services.vector_store.get_vector_store"),
             patch("langdetect.detect", return_value="hi"),
             patch("backend.api.merge._active_jobs", {"test-hindi-job-001": job}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             from backend.api.merge import process_merge_job
             await process_merge_job("test-hindi-job-001")
@@ -319,14 +322,15 @@ class TestLanguageAbortPath:
         job.job_id = "test-english-job-001"
 
         with (
-            patch("backend.api.merge.get_jobs_collection", return_value=AsyncMock(return_value=jobs_collection)),
+            patch("backend.api.merge.get_jobs_collection", return_value=jobs_collection),
             patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock,
                   return_value=({"vid": en_text}, {"vid": en_segs})),
-            patch("backend.api.merge.get_fusion_engine") as fake_ff,
+            patch("backend.api.merge.get_fusion_engine") as fake_ff, patch("backend.services.vector_store.get_vector_store"),
             patch("langdetect.detect", return_value="en"),
             patch("backend.api.merge._active_jobs", {"test-english-job-001": job}),
-            patch("backend.api.merge.get_summarization_service") as fake_ss,
+            patch("backend.services.summarization_service.get_summarization_service") as fake_ss,
             patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             fe = MagicMock()
             fe.fuse_transcripts = MagicMock(side_effect=lambda **kw: (fusion_calls.append(1) or fake_fusion_result))
