@@ -22,6 +22,7 @@ import shutil
 import importlib.util
 import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime
 from typing import Awaitable, Callable, Optional, List
@@ -235,11 +236,14 @@ class TranscriptService:
         self.transcripts = db["transcripts"]
         self.cookie_path = os.path.abspath("cookies.txt")
         self._whisper_model = None
+        self._whisper_lock = threading.Lock()
 
     async def get_transcript(
         self,
         video_id: str,
         progress_cb: Optional[Callable[[str], Awaitable[None]]] = None,
+        allow_whisper: bool = True,
+        fast_search: bool = False,
     ) -> Optional[dict]:
         """
         Get transcript with caching and 3-tier fallbacks.
@@ -251,6 +255,10 @@ class TranscriptService:
                 translation stage, which can take up to
                 TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS). Best-effort — a
                 failing callback is swallowed so it can never break the fetch.
+                caller might want to surface as job progress.
+            allow_whisper: Whether to fall back to Whisper STT when captions are missing.
+            fast_search: Dedicated fast mode for Keyword / Deep Search. English captions only,
+                no Whisper, no audio downloads, no translation, fails fast on missing captions.
 
         Returns:
             Dict with transcript, source, and cached flag, or None
@@ -270,8 +278,44 @@ class TranscriptService:
                     "source": cached.get("source", "cache"),
                     "cached": True,
                 }
+            cached_transcript = cached.get("transcript")
+            if self._transcript_is_sane(cached_transcript):
+                # For fast_search, only reuse cached transcript if it is English
+                if not fast_search or self._detect_transcript_language(cached_transcript) == "en":
+                    return {
+                        "transcript": cached_transcript,
+                        "source": cached.get("source", "cache"),
+                        "cached": True,
+                    }
+                else:
+                    print(f"[Transcript] Fast search: cached transcript for {video_id} is non-English — skipping")
+                    return None
             print(f"[Transcript] Cached transcript for {video_id} failed the sanity "
                   f"check — refetching instead of reusing it")
+
+        # Fast search mode: English captions only, zero Whisper/translation/download
+        if fast_search:
+            transcript = await asyncio.to_thread(self._fetch_fast_english_transcript, video_id)
+            if not transcript:
+                return None
+
+            source = "youtube_api_fast"
+            # Cache in MongoDB
+            await self.transcripts.update_one(
+                {"video_id": video_id},
+                {"$set": {
+                    "video_id": video_id,
+                    "transcript": transcript,
+                    "fetched_at": datetime.utcnow().isoformat(),
+                    "source": source,
+                }},
+                upsert=True,
+            )
+            return {
+                "transcript": transcript,
+                "source": source,
+                "cached": False,
+            }
 
         # Tier 1: YouTube Transcript API (fastest). Off the event loop —
         # this makes network calls with time.sleep backoff, and running it
@@ -372,7 +416,7 @@ class TranscriptService:
                               f"{whisper_budget/60:.1f} min Whisper-translate budget, so "
                               f"skipping it and keeping the best-effort transcript")
                         source = f"{source}+partial"
-                    else:
+                    elif allow_whisper:
                         print("[Transcript] Caption translation did not yield English — "
                               "re-transcribing with Whisper (task=translate)")
                         if progress_cb:
@@ -397,13 +441,16 @@ class TranscriptService:
                             print("[Transcript] Whisper unavailable too — keeping the "
                                   "best-effort translation")
                             source = f"{source}+partial"
+                    else:
+                        print(f"[Transcript] allow_whisper=False for {video_id} — keeping best-effort translation")
+                        source = f"{source}+partial"
 
         # Tier 3: Whisper speech-to-text (last resort). Off the event loop —
         # this is the slowest, most CPU-bound path (audio download + local
         # transcription); running it inline blocks the entire process, so
         # every other in-flight request (including other videos in the same
         # search) appears frozen until this one finishes.
-        if not transcript:
+        if not transcript and allow_whisper:
             transcript = await asyncio.to_thread(self._fetch_whisper, video_id)
             source = "whisper"
 
@@ -427,6 +474,57 @@ class TranscriptService:
         )
 
         return {"transcript": transcript, "source": source, "cached": False}
+
+    # -------------------------------------------------
+    # FAST SEARCH: English-only fast caption fetcher
+    # -------------------------------------------------
+    def _fetch_fast_english_transcript(self, video_id: str) -> Optional[list]:
+        """
+        Dedicated fast English caption fetcher for Keyword / Deep Search.
+
+        Invariants:
+          - Only manual English or auto-generated English captions.
+          - Never attempts translation on non-English captions; skips them immediately.
+          - Never invokes yt-dlp, Whisper, audio download, NLLB, BART, Llama, or FFmpeg.
+          - Fails fast on disabled/unavailable subtitles without retries.
+        """
+        try:
+            _ytt = YouTubeTranscriptApi()
+            transcript_list = _ytt.list(video_id)
+
+            # Strategy 1: Manual English (including dialect codes)
+            try:
+                fetched = transcript_list.find_manually_created_transcript(
+                    ["en", "en-US", "en-GB", "en-CA", "en-AU", "en-IN"]
+                ).fetch()
+                normalized = self._normalize_transcript(fetched)
+                if normalized:
+                    print(f"[Transcript] Fast search: manual English found for {video_id}")
+                    return normalized
+            except Exception:
+                pass
+
+            # Strategy 2: Auto-generated English
+            try:
+                fetched = transcript_list.find_generated_transcript(
+                    ["en", "en-US", "en-GB", "en-CA", "en-AU", "en-IN"]
+                ).fetch()
+                normalized = self._normalize_transcript(fetched)
+                if normalized:
+                    print(f"[Transcript] Fast search: auto-generated English found for {video_id}")
+                    return normalized
+            except Exception:
+                pass
+
+            # If captions exist but none are English: skip immediately without translation
+            langs = [getattr(t, "language_code", str(t)) for t in transcript_list]
+            print(f"[Transcript] Fast search: {video_id} has non-English captions only ({langs}) — skipping without translation")
+            return None
+
+        except Exception as e:
+            # TranscriptsDisabled, NoTranscriptFound, VideoUnavailable, etc.
+            print(f"[Transcript] Fast search: captions unavailable for {video_id} ({e.__class__.__name__}) — skipping")
+            return None
 
     # -------------------------------------------------
     # TIER 1: YouTube Transcript API
@@ -492,6 +590,11 @@ class TranscriptService:
                 return None
 
             except Exception as e:
+                err_str = str(e).lower()
+                if "subtitles are disabled" in err_str or "no transcript" in err_str or "transcriptsdisabled" in err_str or "could not retrieve a transcript" in err_str:
+                    print(f"[Transcript] YouTube API: captions unavailable for {video_id} ({e.__class__.__name__}), skipping retries")
+                    return None
+
                 if attempt < max_retries:
                     wait = 2 ** attempt
                     print(f"[Transcript] YouTube API attempt {attempt+1} failed, retrying in {wait}s: {e}")
@@ -654,16 +757,17 @@ class TranscriptService:
 
             # Transcribe with Whisper
             try:
-                if self._whisper_model is None:
-                    model_name = _whisper_model_name()
-                    self._whisper_model = whisper.load_model(model_name)
-                    print(f"[Transcript] Loaded Whisper {model_name} model")
+                with self._whisper_lock:
+                    if self._whisper_model is None:
+                        model_name = _whisper_model_name()
+                        self._whisper_model = whisper.load_model(model_name)
+                        print(f"[Transcript] Loaded Whisper {model_name} model")
 
-                result = self._whisper_model.transcribe(
-                    actual_audio,
-                    task="translate",
-                    fp16=False,
-                )
+                    result = self._whisper_model.transcribe(
+                        actual_audio,
+                        task="translate",
+                        fp16=False,
+                    )
 
                 transcript = []
                 for segment in result.get("segments", []):
@@ -802,6 +906,8 @@ class TranscriptService:
 
     def summarize(self, text: str, max_length: int = 150, min_length: int = 50) -> str:
         """Summarize text using T5-small (legacy endpoint)."""
+    def summarize(self, text: str, max_length: int = 150, min_length: int = 40) -> str:
+        """Summarize text using preloaded BART pipeline."""
         if not text or len(text) < 100:
             return text
 
@@ -809,6 +915,8 @@ class TranscriptService:
 
         try:
             summarizer = get_summarizer()
+            from .summarization_service import _get_pipeline
+            summarizer = _get_pipeline()
             result = summarizer(
                 text,
                 max_length=max_length,

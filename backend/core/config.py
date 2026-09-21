@@ -3,7 +3,7 @@ Core configuration - Single source of truth
 Production-ready settings with security
 """
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 from functools import lru_cache
 from typing import List, Optional
 import os
@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # APP SETTINGS
     # =====================================================
     APP_NAME: str = "VidFusion"
+    ENVIRONMENT: str = "development"
 
     # =====================================================
     # SECURITY (CRITICAL)
@@ -24,7 +25,7 @@ class Settings(BaseSettings):
         description="JWT signing key - MUST set in production"
     )
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_HOURS: int = 24
+    ACCESS_TOKEN_EXPIRE_HOURS: int = 720  # 30 days
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
@@ -87,6 +88,9 @@ class Settings(BaseSettings):
     YTDLP_PATH: str = ""   # Leave empty to use system PATH; set to full path if in venv only
     FFMPEG_PATH: str = ""
     NODE_PATH: str = ""
+    # Kept under the existing name for compatibility with current .env files.
+    # YouTube search is performed server-side so this key is never sent to browsers.
+    REACT_APP_YOUTUBE_API_KEY: str = ""
 
     # =====================================================
     # CACHE SETTINGS
@@ -245,6 +249,31 @@ class Settings(BaseSettings):
     # Authenticates model downloads. Anonymous pulls share a per-IP quota and
     # start returning 429 once it is exhausted; an authenticated pull does not.
     HF_TOKEN: str = ""
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        """Fail startup instead of silently using an ephemeral/weak key."""
+        environment = self.ENVIRONMENT.strip().lower()
+        if environment not in {"development", "test", "production"}:
+            raise ValueError("ENVIRONMENT must be development, test, or production")
+        if self.JWT_ALGORITHM != "HS256":
+            raise ValueError("JWT_ALGORITHM must be HS256")
+        weak_values = {
+            "your-secret-key-here",
+            "replace-with-a-random-secret-of-at-least-32-characters",
+            "changeme",
+            "change-me",
+            "secret",
+        }
+        if environment == "production" and (
+            "SECRET_KEY" not in self.model_fields_set
+            or len(self.SECRET_KEY) < 32
+            or self.SECRET_KEY.lower() in weak_values
+        ):
+            raise ValueError(
+                "Production requires an explicit, unpredictable SECRET_KEY of at least 32 characters"
+            )
+        return self
 
     class Config:
         env_file = ".env"

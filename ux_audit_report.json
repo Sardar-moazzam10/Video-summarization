@@ -1,0 +1,308 @@
+{
+  "ux_findings": {
+    "search_time_s": 1.29,
+    "progressive_timeline": [
+      [
+        0.17,
+        0
+      ],
+      [
+        0.3,
+        0
+      ],
+      [
+        0.44,
+        0
+      ],
+      [
+        0.56,
+        0
+      ],
+      [
+        0.68,
+        0
+      ],
+      [
+        0.8,
+        0
+      ],
+      [
+        0.92,
+        0
+      ],
+      [
+        1.05,
+        4
+      ],
+      [
+        1.27,
+        6
+      ]
+    ],
+    "progress_texts": [
+      "VidFusion\nHome\nSearch\nDiscover\nTranscripts\nAbout\nM\nmoazzamaslam99\nTRANSCRIPT SEARCH\nDeep Search & Pinpoint\n\nWe search YouTube for your topic, then instantly scan the transcripts of the top results to find the exact moments those words are spoken.\n\nPress Enter to search \u2014 scanning transcripts takes a moment.\n\nScanning top 10 YouTube results...\nVidFusion\n\nTransform hours of video into minutes of knowledge. Powered by AI.\n\nPRODUCT\nSearch Videos\nTranscripts\nSuggestions\nCOMPANY\nAbout\nContact\n2026 VidFusion. All rights reserved.\nv1.0",
+      "VidFusion\nHome\nSearch\nDiscover\nTranscripts\nAbout\nM\nmoazzamaslam99\nTRANSCRIPT SEARCH\nDeep Search & Pinpoint\n\nWe search YouTube for your topic, then instantly scan the transcripts of the top results to find the exact moments those words are spoken.\n\nPress Enter to search \u2014 scanning transcripts takes a moment.\n\nScanning transcripts... 2/10 videos\nVidFusion\n\nTransform hours of video into minutes of knowledge. Powered by AI.\n\nPRODUCT\nSearch Videos\nTranscripts\nSuggestions\nCOMPANY\nAbout\nContact\n2026 VidFusion. All rights reserved.\nv1.0",
+      "VidFusion\nHome\nSearch\nDiscover\nTranscripts\nAbout\nM\nmoazzamaslam99\nTRANSCRIPT SEARCH\nDeep Search & Pinpoint\n\nWe search YouTube for your topic, then instantly scan the transcripts of the top results to find the exact moments those words are spoken.\n\nPress Enter to search \u2014 scanning transcripts takes a moment.\n\nScanning transcripts... 8/10 videos\nLogistic Regression (and why it&#39;s different from Linear Regression)\n22 matches\n\nVisually Explained\n\n00:00:02\nHello everyone. In this video, we will see how logistic regression can be used for classification tasks in machine\n00:00:12\npicture as a dog or as a cat. We'll explore how logistic regression is different from linear regression. What\n00:01:04\nif this example hits a little too close to home. Anyway, if we use linear regression here, we will predict the output as a linear function of our\n00:01:25\ncups consumed by each student in the week before the final exam. Linear regression searches for the coefficients that will make this line be as close as\n00:01:52\nfunction that is called the mean squared error. And linear regression finds the coefficients that minimize this loss\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression vs Logistic Regression - What&#39;s The Difference?\n21 matches\n\nThe Comparison Channel\n\n00:00:21\nwe'll take a deep dive into two common types of regression linear and logistic regression so grab your calculator put on your data scientist hat and let's get\n00:00:30\non your data scientist hat and let's get started so let's begin with linear regression linear regression can be applied to a wide range of problems but\n00:00:45\nvariables so for example you could use linear regression to predict the price of a house based on its size location\n00:00:49\nof a house based on its size location and some other factors logistic regression on the other hand is typically used to predict a binary\n00:01:07\nclasses a given input belongs to for example you could use logistic regression to predict whether a customer will turn on based on their behavior you\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression vs Logistic Regression | Data Science Training | Edureka\n67 matches\n\nedureka!\n\n00:00:18\nToday's session is dedicated to the two most commonly used machine learning algorithms, which is linear regression and logistic regression. Now guys, even though linear regression and logistic regression are the most widely used\n00:00:41\nWe're going to begin the session with a discussion on the various types of machine learning. Next we'll see what exactly linear regression is and how it works. After that, we'll move on and discuss about logistic regression.\n00:00:45\nNext we'll see what exactly linear regression is and how it works. After that, we'll move on and discuss about logistic regression. Then we look at a linear regression use case and a logistic regression use case.\n00:00:49\nAfter that, we'll move on and discuss about logistic regression. Then we look at a linear regression use case and a logistic regression use case. Finally, we'll end the session by comparing linear regression and logistic regression. So guys, let's take a look at today's first topic.\n00:00:53\nThen we look at a linear regression use case and a logistic regression use case. Finally, we'll end the session by comparing linear regression and logistic regression. So guys, let's take a look at today's first topic.\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression And Logistic Regression Explained in HINDI\n13 matches\n\n5 Minutes Engineering\n\n00:00:11\nWe are going to see the next video where there are two types of regression analysis. One is linear regression, and the other is logistic regression. Here we have given a lot of basic information about engineering,\n00:00:31\nAnd this information is actually needed for every group, who knows about logistic regression, about linear regression.\n00:00:36\nabout linear regression. So, let's first look at linear regression. It is called linear.\n00:01:38\nwe have told you that we have to make a model, that the linear relationship between your independent and dependent variable is established, that is why we use linear regression. For example,\n00:01:57\nor the one that we apply to the regression, that is, simple linear regression. That is, simple linear regression.\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression vs Logistic Regression | Machine learning Algorithms Explained | Simplilearn\n31 matches\n\nSimplilearn\n\n00:00:08\nlinear regression versus logistic regression my name is Richard Krishner\n00:00:22\nthe difference between the linear and logistic regression models so what is in it for you we're going to start with an\n00:00:31\ninto an introduction to classification what is linear regression what is logistics regression and then\n00:00:38\nwhat is logistics regression and then Logistics versus linear regression and we'll do a quick demo so you can see\n00:02:21\none output and so forth so if so if that is um uh categorical what is a linear regression how does that have to fit all together so linear regression is a\nAdd to Merge\nWatch\nYouTube\nShow Summary\nVidFusion\n\nTransform hours of video into minutes of knowledge. Powered by AI.\n\nPRODUCT\nSearch Videos\nTranscripts\nSuggestions\nCOMPANY\nAbout\nContact\n2026 VidFusion. All rights reserved.\nv1.0",
+      "VidFusion\nHome\nSearch\nDiscover\nTranscripts\nAbout\nM\nmoazzamaslam99\nTRANSCRIPT SEARCH\nDeep Search & Pinpoint\n\nWe search YouTube for your topic, then instantly scan the transcripts of the top results to find the exact moments those words are spoken.\n\nSearch\n\nPress Enter to search \u2014 scanning transcripts takes a moment.\n\nLogistic Regression (and why it&#39;s different from Linear Regression)\n22 matches\n\nVisually Explained\n\n00:00:02\nHello everyone. In this video, we will see how logistic regression can be used for classification tasks in machine\n00:00:12\npicture as a dog or as a cat. We'll explore how logistic regression is different from linear regression. What\n00:01:04\nif this example hits a little too close to home. Anyway, if we use linear regression here, we will predict the output as a linear function of our\n00:01:25\ncups consumed by each student in the week before the final exam. Linear regression searches for the coefficients that will make this line be as close as\n00:01:52\nfunction that is called the mean squared error. And linear regression finds the coefficients that minimize this loss\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression vs Logistic Regression - What&#39;s The Difference?\n21 matches\n\nThe Comparison Channel\n\n00:00:21\nwe'll take a deep dive into two common types of regression linear and logistic regression so grab your calculator put on your data scientist hat and let's get\n00:00:30\non your data scientist hat and let's get started so let's begin with linear regression linear regression can be applied to a wide range of problems but\n00:00:45\nvariables so for example you could use linear regression to predict the price of a house based on its size location\n00:00:49\nof a house based on its size location and some other factors logistic regression on the other hand is typically used to predict a binary\n00:01:07\nclasses a given input belongs to for example you could use logistic regression to predict whether a customer will turn on based on their behavior you\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression vs Logistic Regression | Data Science Training | Edureka\n67 matches\n\nedureka!\n\n00:00:18\nToday's session is dedicated to the two most commonly used machine learning algorithms, which is linear regression and logistic regression. Now guys, even though linear regression and logistic regression are the most widely used\n00:00:41\nWe're going to begin the session with a discussion on the various types of machine learning. Next we'll see what exactly linear regression is and how it works. After that, we'll move on and discuss about logistic regression.\n00:00:45\nNext we'll see what exactly linear regression is and how it works. After that, we'll move on and discuss about logistic regression. Then we look at a linear regression use case and a logistic regression use case.\n00:00:49\nAfter that, we'll move on and discuss about logistic regression. Then we look at a linear regression use case and a logistic regression use case. Finally, we'll end the session by comparing linear regression and logistic regression. So guys, let's take a look at today's first topic.\n00:00:53\nThen we look at a linear regression use case and a logistic regression use case. Finally, we'll end the session by comparing linear regression and logistic regression. So guys, let's take a look at today's first topic.\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression And Logistic Regression Explained in HINDI\n13 matches\n\n5 Minutes Engineering\n\n00:00:11\nWe are going to see the next video where there are two types of regression analysis. One is linear regression, and the other is logistic regression. Here we have given a lot of basic information about engineering,\n00:00:31\nAnd this information is actually needed for every group, who knows about logistic regression, about linear regression.\n00:00:36\nabout linear regression. So, let's first look at linear regression. It is called linear.\n00:01:38\nwe have told you that we have to make a model, that the linear relationship between your independent and dependent variable is established, that is why we use linear regression. For example,\n00:01:57\nor the one that we apply to the regression, that is, simple linear regression. That is, simple linear regression.\nAdd to Merge\nWatch\nYouTube\nShow Summary\nLinear Regression vs Logistic Regression | Machine learning Algorithms Explained | Simplilearn\n31 matches\n\nSimplilearn\n\n00:00:08\nlinear regression versus logistic regression my name is Richard Krishner\n00:00:22\nthe difference between the linear and logistic regression models so what is in it for you we're going to start with an\n00:00:31\ninto an introduction to classification what is linear regression what is logistics regression and then\n00:00:38\nwhat is logistics regression and then Logistics versus linear regression and we'll do a quick demo so you can see\n00:02:21\none output and so forth so if so if that is um uh categorical what is a linear regression how does that have to fit all together so linear regression is a\nAdd to Merge\nWatch\nYouTube\nShow Summary\nStatQuest: Logistic Regression\n16 matches\n\nStatQuest with Josh Starmer\n\n00:00:10\nIf you can fit a line you can fit a squiggle if you can, make me laugh you can, make me giggle stat quest Hello, i'm josh stormer and welcome to stat quest today we're going to talk about logistic regression This is a technique that can be used for traditional statistics as, well as machine learning so let's get right to it\n00:00:24\nThis is a technique that can be used for traditional statistics as, well as machine learning so let's get right to it Before we dive into logistic regression let's take. A, step back and review, linear regression in Another stat quest, we talked, about linear regression\n00:00:31\nBefore we dive into logistic regression let's take. A, step back and review, linear regression in Another stat quest, we talked, about linear regression We had some data\n00:01:28\nWe didn't mention it at the time using data to predict something falls under the category of machine learning So plain old linear regression is a form of machine learning We also talked a little bit about multiple regression\n00:03:01\nSize or if we can get, away, with just weight Now that we remember all the cool, things, we can, do with linear regression Let's talk, about logistic regression\nAdd to Merge\nWatch\nYouTube\nShow Summary\nVidFusion\n\nTransform hours of video into minutes of knowledge. Powered by AI.\n\nPRODUCT\nSearch Videos\nTranscripts\nSuggestions\nCOMPANY\nAbout\nContact\n2026 VidFusion. All rights reserved.\nv1.0"
+    ],
+    "spinner_resets_properly": true,
+    "cards_count": 6,
+    "total_moments": 30,
+    "add_to_merge_works": true,
+    "select_btn_text_after": "Selected",
+    "stale_results_cleared_instantly": true,
+    "second_search_results_rendered": 2,
+    "mobile_input_visible": true,
+    "mobile_cards_visible": true,
+    "watch_navigated_url": "http://localhost:3000/video-player"
+  },
+  "cards_detail": [
+    {
+      "card_index": 1,
+      "title": "Logistic Regression (and why it&#39;s different from Linear Regression)",
+      "channel": "",
+      "has_thumb": true,
+      "thumb_src": "https://i.ytimg.com/vi/3bvM3NyMiE0/mqdefault.jpg...",
+      "moment_count": 5,
+      "youtube_href": "https://www.youtube.com/watch?v=3bvM3NyMiE0",
+      "moments": [
+        {
+          "time_str": "00:00:02",
+          "seconds": 2,
+          "context": "Hello everyone. In this video, we will see how logistic regression can be used for classification tasks in machine",
+          "href": "https://www.youtube.com/watch?v=3bvM3NyMiE0&t=2s"
+        },
+        {
+          "time_str": "00:00:12",
+          "seconds": 12,
+          "context": "picture as a dog or as a cat. We'll explore how logistic regression is different from linear regression. What",
+          "href": "https://www.youtube.com/watch?v=3bvM3NyMiE0&t=12s"
+        },
+        {
+          "time_str": "00:01:04",
+          "seconds": 64,
+          "context": "if this example hits a little too close to home. Anyway, if we use linear regression here, we will predict the output as a linear function of our",
+          "href": "https://www.youtube.com/watch?v=3bvM3NyMiE0&t=64s"
+        },
+        {
+          "time_str": "00:01:25",
+          "seconds": 85,
+          "context": "cups consumed by each student in the week before the final exam. Linear regression searches for the coefficients that will make this line be as close as",
+          "href": "https://www.youtube.com/watch?v=3bvM3NyMiE0&t=85s"
+        },
+        {
+          "time_str": "00:01:52",
+          "seconds": 112,
+          "context": "function that is called the mean squared error. And linear regression finds the coefficients that minimize this loss",
+          "href": "https://www.youtube.com/watch?v=3bvM3NyMiE0&t=112s"
+        }
+      ]
+    },
+    {
+      "card_index": 2,
+      "title": "Linear Regression vs Logistic Regression - What&#39;s The Difference?",
+      "channel": "",
+      "has_thumb": true,
+      "thumb_src": "https://i.ytimg.com/vi/06en5XqdPkI/mqdefault.jpg...",
+      "moment_count": 5,
+      "youtube_href": "https://www.youtube.com/watch?v=06en5XqdPkI",
+      "moments": [
+        {
+          "time_str": "00:00:21",
+          "seconds": 21,
+          "context": "we'll take a deep dive into two common types of regression linear and logistic regression so grab your calculator put on your data scientist hat and let's get",
+          "href": "https://www.youtube.com/watch?v=06en5XqdPkI&t=21s"
+        },
+        {
+          "time_str": "00:00:30",
+          "seconds": 30,
+          "context": "on your data scientist hat and let's get started so let's begin with linear regression linear regression can be applied to a wide range of problems but",
+          "href": "https://www.youtube.com/watch?v=06en5XqdPkI&t=30s"
+        },
+        {
+          "time_str": "00:00:45",
+          "seconds": 45,
+          "context": "variables so for example you could use linear regression to predict the price of a house based on its size location",
+          "href": "https://www.youtube.com/watch?v=06en5XqdPkI&t=45s"
+        },
+        {
+          "time_str": "00:00:49",
+          "seconds": 49,
+          "context": "of a house based on its size location and some other factors logistic regression on the other hand is typically used to predict a binary",
+          "href": "https://www.youtube.com/watch?v=06en5XqdPkI&t=49s"
+        },
+        {
+          "time_str": "00:01:07",
+          "seconds": 67,
+          "context": "classes a given input belongs to for example you could use logistic regression to predict whether a customer will turn on based on their behavior you",
+          "href": "https://www.youtube.com/watch?v=06en5XqdPkI&t=67s"
+        }
+      ]
+    },
+    {
+      "card_index": 3,
+      "title": "Linear Regression vs Logistic Regression | Data Science Training | Edureka",
+      "channel": "",
+      "has_thumb": true,
+      "thumb_src": "https://i.ytimg.com/vi/OCwZyYH14uw/mqdefault.jpg...",
+      "moment_count": 5,
+      "youtube_href": "https://www.youtube.com/watch?v=OCwZyYH14uw",
+      "moments": [
+        {
+          "time_str": "00:00:18",
+          "seconds": 18,
+          "context": "Today's session is dedicated to the two most commonly used machine learning algorithms, which is linear regression and logistic regression. Now guys, even though linear regression and logistic regression are the most widely used",
+          "href": "https://www.youtube.com/watch?v=OCwZyYH14uw&t=18s"
+        },
+        {
+          "time_str": "00:00:41",
+          "seconds": 41,
+          "context": "We're going to begin the session with a discussion on the various types of machine learning. Next we'll see what exactly linear regression is and how it works. After that, we'll move on and discuss about logistic regression.",
+          "href": "https://www.youtube.com/watch?v=OCwZyYH14uw&t=41s"
+        },
+        {
+          "time_str": "00:00:45",
+          "seconds": 45,
+          "context": "Next we'll see what exactly linear regression is and how it works. After that, we'll move on and discuss about logistic regression. Then we look at a linear regression use case and a logistic regression use case.",
+          "href": "https://www.youtube.com/watch?v=OCwZyYH14uw&t=45s"
+        },
+        {
+          "time_str": "00:00:49",
+          "seconds": 49,
+          "context": "After that, we'll move on and discuss about logistic regression. Then we look at a linear regression use case and a logistic regression use case. Finally, we'll end the session by comparing linear regression and logistic regression. So guys, let's take a look at today's first topic.",
+          "href": "https://www.youtube.com/watch?v=OCwZyYH14uw&t=49s"
+        },
+        {
+          "time_str": "00:00:53",
+          "seconds": 53,
+          "context": "Then we look at a linear regression use case and a logistic regression use case. Finally, we'll end the session by comparing linear regression and logistic regression. So guys, let's take a look at today's first topic.",
+          "href": "https://www.youtube.com/watch?v=OCwZyYH14uw&t=53s"
+        }
+      ]
+    },
+    {
+      "card_index": 4,
+      "title": "Linear Regression And Logistic Regression Explained in HINDI",
+      "channel": "",
+      "has_thumb": true,
+      "thumb_src": "https://i.ytimg.com/vi/HYE9ruNDESA/mqdefault.jpg...",
+      "moment_count": 5,
+      "youtube_href": "https://www.youtube.com/watch?v=HYE9ruNDESA",
+      "moments": [
+        {
+          "time_str": "00:00:11",
+          "seconds": 11,
+          "context": "We are going to see the next video where there are two types of regression analysis. One is linear regression, and the other is logistic regression. Here we have given a lot of basic information about engineering,",
+          "href": "https://www.youtube.com/watch?v=HYE9ruNDESA&t=11s"
+        },
+        {
+          "time_str": "00:00:31",
+          "seconds": 31,
+          "context": "And this information is actually needed for every group, who knows about logistic regression, about linear regression.",
+          "href": "https://www.youtube.com/watch?v=HYE9ruNDESA&t=31s"
+        },
+        {
+          "time_str": "00:00:36",
+          "seconds": 36,
+          "context": "about linear regression. So, let's first look at linear regression. It is called linear.",
+          "href": "https://www.youtube.com/watch?v=HYE9ruNDESA&t=36s"
+        },
+        {
+          "time_str": "00:01:38",
+          "seconds": 98,
+          "context": "we have told you that we have to make a model, that the linear relationship between your independent and dependent variable is established, that is why we use linear regression. For example,",
+          "href": "https://www.youtube.com/watch?v=HYE9ruNDESA&t=98s"
+        },
+        {
+          "time_str": "00:01:57",
+          "seconds": 117,
+          "context": "or the one that we apply to the regression, that is, simple linear regression. That is, simple linear regression.",
+          "href": "https://www.youtube.com/watch?v=HYE9ruNDESA&t=117s"
+        }
+      ]
+    },
+    {
+      "card_index": 5,
+      "title": "Linear Regression vs Logistic Regression | Machine learning Algorithms Explained | Simplilearn",
+      "channel": "",
+      "has_thumb": true,
+      "thumb_src": "https://i.ytimg.com/vi/QWYkQDvCo4Y/mqdefault.jpg...",
+      "moment_count": 5,
+      "youtube_href": "https://www.youtube.com/watch?v=QWYkQDvCo4Y",
+      "moments": [
+        {
+          "time_str": "00:00:08",
+          "seconds": 8,
+          "context": "linear regression versus logistic regression my name is Richard Krishner",
+          "href": "https://www.youtube.com/watch?v=QWYkQDvCo4Y&t=8s"
+        },
+        {
+          "time_str": "00:00:22",
+          "seconds": 22,
+          "context": "the difference between the linear and logistic regression models so what is in it for you we're going to start with an",
+          "href": "https://www.youtube.com/watch?v=QWYkQDvCo4Y&t=22s"
+        },
+        {
+          "time_str": "00:00:31",
+          "seconds": 31,
+          "context": "into an introduction to classification what is linear regression what is logistics regression and then",
+          "href": "https://www.youtube.com/watch?v=QWYkQDvCo4Y&t=31s"
+        },
+        {
+          "time_str": "00:00:38",
+          "seconds": 38,
+          "context": "what is logistics regression and then Logistics versus linear regression and we'll do a quick demo so you can see",
+          "href": "https://www.youtube.com/watch?v=QWYkQDvCo4Y&t=38s"
+        },
+        {
+          "time_str": "00:02:21",
+          "seconds": 141,
+          "context": "one output and so forth so if so if that is um uh categorical what is a linear regression how does that have to fit all together so linear regression is a",
+          "href": "https://www.youtube.com/watch?v=QWYkQDvCo4Y&t=141s"
+        }
+      ]
+    },
+    {
+      "card_index": 6,
+      "title": "StatQuest: Logistic Regression",
+      "channel": "",
+      "has_thumb": true,
+      "thumb_src": "https://i.ytimg.com/vi/yIYKR4sgzI8/mqdefault.jpg...",
+      "moment_count": 5,
+      "youtube_href": "https://www.youtube.com/watch?v=yIYKR4sgzI8",
+      "moments": [
+        {
+          "time_str": "00:00:10",
+          "seconds": 10,
+          "context": "If you can fit a line you can fit a squiggle if you can, make me laugh you can, make me giggle stat quest Hello, i'm josh stormer and welcome to stat quest today we're going to talk about logistic regression This is a technique that can be used for traditional statistics as, well as machine learning so let's get right to it",
+          "href": "https://www.youtube.com/watch?v=yIYKR4sgzI8&t=10s"
+        },
+        {
+          "time_str": "00:00:24",
+          "seconds": 24,
+          "context": "This is a technique that can be used for traditional statistics as, well as machine learning so let's get right to it Before we dive into logistic regression let's take. A, step back and review, linear regression in Another stat quest, we talked, about linear regression",
+          "href": "https://www.youtube.com/watch?v=yIYKR4sgzI8&t=24s"
+        },
+        {
+          "time_str": "00:00:31",
+          "seconds": 31,
+          "context": "Before we dive into logistic regression let's take. A, step back and review, linear regression in Another stat quest, we talked, about linear regression We had some data",
+          "href": "https://www.youtube.com/watch?v=yIYKR4sgzI8&t=31s"
+        },
+        {
+          "time_str": "00:01:28",
+          "seconds": 88,
+          "context": "We didn't mention it at the time using data to predict something falls under the category of machine learning So plain old linear regression is a form of machine learning We also talked a little bit about multiple regression",
+          "href": "https://www.youtube.com/watch?v=yIYKR4sgzI8&t=88s"
+        },
+        {
+          "time_str": "00:03:01",
+          "seconds": 181,
+          "context": "Size or if we can get, away, with just weight Now that we remember all the cool, things, we can, do with linear regression Let's talk, about logistic regression",
+          "href": "https://www.youtube.com/watch?v=yIYKR4sgzI8&t=181s"
+        }
+      ]
+    }
+  ],
+  "quality_audit": {}
+}

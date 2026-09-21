@@ -85,28 +85,77 @@ const DurationSelector = ({
   // submit — this only saves the user a round trip and explains why.
   allowedDurations = null,
   sourceDurationLabel = '',
+  validationStatus = null,
+  validationMessage = '',
 }) => {
   // Look the estimate up from DURATIONS rather than hardcoding it, so adding a
   // profile to the table above is the only edit required.
+  // Derive status if not explicitly provided
+  const status = validationStatus || (
+    allowedDurations === null
+      ? 'idle'
+      : allowedDurations.length === 0
+      ? 'too_short'
+      : 'valid'
+  );
+
   const selectedDuration = DURATIONS.find((d) => d.value === value);
 
+  // Strict eligibility: must be an array and contain the minutes
   const isAllowed = (minutes) =>
-    !Array.isArray(allowedDurations) || allowedDurations.includes(minutes);
+    Array.isArray(allowedDurations) && allowedDurations.includes(minutes);
 
-  const tooLongReason = sourceDurationLabel
-    ? `Video is only ${sourceDurationLabel}`
-    : 'Longer than the source video';
+  const getReason = () => {
+    if (status === 'validating') return 'Verifying length...';
+    if (status === 'verification_failed') return 'Length unverified';
+    if (sourceDurationLabel) return `Video is only ${sourceDurationLabel}`;
+    return 'Longer than the source video';
+  };
 
   return (
     <div className="w-full">
       {showTitle && (
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold text-white">
             Output Duration
           </h3>
           <span className="text-sm text-dark-400">
             Choose your summary length
           </span>
+        </div>
+      )}
+
+      {/* Validation Status Banners */}
+      {status === 'validating' && (
+        <div className="flex items-center gap-2 mb-3 text-xs text-cyan-400" data-testid="duration-validating-banner">
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent inline-block" />
+          <span>Verifying video length...</span>
+        </div>
+      )}
+
+      {status === 'too_short' && (
+        <div className="mb-3 rounded-lg bg-amber-500/10 border border-amber-500/30 p-2.5 text-xs text-amber-400 flex items-center gap-2" data-testid="duration-too-short-banner">
+          <span>⚠️</span>
+          <span>
+            {validationMessage || (sourceDurationLabel
+              ? `Selected video is only ${sourceDurationLabel}. A 5-minute summary requires more than 5 minutes of source content.`
+              : 'A 5-minute summary requires more than 5 minutes of source content.')}
+          </span>
+        </div>
+      )}
+
+      {status === 'verification_failed' && (
+        <div className="mb-3 rounded-lg bg-red-500/10 border border-red-500/30 p-2.5 text-xs text-red-400 flex items-center gap-2" data-testid="duration-failed-banner">
+          <span>❌</span>
+          <span>{validationMessage || 'Could not verify duration for all selected videos. Summarization is disabled.'}</span>
+        </div>
+      )}
+
+      {status === 'valid' && sourceDurationLabel && (
+        <div className="flex items-center gap-2 mb-3 text-xs text-dark-300" data-testid="duration-valid-info">
+          <span className="font-medium text-white">Source length:</span>
+          <span className="px-2 py-0.5 rounded bg-dark-700 text-cyan-300 font-mono">{sourceDurationLabel}</span>
+          <span className="text-dark-400">(Summaries must be shorter than source)</span>
         </div>
       )}
 
@@ -125,7 +174,7 @@ const DurationSelector = ({
               onClick={() => !isDisabled && onChange(duration.value)}
               disabled={isDisabled}
               aria-disabled={isDisabled}
-              title={!allowed ? tooLongReason : undefined}
+              title={!allowed ? getReason() : undefined}
               data-testid={`duration-option-${duration.value}`}
               className={`
                 relative overflow-hidden rounded-xl p-4 text-left
@@ -188,7 +237,7 @@ const DurationSelector = ({
                   </p>
                 ) : (
                   <p className="text-sm text-amber-500/90" data-testid={`duration-reason-${duration.value}`}>
-                    {tooLongReason}
+                    {getReason()}
                   </p>
                 )}
 

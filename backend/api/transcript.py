@@ -2,12 +2,13 @@
 Transcript API routes
 """
 from typing import List
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from ..services.transcript_service import (
     get_transcript_service,
     extract_video_id,
 )
+from ..core.security import get_current_user, require_role
 
 router = APIRouter(prefix="/api/v1/transcript", tags=["transcript"])
 
@@ -21,15 +22,25 @@ class SummarizeRequest(BaseModel):
 @router.get("")
 async def get_transcript(
     videoId: str = Query(..., description="YouTube video ID or URL"),
+    allow_whisper: bool = Query(True, description="Whether to fall back to Whisper STT"),
+    fast_search: bool = Query(False, description="Fast path for keyword search: English captions only, no Whisper/translation/download"),
+    _user: dict = Depends(get_current_user),
 ):
     """
     Fetch transcript for a YouTube video.
 
     Accepts both video IDs and full YouTube URLs.
     Uses 3-tier fallback: YouTube API → yt-dlp → Whisper.
+    When fast_search=True, uses fast English-only caption path without fallback or audio processing.
     """
     service = await get_transcript_service()
     result = await service.get_transcript(videoId)
+    result = await service.get_transcript(videoId, allow_whisper=allow_whisper)
+    result = await service.get_transcript(
+        videoId,
+        allow_whisper=allow_whisper,
+        fast_search=fast_search,
+    )
 
     if not result:
         raise HTTPException(
@@ -41,7 +52,7 @@ async def get_transcript(
 
 
 @router.post("/summarize")
-async def summarize_text(request: SummarizeRequest):
+async def summarize_text(request: SummarizeRequest, _user: dict = Depends(get_current_user)):
     """Summarize transcript text"""
     service = await get_transcript_service()
     summary = service.summarize(
@@ -55,6 +66,7 @@ async def summarize_text(request: SummarizeRequest):
 @router.delete("/cache")
 async def clear_transcript_cache(
     videoId: str = Query(None, description="Specific video ID to clear, or omit to clear all"),
+    _admin: dict = Depends(require_role("admin")),
 ):
     """
     Clear cached transcripts so they get re-fetched in English.
@@ -94,7 +106,7 @@ class CompileResponse(BaseModel):
 
 
 @router.post("/compile", response_model=CompileResponse)
-async def compile_highlights(request: CompileRequest):
+async def compile_highlights(request: CompileRequest, _user: dict = Depends(get_current_user)):
     """
     Extract highlight segments from a video by aligning its summary
     with transcript timestamps.

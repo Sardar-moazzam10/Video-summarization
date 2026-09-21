@@ -18,12 +18,23 @@ const EXAMPLE_QUERIES = [
   'Morning routine habits',
 ];
 
+export const buildMergeRequest = (videoIds, durationMinutes, query) => ({
+  video_ids: videoIds,
+  target_duration_minutes: durationMinutes,
+  generate_audio: true,
+  generate_video: true,
+  query: (query || '').trim() || undefined,
+});
+
 const SearchPage = () => {
   const [videos, setVideos] = useState([]);
   const [noResults, setNoResults] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [searchQuery, setSearchQuery] = useState(
+    () => sessionStorage.getItem('normalSearchQuery') || ''
+  );
   const navigate = useNavigate();
 
   const username = JSON.parse(localStorage.getItem('user'))?.username;
@@ -35,6 +46,9 @@ const SearchPage = () => {
   }, []);
 
   const handleSearch = useCallback(async (query) => {
+    const normalizedQuery = (query || '').trim();
+    setSearchQuery(normalizedQuery);
+    sessionStorage.setItem('normalSearchQuery', normalizedQuery);
     setSelectedForMerge([]);
     setErrorMsg('');
     setNoResults(false);
@@ -55,7 +69,9 @@ const SearchPage = () => {
         }).catch(() => {});
       }
     } catch (e) {
-      setErrorMsg('Failed to fetch videos. Please try again.');
+      setVideos([]);
+      setNoResults(false);
+      setErrorMsg(e?.message || 'Failed to fetch videos. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -88,13 +104,17 @@ const SearchPage = () => {
       const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          video_ids: selectedForMerge,
-          target_duration_minutes: durationMinutes,
-          generate_audio: true,
-          generate_video: true,
-        }),
+        body: JSON.stringify(buildMergeRequest(
+          selectedForMerge, durationMinutes, searchQuery
+        )),
       });
+      if (res.status === 401) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('refresh_token');
+        navigate('/login', { state: { sessionExpired: true } });
+        return;
+      }
       const data = await res.json();
       if (data.job_id) {
         navigate(`/merged-player/${data.job_id}`);

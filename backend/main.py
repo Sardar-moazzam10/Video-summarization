@@ -26,7 +26,7 @@ import time
 
 from .core.config import get_settings
 from .core.database import close_database
-from .api import auth, transcript, merge, search, chat
+from .api import auth, transcript, merge, search, chat, youtube
 
 settings = get_settings()
 
@@ -150,6 +150,7 @@ app.include_router(transcript.router)
 app.include_router(merge.router)
 app.include_router(search.router)  # FAISS semantic search
 app.include_router(chat.router)  # Chat with video (FAISS + Ollama)
+app.include_router(youtube.router)  # Public video-title/topic search
 
 
 @app.get("/")

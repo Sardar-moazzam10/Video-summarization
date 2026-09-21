@@ -186,7 +186,9 @@ class TestSegmentationCache:
             f"transcript was embedded {embedder.calls} times for 5 duration modes"
         )
         for r in results[1:]:
-            assert r is results[0], "every mode must receive the same analysis object"
+            assert [(s.video_id, s.start_time, s.end_time, s.text) for s in r] == [
+                (s.video_id, s.start_time, s.end_time, s.text) for s in results[0]]
+            assert r is not results[0], "job-specific concept scores must not mutate the cache"
 
     def test_a_different_transcript_is_not_served_from_cache(self, embedder):
         build_semantic_segments(self._raw(60), "v1", 20.0, 90.0, embedder)

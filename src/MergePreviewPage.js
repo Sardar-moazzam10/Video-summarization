@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { API_BASE_URL, API } from './config/api.js';
+import { API_BASE_URL, API, authenticatedFetch } from './config/api.js';
 import DurationSelector from './components/merge/DurationSelector.jsx';
 
 /**
@@ -33,6 +33,7 @@ const HIGHLIGHT_LENGTHS = [
   { value: 1200, label: '20 min' },
   { value: 1800, label: '30 min' },
 ];
+
 
 // MergeJobCreate declares video_ids with max_length=10.
 const MAX_VIDEOS = 10;
@@ -73,18 +74,19 @@ const MergePreviewPage = () => {
 
   const initialResults = fromState.length ? fromState : fromStorage;
   const [selectedResults] = useState(initialResults);
+  const query = location.state?.query || sessionStorage.getItem('mergePreviewQuery') || '';
 
   // Minutes — sent verbatim as target_duration_minutes (backend: ge=5, le=30).
   const [targetMinutes, setTargetMinutes] = useState(10);
   const [selectedStyle, setSelectedStyle] = useState('educational');
   const [generateVideo, setGenerateVideo] = useState(true);
-  const [highlightSeconds, setHighlightSeconds] = useState(120);
+  const [highlightSeconds] = useState(120);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   // De-duplicated, capped at the backend's max_length. Derived, not stored.
   const videoIds = Array.from(
-    new Set(selectedResults.map((r) => r.video?.id?.videoId).filter(Boolean))
+    new Set(selectedResults.map((r) => r.video?.id?.videoId || r.video?.id || (typeof r.video === 'string' ? r.video : '')).filter(Boolean))
   );
   const sentVideoIds = videoIds.slice(0, MAX_VIDEOS);
   const droppedCount = videoIds.length - sentVideoIds.length;
@@ -95,28 +97,56 @@ const MergePreviewPage = () => {
   // costs the user a clear server-side error, never a silently wrong summary.
   const [allowedDurations, setAllowedDurations] = useState(null);
   const [sourceDurationLabel, setSourceDurationLabel] = useState('');
+  const [validationStatus, setValidationStatus] = useState('validating'); // 'validating' | 'valid' | 'too_short' | 'verification_failed'
 
   useEffect(() => {
-    if (!sentVideoIds.length) return;
+    if (!sentVideoIds.length) {
+      setValidationStatus('idle');
+      return;
+    }
     let cancelled = false;
+    setValidationStatus('validating');
 
     (async () => {
       try {
-        const res = await fetch(API.MERGE_VIDEO_DURATIONS(sentVideoIds));
-        if (!res.ok) return;
+        const res = await authenticatedFetch(API.MERGE_VIDEO_DURATIONS(sentVideoIds));
+        if (cancelled) return;
+        if (!res.ok) {
+          setValidationStatus('verification_failed');
+          setAllowedDurations([]);
+          return;
+        }
         const data = await res.json();
-        if (cancelled || !Array.isArray(data.allowed_durations)) return;
-        setAllowedDurations(data.allowed_durations);
-        setSourceDurationLabel(data.combined_duration_label || '');
-        // Never leave the picker sitting on an option the source cannot
-        // produce; move to the longest one it can.
-        setTargetMinutes((current) =>
-          data.allowed_durations.includes(current)
-            ? current
-            : (data.allowed_durations[data.allowed_durations.length - 1] ?? current)
-        );
+        if (cancelled) return;
+
+        if (data.status === 'verification_failed') {
+          setValidationStatus('verification_failed');
+          setAllowedDurations([]);
+          setSourceDurationLabel('');
+        } else if (data.status === 'too_short') {
+          setValidationStatus('too_short');
+          setAllowedDurations([]);
+          setSourceDurationLabel(data.combined_duration_label || '');
+        } else if (data.status === 'valid' && Array.isArray(data.allowed_durations)) {
+          setValidationStatus('valid');
+          setAllowedDurations(data.allowed_durations);
+          setSourceDurationLabel(data.combined_duration_label || '');
+
+          setTargetMinutes((current) =>
+            data.allowed_durations.includes(current)
+              ? current
+              : (data.allowed_durations[data.allowed_durations.length - 1] ?? current)
+          );
+        } else {
+          setValidationStatus('verification_failed');
+          setAllowedDurations([]);
+        }
       } catch {
         /* leave every option enabled; the backend still validates */
+        if (!cancelled) {
+          setValidationStatus('verification_failed');
+          setAllowedDurations([]);
+        }
       }
     })();
 
@@ -124,7 +154,11 @@ const MergePreviewPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sentVideoIds.join(',')]);
 
-  const noDurationFits = Array.isArray(allowedDurations) && allowedDurations.length === 0;
+  const canSubmit =
+    validationStatus === 'valid' &&
+    Array.isArray(allowedDurations) &&
+    allowedDurations.includes(targetMinutes) &&
+    !isSubmitting;
 
   const handleBack = () => navigate(-1);
 
@@ -138,6 +172,9 @@ const MergePreviewPage = () => {
     setIsSubmitting(true);
 
     try {
+      const selectedKeywords = [...new Set(
+        query.split(',').map((item) => item.trim()).filter(Boolean)
+      )].slice(0, 30);
       const token = localStorage.getItem('access_token') || '';
       const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
@@ -152,12 +189,14 @@ const MergePreviewPage = () => {
           generate_video: generateVideo,
           highlight_duration_seconds: highlightSeconds,
           style: selectedStyle,
+          query: query.trim() || undefined,
+          selected_keywords: selectedKeywords,
         }),
       });
 
       const data = await res.json();
       if (res.ok && data.job_id) {
-        navigate(`/merged-player/${data.job_id}`);
+        navigate(`/merged-player/${data.job_id}`, { state: { query: query.trim() } });
       } else {
         // Validation errors arrive as a structured `detail` object (see
         // SUMMARY_DURATION_EXCEEDS_VIDEO in backend/api/merge.py). Show the
@@ -167,11 +206,18 @@ const MergePreviewPage = () => {
         const detail = data?.detail;
         if (detail && typeof detail === 'object' && detail.message) {
           setErrorMsg(detail.message);
-          if (Array.isArray(detail.allowed_durations)) {
+          if (detail.error_code === 'SOURCE_DURATION_UNAVAILABLE' || detail.code === 'SOURCE_DURATION_UNAVAILABLE') {
+            setValidationStatus('verification_failed');
+            setAllowedDurations([]);
+          } else if (Array.isArray(detail.allowed_durations)) {
             setAllowedDurations(detail.allowed_durations);
+            setValidationStatus(detail.allowed_durations.length > 0 ? 'valid' : 'too_short');
+            if (detail.allowed_durations.length > 0 && !detail.allowed_durations.includes(targetMinutes)) {
+              setTargetMinutes(detail.allowed_durations[detail.allowed_durations.length - 1]);
+            }
           }
-          if (typeof detail.source_duration_seconds === 'number') {
-            const secs = Math.round(detail.source_duration_seconds);
+          if (typeof detail.source_duration_seconds === 'number' || typeof detail.source_seconds === 'number') {
+            const secs = Math.round(detail.source_duration_seconds || detail.source_seconds);
             const m = Math.floor(secs / 60);
             const s = secs % 60;
             setSourceDurationLabel(m && s ? `${m}m ${s}s` : m ? `${m}m` : `${s}s`);
@@ -297,6 +343,7 @@ const MergePreviewPage = () => {
             disabled={isSubmitting}
             allowedDurations={allowedDurations}
             sourceDurationLabel={sourceDurationLabel}
+            validationStatus={validationStatus}
             compact
           />
 
@@ -360,18 +407,29 @@ const MergePreviewPage = () => {
           <button
             type="button"
             onClick={handleConfirmMerge}
-            // No duration fits at all: the source is shorter than the
-            // shortest profile, so there is nothing valid to submit.
-            disabled={isSubmitting || noDurationFits}
-            title={noDurationFits
-              ? `Video is only ${sourceDurationLabel} — too short to summarise`
-              : undefined}
+            disabled={!canSubmit}
+            title={
+              validationStatus === 'validating'
+                ? 'Verifying video duration...'
+                : validationStatus === 'too_short'
+                ? (sourceDurationLabel
+                  ? `Source is only ${sourceDurationLabel}. A 5-minute summary requires more than 5 minutes of source content.`
+                  : 'A 5-minute summary requires more than 5 minutes of source content.')
+                : validationStatus === 'verification_failed'
+                ? 'Could not verify duration for all selected videos'
+                : undefined
+            }
             className="flex items-center gap-2 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 px-8 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:from-brand-400 hover:to-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? (
               <>
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 Starting job…
+              </>
+            ) : validationStatus === 'validating' ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Checking duration…
               </>
             ) : (
               <>

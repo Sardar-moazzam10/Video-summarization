@@ -98,8 +98,19 @@ class SemanticSegment:
     # Filled in by downstream stages
     embedding: Optional[np.ndarray] = None
     concept_scores: Dict[str, float] = field(default_factory=dict)
+    canonical_concepts: List[str] = field(default_factory=list)
+    knowledge_unit_scores: Dict[str, float] = field(default_factory=dict)
+    knowledge_unit_metadata: Dict[str, Dict] = field(default_factory=dict)
+    query_relevance: Optional[float] = None
+    information_density: float = 0.0
+    filler_penalty: float = 0.0
     boundary_confidence: float = 0.0   # how clean the topic break was, 0..1
     completeness: float = 1.0          # 1.0 = starts and ends on a sentence
+
+    @property
+    def segment_id(self) -> str:
+        from .cache_identity import content_key
+        return content_key([self.video_id, self.start_time, self.end_time, self.text])
 
     @property
     def duration(self) -> float:
@@ -118,6 +129,20 @@ class SemanticSegment:
             "duration": round(self.duration, 2),
             "boundary_confidence": round(self.boundary_confidence, 4),
             "completeness": round(self.completeness, 4),
+            "canonical_concepts": list(self.canonical_concepts),
+            "concept_block": getattr(self, "concept_block", None),
+            "concept_block_role": getattr(self, "concept_block_role", None),
+            "knowledge_units": list(self.knowledge_unit_scores),
+            "knowledge_unit_scores": {
+                key: round(float(value), 4)
+                for key, value in self.knowledge_unit_scores.items()
+            },
+            "query_relevance": (
+                round(float(self.query_relevance), 4)
+                if self.query_relevance is not None else None
+            ),
+            "information_density": round(float(self.information_density), 4),
+            "filler_penalty": round(float(self.filler_penalty), 4),
         }
 
 
@@ -562,17 +587,12 @@ _SEGMENT_CACHE: "OrderedDict[str, List[SemanticSegment]]" = OrderedDict()
 _SEGMENT_CACHE_MAX = 8
 
 
-def _segment_cache_key(raw_segments, video_id, min_duration, max_duration) -> str:
-    digest = hashlib.sha1()
-    digest.update(f"{video_id}|{min_duration}|{max_duration}|{len(raw_segments)}".encode())
-    # Sampling rather than hashing every entry: a transcript that matches on
-    # length, endpoints and an even sample is the same transcript, and hashing
-    # 2000 entries on every call would eat into the saving being made.
-    step = max(1, len(raw_segments) // 40)
-    for seg in list(raw_segments)[::step]:
-        digest.update(str(seg.get("text", ""))[:120].encode("utf-8", "ignore"))
-        digest.update(str(seg.get("start", "")).encode())
-    return digest.hexdigest()
+def _segment_cache_key(raw_segments, video_id, min_duration, max_duration, embedder=None) -> str:
+    from .cache_identity import content_key, model_identity
+    return content_key(["segment-v2", model_identity(embedder), video_id,
+                        min_duration, max_duration, _PAUSE_SECONDS,
+                        BOUNDARY_DEPTH_K, _FALLBACK_SENTENCE_WORDS,
+                        _PUNCTUATION_TRUST_RATIO, list(raw_segments)])
 
 
 def build_semantic_segments(
@@ -596,13 +616,14 @@ def build_semantic_segments(
     if not raw_segments:
         return []
 
-    key = _segment_cache_key(raw_segments, video_id, min_duration, max_duration) if use_cache else None
+    key = _segment_cache_key(raw_segments, video_id, min_duration, max_duration, embedder) if use_cache else None
     if key is not None and key in _SEGMENT_CACHE:
         _SEGMENT_CACHE.move_to_end(key)
         cached = _SEGMENT_CACHE[key]
         print(f"[Segmenter] Cache hit for {video_id or 'video'} "
               f"({len(cached)} segments) — skipping re-embedding")
-        return cached
+        import copy
+        return copy.deepcopy(cached)
 
     sentences = build_sentences(raw_segments)
     if not sentences:
@@ -616,7 +637,8 @@ def build_semantic_segments(
     )
 
     if key is not None and segments:
-        _SEGMENT_CACHE[key] = segments
+        import copy
+        _SEGMENT_CACHE[key] = copy.deepcopy(segments)
         _SEGMENT_CACHE.move_to_end(key)
         while len(_SEGMENT_CACHE) > _SEGMENT_CACHE_MAX:
             _SEGMENT_CACHE.popitem(last=False)

@@ -1,111 +1,37 @@
-import numpy as np
-from typing import List, Any
-import logging
+"""Deterministic topic ordering without model loading or pairwise inference."""
+from collections import defaultdict
 
-logger = logging.getLogger(__name__)
 
-def sort_segments(segments: List[Any], embedder=None) -> List[Any]:
+def sort_segments(segments, embedder=None, concept_order=None):
+    """Choose among source-local queue heads by topic; retain source chronology.
+
+    Cached concept affinities supply semantic evidence. No raw timestamps are
+    compared across sources. The embedder parameter is retained for API compatibility.
     """
-    Sort segments narratively rather than by video_id.
-    1. Cluster segments into topics.
-    2. Order clusters logically.
-    3. Pair conflicting segments (NLI).
-    """
-    if not segments:
-        return segments
+    sources = defaultdict(list)
+    for seg in segments:
+        sources[getattr(seg, "video_id", "")].append(seg)
+    for queue in sources.values():
+        queue.sort(key=lambda s: s.start_time)
+    topics = concept_order or list(dict.fromkeys(
+        name for seg in segments for name in getattr(seg, "concept_scores", {})
+    ))
+    ranks = {name: i for i, name in enumerate(topics)}
 
-    try:
-        from .fusion_engine import get_sentence_transformer
-        from sentence_transformers import CrossEncoder
-        if embedder is None:
-            embedder = get_sentence_transformer()
-    except ImportError:
-        logger.warning("[Narrative] SentenceTransformer not available, falling back to chronological sort")
-        segments.sort(key=lambda s: getattr(s, "start_time", 0.0))
-        return segments
+    def topic_key(seg):
+        scores = getattr(seg, "concept_scores", {})
+        topic = max(scores, key=scores.get) if scores else None
+        return (ranks.get(topic, len(ranks)), -scores.get(topic, 0.0),
+                getattr(seg, "video_id", ""))
 
-    # 1. Embed and cluster
-    texts = [getattr(s, "text", "") for s in segments]
-    try:
-        embeddings = embedder.encode(texts, show_progress_bar=False)
-    except Exception as e:
-        logger.warning(f"[Narrative] Embedding failed: {e}")
-        segments.sort(key=lambda s: getattr(s, "start_time", 0.0))
-        return segments
-
-    # We use a simple K-Means or hierarchical clustering.
-    # For small N, agglomerative is easy.
-    from sklearn.cluster import AgglomerativeClustering
-    n_clusters = max(1, min(len(segments) // 2, 7))
-    if len(segments) < 3:
-        n_clusters = 1
-        
-    clusterer = AgglomerativeClustering(
-        n_clusters=n_clusters, 
-        metric='cosine', 
-        linkage='average'
-    )
-    labels = clusterer.fit_predict(embeddings)
-    
-    clusters = {i: [] for i in range(n_clusters)}
-    for i, label in enumerate(labels):
-        clusters[label].append((i, segments[i]))
-        
-    # Order clusters by their median relative timestamp
-    cluster_scores = {}
-    for label, items in clusters.items():
-        # Relative time: start_time / total_video_duration (assumed 1.0 if not available)
-        times = [item[1].start_time for item in items]
-        cluster_scores[label] = np.median(times)
-        
-    ordered_labels = sorted(clusters.keys(), key=lambda l: cluster_scores[l])
-    
-    final_segments = []
-    
-    # Attempt to load NLI for conflict detection
-    nli_model = None
-    try:
-        nli_model = CrossEncoder('cross-encoder/nli-deberta-v3-small')
-        logger.info("[Narrative] Loaded NLI model for ordering")
-    except Exception as e:
-        logger.info(f"[Narrative] NLI model unavailable for ordering: {e}")
-
-    for label in ordered_labels:
-        cluster_items = clusters[label]
-        # Sort items chronologically within the cluster as a baseline
-        cluster_items.sort(key=lambda x: x[1].start_time)
-        
-        if nli_model and len(cluster_items) > 1:
-            # Pair them up based on NLI
-            # Very simple pairing: if i and j contradict, place j immediately after i
-            placed = set()
-            paired_seq = []
-            
-            for idx in range(len(cluster_items)):
-                if idx in placed:
-                    continue
-                placed.add(idx)
-                paired_seq.append(cluster_items[idx][1])
-                
-                # Look for a contradiction to pair with
-                for jdx in range(idx + 1, len(cluster_items)):
-                    if jdx in placed:
-                        continue
-                    
-                    try:
-                        scores = nli_model.predict([(cluster_items[idx][1].text, cluster_items[jdx][1].text)])
-                        # scores = [contradiction, entailment, neutral]
-                        if scores[0][0] > max(scores[0][1], scores[0][2]):
-                            # Contradiction! Place immediately after to show alternative viewpoint
-                            placed.add(jdx)
-                            paired_seq.append(cluster_items[jdx][1])
-                            logger.info("[Narrative] Placed contradiction adjacently!")
-                            break
-                    except Exception:
-                        pass
-                        
-            final_segments.extend(paired_seq)
-        else:
-            final_segments.extend([item[1] for item in cluster_items])
-
-    return final_segments
+    ordered = []
+    while sources:
+        source = min(sources, key=lambda vid: topic_key(sources[vid][0]))
+        ordered.append(sources[source].pop(0))
+        # Adjacent clips in a local explanation stay together; changing topic
+        # across sources must not insert another speaker inside that explanation.
+        while sources[source] and sources[source][0].start_time - ordered[-1].end_time <= 1.2:
+            ordered.append(sources[source].pop(0))
+        if not sources[source]:
+            del sources[source]
+    return ordered

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { API_BASE_URL } from './config/api.js';
+import { API_BASE_URL, authenticatedFetch } from './config/api.js';
 
 const VideoPlayerPage = () => {
   const location = useLocation();
@@ -13,7 +13,7 @@ const VideoPlayerPage = () => {
     const username = JSON.parse(localStorage.getItem('user'))?.username;
     if (!username) return;
     const vidId = video.id?.videoId || video.id;
-    fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
+    authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

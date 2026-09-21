@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import './PanelStyles.css';
-import { API_BASE_URL } from '../config/api.js';
+import { API_BASE_URL, authenticatedFetch } from '../config/api.js';
 
 const sidebarLinks = [
   { path: '/account-info', label: 'Account Info', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
@@ -48,7 +48,7 @@ const HistoryPage = () => {
 
   useEffect(() => {
     if (!username) { setLoading(false); return; }
-    fetch(`${API_BASE_URL}/api/v1/auth/user-history/${username}`)
+    authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history/${username}`)
       .then(res => res.json())
       .then(data => { setHistory(data.reverse()); setLoading(false); })
       .catch(() => setLoading(false));
@@ -56,7 +56,7 @@ const HistoryPage = () => {
 
   const handleClearHistory = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/auth/user-history/delete/${username}`, { method: 'DELETE' });
+      const res = await authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history/delete/${username}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) setHistory([]);
     } catch (err) {
@@ -69,7 +69,7 @@ const HistoryPage = () => {
   const handleDeleteSingle = async (e, timestamp) => {
     e.stopPropagation();
     try {
-      await fetch(`${API_BASE_URL}/api/v1/auth/user-history/delete-one`, {
+      await authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history/delete-one`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, timestamp })

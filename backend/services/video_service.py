@@ -127,6 +127,12 @@ class VideoService:
         Returns:
             Path to the final highlight reel MP4 (original speaker audio).
         """
+        from .clip_manifest import validate_manifest
+        from types import MappingProxyType
+        # Freeze the final handoff, including source and interval, before any
+        # asynchronous trim work starts. Workers cannot mutate manifest entries.
+        highlight_segments = tuple(MappingProxyType(dict(clip)) for clip in highlight_segments)
+        validate_manifest(highlight_segments, video_paths)
         work_dir = tempfile.mkdtemp(prefix=f"highlight_{job_id}_")
 
         try:
@@ -144,6 +150,8 @@ class VideoService:
 
             if not clips:
                 raise Exception("No segments could be trimmed")
+            if len(clips) != len(highlight_segments):
+                raise RuntimeError("Rendering failed: selected clips could not all be trimmed; manifest preserved")
 
             # Step 2: Concatenate with 0.4s black-frame transitions between clips
             if progress_callback:

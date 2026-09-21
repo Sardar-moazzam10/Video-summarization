@@ -1,0 +1,262 @@
+{
+  "status": "passed",
+  "scope": "cached real sources, first 600 seconds each; selection and FFmpeg, not HTTP/auth or fresh ASR",
+  "model": "BAAI/bge-base-en-v1.5",
+  "stage_timings_seconds": {
+    "download_cache": 0.00011841600644402206,
+    "transcription": 0.017078938995837234,
+    "model_load": 6.657941290992312,
+    "segmentation": 0.013243023000541143,
+    "concept_extraction": 0.17280307698820252,
+    "embedding": 24.607469283015234,
+    "selection": 0.026884367995080538,
+    "ordering": 0.0006523519987240434,
+    "rendering": 28.525546568009304
+  },
+  "transcription_mode": "existing real caption cache; timing is cache read, not ASR",
+  "input_videos": [
+    {
+      "video_id": "7eh4d6sabA0",
+      "url": "https://www.youtube.com/watch?v=7eh4d6sabA0",
+      "source_path": "audio_cache/video_cache/7eh4d6sabA0/video.mp4",
+      "caption_entries": 312,
+      "window_seconds": [
+        0,
+        600
+      ]
+    },
+    {
+      "video_id": "nm1TxQj9IsQ",
+      "url": "https://www.youtube.com/watch?v=nm1TxQj9IsQ",
+      "source_path": "audio_cache/video_cache/nm1TxQj9IsQ/video.mp4",
+      "caption_entries": 244,
+      "window_seconds": [
+        0,
+        600
+      ]
+    }
+  ],
+  "source_segments": 20,
+  "selected_clips": 5,
+  "clips_per_source": {
+    "7eh4d6sabA0": 4,
+    "nm1TxQj9IsQ": 1
+  },
+  "concepts_covered": [
+    "adenosine",
+    "caffeine",
+    "cat",
+    "code",
+    "desktop",
+    "drink",
+    "learning",
+    "machine",
+    "machine learning",
+    "model",
+    "notebook",
+    "server"
+  ],
+  "duplicates_rejected": 0,
+  "requested_seconds": 300,
+  "selected_seconds": 302.7925130890052,
+  "incomplete_thought_clips": 0,
+  "thought_check": "segmenter completeness flags only; human audiovisual review still required",
+  "manifest": [
+    {
+      "order": 0,
+      "video_id": "nm1TxQj9IsQ",
+      "start_time": 560.0874869109948,
+      "end_time": 598.8,
+      "segment_id": "29f13aaae401d99671893c70b78a05a45301929c5dab7db1f68a65e550822e3c",
+      "text": "in the evening and still fall asleep just fine. Some people can't have any caffeine at all or can't have any caffeine past 11:00 a.m. or else their sleep is totally disrupted. All of this has to do with the relationship between adenosine and these adenosine receptors, genetic variation, things that are very hard to find out except experimentally, meaning each of you needs to decide and figure out for yourselves whether or not you can tolerate caffeine and at what times of day you can tolerate caffeine in order to still fall asleep easily and get good sleep, so rather than demonize caffeine, or say that everyone can drink caffeine until late,",
+      "covered_concepts": [
+        "caffeine",
+        "adenosine",
+        "drink"
+      ],
+      "keyword_matches": [],
+      "selection_reason": "Complete thought selected for concept coverage and relevance",
+      "reason": "Complete thought selected for concept coverage and relevance"
+    },
+    {
+      "order": 1,
+      "video_id": "7eh4d6sabA0",
+      "start_time": 131.44,
+      "end_time": 159.2,
+      "segment_id": "bf35867bc8638b96027e906d16a66bf11a445e6d5ae52f00532a247015e65eb3",
+      "text": "model or an engine and give it lots and lots of data for example we give you thousands or tens of thousands of pictures of cats and dogs our model will then find and learn patterns in the input data so we can give it a new picture of a cat that it hasn't seen before and ask it is it a cat or a dog or a horse and it will tell us with a certain level of accuracy the more input data we give it the more accurate our model is going to be so that was a very basic",
+      "covered_concepts": [
+        "learning",
+        "model",
+        "machine",
+        "machine learning",
+        "cat",
+        "code"
+      ],
+      "keyword_matches": [],
+      "selection_reason": "Complete thought selected for concept coverage and relevance",
+      "reason": "Complete thought selected for concept coverage and relevance"
+    },
+    {
+      "order": 2,
+      "video_id": "7eh4d6sabA0",
+      "start_time": 158.48,
+      "end_time": 244.56,
+      "segment_id": "8b72f313067b5492d6dc06f7c770202eb1a26c73c4ee47e4bfddef808a5127a5",
+      "text": "example but machine learning has other applications in self-driving cars robotics language processing vision processing forecasting things like stock market trends and the weather games and so on so that's the basic idea about machine learning next we'll look at machine learning in action a machine learning project involves a number of steps the first step is to import our data which often comes in the form of a csv file you might have a database with lots of data we can simply export that data and store it in a csv file for the purpose of our machine learning project so we import our data next we need to clean it and this involves tasks such as removing duplicated data if you have duplicates in the data we don't want to feed this to our model because otherwise our model will learn bad patterns in the data and it will produce the wrong result so we should make sure that our input data is in a good and clean shape if there are data that is irrelevant we should remove them if they are duplicated or incomplete we can remove or modify them if our data is text-based like the name of countries or genres of music or cats and dogs we need to convert them to numerical values so this step really depends on the kind of data we're working with every project is different now that we have a clean data set we need to split it into two segments one for training our model",
+      "covered_concepts": [
+        "learning",
+        "model",
+        "machine",
+        "machine learning",
+        "cat"
+      ],
+      "keyword_matches": [],
+      "selection_reason": "Complete thought selected for concept coverage and relevance",
+      "reason": "Complete thought selected for concept coverage and relevance"
+    },
+    {
+      "order": 3,
+      "video_id": "7eh4d6sabA0",
+      "start_time": 242.959,
+      "end_time": 309.44,
+      "segment_id": "225df061d187be389e9b6a542e4af5b3c3dd50e8bdde7c0edbe0290d6751cd09",
+      "text": "and the other for testing it to make sure that our model produces the right result for example if you have a thousand pictures of cats and dogs we can reserve eighty percent for training and the other 20 for testing the next step is to create a model and this involves selecting an algorithm to analyze the data there are so many different machine learning algorithms out there such as decision trees neural networks and so on each algorithm has pros and cons in terms of accuracy and performance so the algorithm you choose depends on the kind of problem you're trying to solve and your input data now the good news is that we don't have to explicitly program an algorithm there are libraries out there that provide these algorithms one of the most popular ones which we are going to look at in this tutorial is scikit-learn so we build a model using an algorithm next we need to train our model so we fitted our training data our model will then look for the patterns in the data so next we can ask it to make predictions back to our example of cats and dogs we can ask our model is this a cat or a dog and our model",
+      "covered_concepts": [
+        "learning",
+        "model",
+        "machine",
+        "machine learning",
+        "cat"
+      ],
+      "keyword_matches": [],
+      "selection_reason": "Complete thought selected for concept coverage and relevance",
+      "reason": "Complete thought selected for concept coverage and relevance"
+    },
+    {
+      "order": 4,
+      "video_id": "7eh4d6sabA0",
+      "start_time": 515.76,
+      "end_time": 599.519,
+      "segment_id": "1014e81d853dbcb4cbbe2f7d2cb459e7fe5d48996fef687f10e94bcd019160cd",
+      "text": "and type jupyter with a y space notebook this will start the notebook server on your machine so enter there you go this will start the notebook server on your machine you can see these default messages here don't worry about them now it automatically opens a browser window pointing to localhost port 888 this is what we call jupiter dashboard on this dashboard we have a few tabs the first tab is the files tab and by default this points to your home directory so every user on your machine has a home directory this is my home directory on mac you can see here we have a desktop folder as well as documents downloads and so on on your machine you're going to see different folders so someone on your machine you need to create a jupyter notebook i'm going to go to desktop here's my desktop i don't have anything here and then click new i want to create a notebook for python 3. in this notebook we can write python code and execute it line by line we can easily visualize our data as you will see over the next few videos so let's go ahead with this all right here's our first notebook you can see by default it's called untitled let's change that to hello world so this is going to be the hello world of our machine learning project",
+      "covered_concepts": [
+        "learning",
+        "notebook",
+        "machine",
+        "code",
+        "desktop",
+        "server"
+      ],
+      "keyword_matches": [],
+      "selection_reason": "Complete thought selected for concept coverage and relevance",
+      "reason": "Complete thought selected for concept coverage and relevance"
+    }
+  ],
+  "metrics": {
+    "requested_seconds": 300.0,
+    "actual_seconds": 302.8,
+    "duration_accuracy_percent": 99.1,
+    "num_segments": 5,
+    "num_cuts": 4,
+    "timeline_coverage_percent": 25.3,
+    "bins_occupied": 5,
+    "bins_total": 10,
+    "temporal_histogram": [
+      0.0,
+      108.9,
+      71.4,
+      0.0,
+      83.4,
+      0.4,
+      0.0,
+      0.0,
+      0.0,
+      38.7
+    ],
+    "first_half_share_percent": 87.1,
+    "second_half_share_percent": 12.9,
+    "unique_concepts": 12,
+    "concepts_covered": [
+      "adenosine",
+      "caffeine",
+      "cat",
+      "code",
+      "desktop",
+      "drink",
+      "learning",
+      "machine",
+      "machine learning",
+      "model",
+      "notebook",
+      "server"
+    ],
+    "avg_concept_importance": 0.4842,
+    "redundancy_percent": 0.0,
+    "earliest_timestamp": 131.4,
+    "latest_timestamp": 1198.3,
+    "avg_segment_seconds": 60.6,
+    "min_segment_seconds": 27.8,
+    "max_segment_seconds": 86.1,
+    "per_video": {
+      "7eh4d6sabA0": {
+        "candidates": 12,
+        "selected": 4,
+        "seconds": 264.1,
+        "budget": 0.0,
+        "concepts_found": 25,
+        "concepts_covered": [
+          "learning",
+          "model",
+          "machine",
+          "machine learning",
+          "cat",
+          "code",
+          "notebook",
+          "desktop",
+          "server"
+        ],
+        "concept_signal": "available",
+        "concepts_omitted_for_budget": []
+      },
+      "nm1TxQj9IsQ": {
+        "candidates": 8,
+        "selected": 1,
+        "seconds": 38.7,
+        "budget": 0.0,
+        "concepts_found": 25,
+        "concepts_covered": [
+          "caffeine",
+          "adenosine",
+          "drink"
+        ],
+        "concept_signal": "available",
+        "concepts_omitted_for_budget": []
+      }
+    },
+    "weights": {
+      "concept": 0.32,
+      "semantic": 0.2,
+      "coverage": 0.28,
+      "coherence": 0.1,
+      "redundancy": 0.25,
+      "duration_penalty": 0.05,
+      "min_budget_fill": 0.9
+    },
+    "stage_timings_seconds": {
+      "segmentation": 0.013243023000541143,
+      "concept_extraction": 0.17280307698820252,
+      "embedding": 24.607469283015234,
+      "selection": 0.026884367995080538,
+      "ordering": 0.0006523519987240434
+    },
+    "candidate_count": 20,
+    "duplicates_rejected": 0,
+    "selection_mode": "automatic",
+    "selected_keywords": [],
+    "incomplete_thought_clips": 0
+  },
+  "rendered_seconds": 302.887696,
+  "rendered_path": "audio_cache/highlights/highlight_phase2-real-validation.mp4",
+  "duration_difference_seconds": 0.09518291099482212
+}

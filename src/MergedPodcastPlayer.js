@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import axios from 'axios';
-import { API_BASE_URL } from './config/api.js';
+import { API_BASE_URL, authenticatedFetch } from './config/api.js';
 import { extractErrorMessage } from './utils/apiError.js';
 import { getStepStatus, monotonicPercent, nextVisitedStages } from './utils/progressState.js';
 import QualityPanel from './QualityPanel.js';
@@ -41,6 +40,8 @@ const MergedPodcastPlayer = () => {
   const [videoIds, setVideoIds] = useState([]);
   const [isCompiling, setIsCompiling] = useState(false);
   const [compileError, setCompileError] = useState('');
+  const location = useLocation();
+  const [jobQuery, setJobQuery] = useState(location.state?.query || '');
   // This job's own settings, echoed back by /result. Carried into the
   // highlight-reel job so it reproduces THIS summary instead of a new one.
   const [jobSettings, setJobSettings] = useState({});
@@ -67,53 +68,68 @@ const MergedPodcastPlayer = () => {
 
   const fetchStatus = async () => {
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}`);
-      const currentStatus = res.data.status;
+      const res = await authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}`);
+      if (!res.ok) throw new Error(`Status request failed (${res.status})`);
+      const statusData = await res.json();
+      const currentStatus = statusData.status;
+      if (statusData.query) {
+        setJobQuery((prev) => prev || statusData.query);
+      }
       setStatus(currentStatus);
-      setStage(res.data.stage_message || 'Processing...');
+      setStage(statusData.stage_message || 'Processing...');
       setVisitedStages((prev) => nextVisitedStages(prev, currentStatus));
-      setProgressPercent((prev) => monotonicPercent(prev, res.data.progress_percent || 0));
+      setProgressPercent((prev) => monotonicPercent(prev, statusData.progress_percent || 0));
 
       if (currentStatus === 'completed' || currentStatus === 'partial_success') {
-        const resultRes = await axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`);
-        setSummary(resultRes.data.summary_text || '');
-        setMetadata(resultRes.data.metadata || null);
-        setRichOutput(resultRes.data.rich_output || null);
-        setVideoId(resultRes.data.highlight_segments?.[0]?.video_id || resultRes.data.video_ids?.[0] || '');
-        setVideoIds(resultRes.data.video_ids || []);
+        const resultRes = await authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`);
+        if (!resultRes.ok) throw new Error(`Result request failed (${resultRes.status})`);
+        const result = await resultRes.json();
+        if (result.query) {
+          setJobQuery(result.query);
+        }
+        setSummary(result.summary_text || '');
+        setMetadata(result.metadata || null);
+        setRichOutput(result.rich_output || null);
+        setVideoId(result.highlight_segments?.[0]?.video_id || result.video_ids?.[0] || '');
+        setVideoIds(result.video_ids || []);
         setJobSettings({
-          target_duration_minutes: resultRes.data.target_duration_minutes,
-          style: resultRes.data.rich_output?.style_applied,
+          target_duration_minutes: result.target_duration_minutes,
+          style: result.rich_output?.style_applied,
         });
-        setResultData(resultRes.data);
-        setWarning(resultRes.data.warning || res.data.warning || '');
-        if (resultRes.data.audio_url) {
-          setAudioUrl(`${API_BASE_URL}${resultRes.data.audio_url}`);
+        setResultData(result);
+        setWarning(result.warning || statusData.warning || '');
+        if (result.audio_url) {
+          setAudioUrl(`${API_BASE_URL}${result.audio_url}`);
         }
-        if (resultRes.data.video_url) {
-          setVideoUrl(`${API_BASE_URL}${resultRes.data.video_url}`);
+        if (result.video_url) {
+          setVideoUrl(`${API_BASE_URL}${result.video_url}`);
         }
-        saveToHistory(resultRes.data);
+        saveToHistory(result);
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       } else if (currentStatus === 'error') {
-        setError(res.data.error || 'An unknown error occurred.');
+        setError(statusData.error || 'An unknown error occurred.');
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       } else {
         if ((currentStatus === 'video_ready' || ['summarizing', 'enriching', 'generating_voice'].includes(currentStatus) || visitedStages.has('video_ready')) && !videoFetchedRef.current) {
           videoFetchedRef.current = true;
-          axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
-            .then((videoRes) => {
-              if (videoRes.data.video_url) {
-                setVideoUrl(`${API_BASE_URL}${videoRes.data.video_url}`);
+          authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
+            .then(async (videoRes) => {
+              if (!videoRes.ok) throw new Error(`Result request failed (${videoRes.status})`);
+              const videoResult = await videoRes.json();
+              if (videoResult.query) {
+                setJobQuery((prev) => prev || videoResult.query);
               }
-              setVideoId(videoRes.data.highlight_segments?.[0]?.video_id || videoRes.data.video_ids?.[0] || '');
-              setVideoIds(videoRes.data.video_ids || []);
-              if (videoRes.data.summary_text) setSummary(videoRes.data.summary_text);
-              if (videoRes.data.rich_output) setRichOutput(videoRes.data.rich_output);
-              if (videoRes.data.metadata && Object.keys(videoRes.data.metadata).length > 0) setMetadata(videoRes.data.metadata);
-              if (videoRes.data.audio_url) setAudioUrl(`${API_BASE_URL}${videoRes.data.audio_url}`);
+              if (videoResult.video_url) {
+                setVideoUrl(`${API_BASE_URL}${videoResult.video_url}`);
+              }
+              setVideoId(videoResult.highlight_segments?.[0]?.video_id || videoResult.video_ids?.[0] || '');
+              setVideoIds(videoResult.video_ids || []);
+              if (videoResult.summary_text) setSummary(videoResult.summary_text);
+              if (videoResult.rich_output) setRichOutput(videoResult.rich_output);
+              if (videoResult.metadata && Object.keys(videoResult.metadata).length > 0) setMetadata(videoResult.metadata);
+              if (videoResult.audio_url) setAudioUrl(`${API_BASE_URL}${videoResult.audio_url}`);
             })
             .catch(() => {});
         }
@@ -133,88 +149,12 @@ const MergedPodcastPlayer = () => {
   };
 
   useEffect(() => {
-    // Try SSE for real-time progress, fall back to polling on error
-    let eventSource = null;
-    try {
-      eventSource = new EventSource(
-        `${API_BASE_URL}/api/v1/merge/${mergeId}/stream`
-      );
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.error) {
-            setError(data.error);
-            eventSource.close();
-            return;
-          }
-          setStatus(data.status);
-          setStage(data.stage_message || 'Processing...');
-          setVisitedStages((prev) => nextVisitedStages(prev, data.status));
-          setProgressPercent((prev) => monotonicPercent(prev, data.progress_percent || 0));
-
-          if (data.status === 'completed' || data.status === 'partial_success') {
-            axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
-              .then(res => {
-                setSummary(res.data.summary_text || '');
-                setMetadata(res.data.metadata || null);
-                setRichOutput(res.data.rich_output || null);
-                setVideoId(res.data.highlight_segments?.[0]?.video_id || res.data.video_ids?.[0] || '');
-                setVideoIds(res.data.video_ids || []);
-                setJobSettings({
-                  target_duration_minutes: res.data.target_duration_minutes,
-                  style: res.data.rich_output?.style_applied,
-                });
-                setResultData(res.data);
-                setWarning(res.data.warning || data.warning || '');
-                if (res.data.audio_url) {
-                  setAudioUrl(`${API_BASE_URL}${res.data.audio_url}`);
-                }
-                if (res.data.video_url) {
-                  setVideoUrl(`${API_BASE_URL}${res.data.video_url}`);
-                }
-                saveToHistory(res.data);
-              });
-            eventSource.close();
-          } else if (data.status === 'error') {
-            setError(data.stage_message || 'An unknown error occurred.');
-            eventSource.close();
-          } else if ((data.status === 'video_ready' || ['summarizing', 'enriching', 'generating_voice'].includes(data.status)) && !videoFetchedRef.current) {
-            videoFetchedRef.current = true;
-            axios.get(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)
-              .then(res => {
-                if (res.data.video_url) {
-                  setVideoUrl(`${API_BASE_URL}${res.data.video_url}`);
-                }
-                setVideoId(res.data.highlight_segments?.[0]?.video_id || res.data.video_ids?.[0] || '');
-                setVideoIds(res.data.video_ids || []);
-                if (res.data.summary_text) setSummary(res.data.summary_text);
-                if (res.data.rich_output) setRichOutput(res.data.rich_output);
-                if (res.data.metadata && Object.keys(res.data.metadata).length > 0) setMetadata(res.data.metadata);
-                if (res.data.audio_url) setAudioUrl(`${API_BASE_URL}${res.data.audio_url}`);
-              })
-              .catch(() => {});
-          }
-        } catch (parseErr) {
-          console.error('SSE parse error:', parseErr);
-        }
-      };
-
-      eventSource.onerror = () => {
-        // SSE failed — fall back to polling
-        eventSource.close();
-        eventSource = null;
-        fetchStatus();
-        pollIntervalRef.current = setInterval(fetchStatus, 3000);
-      };
-    } catch (sseErr) {
-      // SSE not supported — use polling
-      fetchStatus();
-      pollIntervalRef.current = setInterval(fetchStatus, 5000);
-    }
+    // EventSource cannot attach a Bearer header. Authenticated polling keeps
+    // progress private and adapts its interval to the current pipeline stage.
+    fetchStatus();
+    pollIntervalRef.current = setInterval(fetchStatus, 3000);
 
     return () => {
-      if (eventSource) eventSource.close();
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -223,7 +163,15 @@ const MergedPodcastPlayer = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergeId]);
 
-  const handleBack = () => navigate('/search-by-title');
+  const handleBack = () => {
+    if (location.state?.from) {
+      navigate(location.state.from);
+    } else if (jobQuery) {
+      navigate('/search-by-keywords');
+    } else {
+      navigate('/search-by-title');
+    }
+  };
 
   const getCurrentStepStatus = (stepName) => getStepStatus(stepName, status, visitedStages);
 
@@ -237,10 +185,11 @@ const MergedPodcastPlayer = () => {
     const username = JSON.parse(localStorage.getItem('user'))?.username;
     if (!username) return;
     const vids = resultData.video_ids || [];
-    const title = resultData.rich_output?.tldr
+    const baseTitle = resultData.rich_output?.tldr
       ? resultData.rich_output.tldr.slice(0, 80)
       : `Merged summary (${vids.length} video${vids.length !== 1 ? 's' : ''})`;
-    fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
+    const title = resultData.query ? `[Keyword: ${resultData.query}] ${baseTitle}` : baseTitle;
+    authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -254,17 +203,37 @@ const MergedPodcastPlayer = () => {
     }).catch(() => {});
   };
 
+  const downloadProtectedExport = async () => {
+    try {
+      const res = await authenticatedFetch(
+        `${API_BASE_URL}/api/v1/merge/${mergeId}/export?format=pdf`
+      );
+      if (!res.ok) throw new Error('Download failed');
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `summary_${mergeId}.pdf`;
+      link.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      setError('Could not download the PDF. Please sign in again and retry.');
+    }
+  };
+
   const handleChat = async () => {
     if (!chatQuestion.trim()) return;
     setChatLoading(true);
     setChatAnswer(null);
     try {
-      const res = await axios.post(`${API_BASE_URL}/api/v1/chat`, {
+      const res = await authenticatedFetch(`${API_BASE_URL}/api/v1/chat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         question: chatQuestion.trim(),
         top_k: 5,
         ...(videoIds.length > 0 && { video_ids: videoIds }),
+        }),
       });
-      setChatAnswer(res.data);
+      if (!res.ok) throw new Error(`Chat request failed (${res.status})`);
+      setChatAnswer(await res.json());
     } catch (err) {
       console.error('Chat error:', err);
       const errMsg = extractErrorMessage(
@@ -295,7 +264,8 @@ const MergedPodcastPlayer = () => {
     setIsCompiling(true);
     setCompileError('');
     try {
-      const mergeRes = await axios.post(`${API_BASE_URL}/api/v1/merge`, {
+      const mergeRes = await authenticatedFetch(`${API_BASE_URL}/api/v1/merge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         video_ids: sourceIds,
         generate_video: true,
         generate_audio: true,
@@ -303,9 +273,13 @@ const MergedPodcastPlayer = () => {
         // Fall back to the previous hardcoded values only if /result omitted them.
         target_duration_minutes: jobSettings.target_duration_minutes || 5,
         style: jobSettings.style || 'educational',
+        ...(jobQuery ? { query: jobQuery } : {}),
+        }),
       });
-      if (mergeRes.data.job_id) {
-        window.open(`/merged-player/${mergeRes.data.job_id}`, '_blank');
+      if (!mergeRes.ok) throw new Error(`Merge request failed (${mergeRes.status})`);
+      const mergeData = await mergeRes.json();
+      if (mergeData.job_id) {
+        window.open(`/merged-player/${mergeData.job_id}`, '_blank');
       }
     } catch (err) {
       console.error('Highlight reel request failed:', err);
@@ -335,6 +309,12 @@ const MergedPodcastPlayer = () => {
             Back to Search
           </button>
           <h1 style={styles.title}>VidFusion</h1>
+          {jobQuery && (
+            <div style={styles.topicBadge}>
+              <span style={styles.topicBadgeLabel}>Topic:</span>
+              <span style={styles.topicBadgeQuery}>"{jobQuery}"</span>
+            </div>
+          )}
           <p style={styles.subtitle}>
             {isProcessing
               ? (warning
@@ -501,6 +481,25 @@ const MergedPodcastPlayer = () => {
                 </div>
               </motion.div>
             )}
+
+            {resultData?.selected_keywords?.length > 0 && (() => {
+              const covered = new Set(
+                (resultData.highlight_segments || []).flatMap((clip) => clip.keyword_matches || [])
+              );
+              return (
+                <motion.div style={styles.tldrCard} data-testid="keyword-coverage"
+                  initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                  <h3 style={styles.sectionTitle}>Requested topic coverage</h3>
+                  {resultData.selected_keywords.map((keyword) => (
+                    <p key={keyword} style={styles.tldrText}>
+                      {covered.has(keyword) ? '✓' : '○'} {keyword}: {covered.has(keyword)
+                        ? 'supported by selected source evidence'
+                        : 'no meaningful supporting evidence found'}
+                    </p>
+                  ))}
+                </motion.div>
+              );
+            })()}
 
             {/* Video Player */}
             {videoUrl && (
@@ -803,14 +802,14 @@ const MergedPodcastPlayer = () => {
                 </button>
                 <button
                   style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05))', borderColor: 'rgba(239,68,68,0.3)' }}
-                  onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/export?format=pdf`, '_blank')}
+                  onClick={downloadProtectedExport}
                 >
                   Download PDF
                 </button>
                 {videoUrl && (
                   <button
                     style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(71,139,224,0.15), rgba(71,139,224,0.05))', borderColor: 'rgba(71,139,224,0.3)' }}
-                    onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/video`, '_blank')}
+                    onClick={() => window.open(videoUrl, '_blank', 'noopener,noreferrer')}
                   >
                     Download Video
                   </button>
@@ -818,7 +817,7 @@ const MergedPodcastPlayer = () => {
                 {audioUrl && (
                   <button
                     style={{ ...styles.exportBtn, background: 'linear-gradient(135deg, rgba(71,139,224,0.15), rgba(71,139,224,0.05))', borderColor: 'rgba(71,139,224,0.3)' }}
-                    onClick={() => window.open(`${API_BASE_URL}/api/v1/merge/${mergeId}/audio`, '_blank')}
+                    onClick={() => window.open(audioUrl, '_blank', 'noopener,noreferrer')}
                   >
                     Download Audio
                   </button>
@@ -942,6 +941,25 @@ const styles = {
     WebkitBackgroundClip: 'text',
     WebkitTextFillColor: 'transparent',
     backgroundClip: 'text',
+  },
+  topicBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    border: '1px solid rgba(59, 130, 246, 0.3)',
+    borderRadius: '20px',
+    padding: '4px 14px',
+    margin: '0 auto 12px',
+    fontSize: '0.85rem',
+  },
+  topicBadgeLabel: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontWeight: 500,
+  },
+  topicBadgeQuery: {
+    color: '#60A5FA',
+    fontWeight: 600,
   },
   subtitle: {
     fontSize: '1rem',

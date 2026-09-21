@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
@@ -11,7 +11,7 @@ const EyeIcon = ({ open }) =>
   open ? (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
       strokeLinecap="round" strokeLinejoin="round">
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"/>
       <circle cx="12" cy="12" r="3"/>
     </svg>
   ) : (
@@ -32,6 +32,13 @@ const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const redirectTo = location.state?.from || null;
+
+  useEffect(() => {
+    if (location.state?.sessionExpired || new URLSearchParams(location.search).get('expired') === '1') {
+      setMessage('Your session has expired. Please log in again.');
+      setIsError(true);
+    }
+  }, [location]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

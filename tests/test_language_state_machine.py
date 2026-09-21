@@ -250,7 +250,11 @@ class TestEvaluateJobQualitySummaryUnavailable:
             return coll
 
         with patch("backend.api.merge.get_jobs_collection", side_effect=fake_get_coll):
-            result = await evaluate_job_quality("test-eval-hindi", llm=False)
+            result = await evaluate_job_quality(
+                "test-eval-hindi",
+                llm=False,
+                current_user={"sub": "test-admin", "role": "admin"},
+            )
 
         assert result.get("unavailable") is True, f"Expected unavailable=True, got: {result}"
         assert result.get("summary_score") is None
@@ -278,7 +282,11 @@ class TestEvaluateJobQualitySummaryUnavailable:
             patch("backend.api.merge.get_jobs_collection", side_effect=fake_get_coll),
             patch("backend.api.merge._build_quality_report", new_callable=AsyncMock) as mock_build,
         ):
-            await evaluate_job_quality("test-eval-hindi-2", llm=False)
+            await evaluate_job_quality(
+                "test-eval-hindi-2",
+                llm=False,
+                current_user={"sub": "test-admin", "role": "admin"},
+            )
 
         mock_build.assert_not_called()
 

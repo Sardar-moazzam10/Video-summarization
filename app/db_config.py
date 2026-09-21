@@ -1,13 +1,15 @@
 
 
 from pymongo.mongo_client import MongoClient
+import os
 
-# ✅ Replace with your actual MongoDB Atlas connection string
-MONGO_URI = "mongodb+srv://admin:adminhamza@podcastlycluster.hyrqok6.mongodb.net/?retryWrites=true&w=majority&appName=podcastlycluster"
+# Never commit database credentials. This legacy module now follows the same
+# environment contract as the unified FastAPI backend.
+MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 
 # ✅ Connect to MongoDB
 client = MongoClient(MONGO_URI)
 
 # ✅ Define database and collection
-db = client["podcastly_db"]
+db = client[os.getenv("MONGODB_DATABASE", "video-summarizer")]
 user_collection = db["users"]

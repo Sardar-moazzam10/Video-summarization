@@ -32,12 +32,16 @@ const ResetPasswordPage = () => {
     setLoading(true);
 
     try {
-      const email = localStorage.getItem('resetEmail');
-      const res = await resetPassword(email, newPassword);
+      const resetToken = sessionStorage.getItem('passwordResetToken');
+      if (!resetToken) {
+        throw new Error('Password reset session has expired. Request a new code.');
+      }
+      const res = await resetPassword(resetToken, newPassword);
       setMessage(res.message || 'Password reset successfully!');
       if (res.success) {
         setIsError(false);
         localStorage.removeItem('resetEmail');
+        sessionStorage.removeItem('passwordResetToken');
         setTimeout(() => navigate('/login'), 2000);
       } else {
         setIsError(true);

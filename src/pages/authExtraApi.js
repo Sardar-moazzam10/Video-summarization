@@ -21,9 +21,12 @@ export const verifyCode = async (email, code) => {
   }
 };
 
-export const resetPassword = async (email, password) => {
+export const resetPassword = async (resetToken, password) => {
   try {
-    const response = await axios.post(`${API_BASE_URL}/api/v1/auth/reset-password`, { email, password });
+    const response = await axios.post(`${API_BASE_URL}/api/v1/auth/reset-password`, {
+      reset_token: resetToken,
+      password,
+    });
     return response.data;
   } catch (error) {
     console.error('Error resetting password:', error);

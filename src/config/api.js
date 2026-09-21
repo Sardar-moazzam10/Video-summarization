@@ -5,6 +5,32 @@
 // Backend API base URL
 export const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
+export const authHeaders = (extra = {}) => {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') : null;
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
+export const authenticatedFetch = async (url, options = {}) => {
+  const response = await fetch(url, {
+    ...options,
+    headers: authHeaders(options.headers || {}),
+  });
+
+  if (response.status === 401 && typeof window !== 'undefined') {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('refresh_token');
+    if (!window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login?expired=1';
+    }
+  }
+
+  return response;
+};
+
 // API Endpoints
 export const API = {
   // Auth

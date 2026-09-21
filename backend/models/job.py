@@ -109,6 +109,13 @@ class RichOutput(BaseModel):
     style_applied: str = "educational"
 
 
+class ConceptOccurrenceInfo(BaseModel):
+    """One source-qualified place where a concept occurs."""
+    video_id: str
+    start: float
+    end: float
+
+
 class ConceptInfo(BaseModel):
     """An important concept extracted from the source video."""
     concept: str
@@ -116,6 +123,7 @@ class ConceptInfo(BaseModel):
     reason: str = ""
     evidence: List[str] = []
     timestamps: List[List[float]] = []
+    occurrences: List[ConceptOccurrenceInfo] = []
     support: int = 1
     aliases: List[str] = []
     source: str = "llm"
@@ -132,6 +140,8 @@ class MergeJobCreate(BaseModel):
     # the product itself (original audio), not a companion to a narration.
     highlight_duration_seconds: int = Field(default=120, ge=30, le=1800)
     style: str = "educational"
+    query: Optional[str] = None
+    selected_keywords: List[str] = Field(default_factory=list, max_length=30)
 
 
 class MergeJob(BaseModel):
@@ -152,6 +162,8 @@ class MergeJob(BaseModel):
     generate_video: bool = False
     highlight_duration_seconds: int = 120
     style: str = "educational"
+    query: Optional[str] = None
+    selected_keywords: List[str] = Field(default_factory=list, max_length=30)
 
     # Processing results
     highlight_segments: List[Dict] = []
@@ -208,6 +220,8 @@ class MergeJobResponse(BaseModel):
     estimated_seconds: Optional[int] = None
     error: Optional[str] = None
     warning: Optional[str] = None
+    query: Optional[str] = None
+    selected_keywords: List[str] = Field(default_factory=list)
 
 
 class MergeJobResult(BaseModel):
@@ -221,6 +235,8 @@ class MergeJobResult(BaseModel):
     created_at: datetime
     completed_at: datetime
     processing_time_seconds: float
+    query: Optional[str] = None
+    selected_keywords: List[str] = Field(default_factory=list)
 
 
 # =====================================================

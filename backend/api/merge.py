@@ -12,13 +12,14 @@ Endpoints:
 - GET /api/v1/merge/profiles - Get available duration profiles
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Dict, List, Optional
 import asyncio
 import json
 from datetime import datetime
 import os
+from time import perf_counter
 
 from ..models.job import (
     MergeJobCreate,
@@ -37,6 +38,12 @@ from ..services.transcript_service import extract_video_id
 from ..services.fusion_engine import get_fusion_engine
 from ..core.database import get_database
 from ..core.config import get_settings
+from ..core.security import (
+    create_media_token,
+    get_current_user,
+    get_current_user_optional,
+    verify_media_token,
+)
 
 router = APIRouter(prefix="/api/v1/merge", tags=["merge"])
 settings = get_settings()
@@ -128,12 +135,47 @@ async def get_jobs_collection():
     return db["jobs"]
 
 
+def _assert_job_owner(job_data: dict, principal: dict) -> None:
+    """Deny cross-account job access without revealing that the job exists."""
+    if principal.get("role") == "admin":
+        return
+    if not job_data.get("user_id") or job_data.get("user_id") != principal.get("sub"):
+        raise HTTPException(404, "Job not found")
+
+
+async def _get_owned_job(job_id: str, principal: dict) -> dict:
+    jobs_collection = await get_jobs_collection()
+    job_data = await jobs_collection.find_one({"job_id": job_id})
+    if not job_data:
+        raise HTTPException(404, "Job not found")
+    _assert_job_owner(job_data, principal)
+    return job_data
+
+
+async def _get_media_job(
+    job_id: str,
+    media_kind: str,
+    token: Optional[str],
+    principal: Optional[dict],
+) -> dict:
+    jobs_collection = await get_jobs_collection()
+    job_data = await jobs_collection.find_one({"job_id": job_id})
+    if not job_data:
+        raise HTTPException(404, "Job not found")
+    if token and verify_media_token(token, job_id, media_kind):
+        return job_data
+    if principal:
+        _assert_job_owner(job_data, principal)
+        return job_data
+    raise HTTPException(401, "Authentication required")
+
+
 # =====================================================
 # ENDPOINTS
 # =====================================================
 
 @router.get("/profiles")
-async def get_duration_profiles():
+async def get_duration_profiles(_user: dict = Depends(get_current_user)):
     """
     Get available duration profiles for frontend display.
 
@@ -158,28 +200,32 @@ def eligible_durations(source_seconds: float) -> List[int]:
     Shared by the validation path and the endpoint the picker reads, so the
     disabled options in the UI and the ones the API rejects are computed by the
     same function and cannot drift apart.
+    Core Invariant: requested_summary_duration < total_unique_selected_source_duration
+    A summary must be strictly shorter than the source material it is made from.
     """
-    return [m for m in sorted(DURATION_PROFILES) if m * 60 <= source_seconds]
+    return [m for m in sorted(DURATION_PROFILES) if m * 60 < source_seconds]
 
 
 def _duration_error(source_seconds: float, requested_minutes: int) -> Dict:
-    """The SUMMARY_DURATION_EXCEEDS_VIDEO payload, in one place."""
+    """Structured SUMMARY_DURATION_EXCEEDS_SOURCE payload."""
     allowed = eligible_durations(source_seconds)
     pretty = format_duration(source_seconds)
     if allowed:
         message = (
-            f"This video is only {pretty} long. "
+            f"Source is only {pretty} long. "
+            f"{requested_minutes}-minute summary cannot be created from {pretty} of source content. "
             f"Please choose {max(allowed)} minutes or less."
         )
     else:
-        shortest = min(DURATION_PROFILES)
         message = (
-            f"This video is only {pretty} long — shorter than the smallest "
-            f"summary length ({shortest} minutes), so it cannot be summarised."
+            f"Source is only {pretty} long. A 5-minute summary requires more than 5 minutes of source content."
         )
     return {
-        "error_code": "SUMMARY_DURATION_EXCEEDS_VIDEO",
+        "code": "SUMMARY_DURATION_EXCEEDS_SOURCE",
+        "error_code": "SUMMARY_DURATION_EXCEEDS_SOURCE",
         "message": message,
+        "requested_seconds": int(requested_minutes * 60),
+        "source_seconds": round(float(source_seconds), 1),
         "source_duration_seconds": round(float(source_seconds), 1),
         "requested_duration_minutes": int(requested_minutes),
         "max_allowed_minutes": max(allowed) if allowed else None,
@@ -188,7 +234,10 @@ def _duration_error(source_seconds: float, requested_minutes: int) -> Dict:
 
 
 @router.get("/video-durations")
-async def get_video_durations(video_ids: str):
+async def get_video_durations(
+    video_ids: str,
+    _user: dict = Depends(get_current_user),
+):
     """
     Real media duration for each requested video, and which summary lengths
     that makes possible.
@@ -200,27 +249,52 @@ async def get_video_durations(video_ids: str):
 
     Frontend use is a convenience only — create_merge_job re-checks this
     server-side, so a client that skips or fakes the call gains nothing.
+    Fails closed: if any video's duration cannot be verified, allowed_durations is empty
+    and status is 'verification_failed'.
     """
-    ids = [v.strip() for v in (video_ids or "").split(",") if v.strip()]
-    if not ids:
+    raw_ids = [v.strip() for v in (video_ids or "").split(",") if v.strip()]
+    if not raw_ids:
         raise HTTPException(400, "At least one video_id is required")
-    if len(ids) > 10:
+    unique_ids = list(dict.fromkeys(raw_ids))
+    if len(unique_ids) > 10:
         raise HTTPException(400, "Maximum 10 videos allowed")
 
-    resolved = await asyncio.to_thread(get_durations, ids)
-    known = [d for d in resolved.values() if d]
     # Combined, because _allocate_budgets splits the reel across every source
     # in proportion to its length — the material available is the pool, not
     # any single video. Matching that here keeps validation and production
     # behaviour consistent for multi-video jobs.
-    combined = float(sum(known)) if known else 0.0
+    resolved = await asyncio.to_thread(get_durations, unique_ids)
+    known = {vid: d for vid, d in resolved.items() if d is not None}
+    unresolved = [vid for vid, d in resolved.items() if d is None]
+
+    # Fail closed on partial resolution
+    if len(known) != len(unique_ids):
+        return {
+            "status": "verification_failed",
+            "durations": {vid: (round(d, 1) if d else None) for vid, d in resolved.items()},
+            "unresolved": unresolved,
+            "combined_duration_seconds": None,
+            "combined_duration_label": None,
+            "allowed_durations": [],
+            "all_durations": sorted(DURATION_PROFILES),
+            "message": "Source duration could not be verified for all selected videos.",
+        }
+
+    combined = float(sum(known.values()))
+    allowed = eligible_durations(combined)
+    status = "valid" if allowed else "too_short"
 
     return {
         "durations": {vid: (round(d, 1) if d else None) for vid, d in resolved.items()},
         "unresolved": [vid for vid, d in resolved.items() if not d],
+        "status": status,
+        "durations": {vid: round(d, 1) for vid, d in known.items()},
+        "unresolved": [],
         "combined_duration_seconds": round(combined, 1),
         "combined_duration_label": format_duration(combined) if combined else None,
         "allowed_durations": eligible_durations(combined) if known else sorted(DURATION_PROFILES),
+        "combined_duration_label": format_duration(combined),
+        "allowed_durations": allowed,
         "all_durations": sorted(DURATION_PROFILES),
     }
 
@@ -229,6 +303,7 @@ async def get_video_durations(video_ids: str):
 async def create_merge_job(
     request: MergeJobCreate,
     background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Create a new merge job.
@@ -241,34 +316,34 @@ async def create_merge_job(
         raise HTTPException(400, "At least 1 video required")
     if len(request.video_ids) > 10:
         raise HTTPException(400, "Maximum 10 videos allowed")
+    # Deduplicate video IDs.
+    clean_ids = list(dict.fromkeys(
+        video_id for value in request.video_ids
+        if (video_id := extract_video_id(value))
+    ))
+    if len(clean_ids) < 1:
+        raise HTTPException(400, "At least 1 valid video required")
+    if len(clean_ids) > 10:
+        raise HTTPException(400, "Maximum 10 videos allowed")
 
-    # Duration feasibility — checked BEFORE the job exists, because everything
-    # after this point is expensive (download, transcribe, embed, summarise)
-    # and an impossible request cannot be rescued by any of it. The user is
-    # told no rather than being silently given a shorter summary than the one
-    # they asked for.
-    #
-    # Enforced here rather than only in the picker: this is the boundary a
-    # client cannot bypass.
-    clean_ids = [extract_video_id(v) for v in request.video_ids]
+    # Duration feasibility — checked BEFORE the job exists.
+    # Fail closed: ALL unique videos must have their duration resolved.
     resolved = await asyncio.to_thread(get_durations, clean_ids)
-    known = [d for d in resolved.values() if d]
+    known = {vid: d for vid, d in resolved.items() if d is not None}
+    unresolved = [vid for vid, d in resolved.items() if d is None]
 
-    if not known:
-        # Unknown length is not permission to proceed. Running the pipeline
-        # would spend minutes to maybe discover the same problem later.
+    if len(known) != len(clean_ids):
         raise HTTPException(422, detail={
+            "code": "SOURCE_DURATION_UNAVAILABLE",
             "error_code": "SOURCE_DURATION_UNAVAILABLE",
-            "message": (
-                "Could not determine how long the selected video(s) are, so the "
-                "requested summary length cannot be verified. Please try again."
-            ),
+            "message": "Source duration could not be verified for all selected videos.",
             "requested_duration_minutes": request.target_duration_minutes,
-            "unresolved_video_ids": [v for v, d in resolved.items() if not d],
+            "unresolved_video_ids": unresolved,
         })
 
-    combined = float(sum(known))
-    if request.target_duration_minutes * 60 > combined:
+    combined = float(sum(known.values()))
+    # Strict rule: requested_duration_seconds < total_source_seconds
+    if request.target_duration_minutes * 60 >= combined:
         raise HTTPException(422, detail=_duration_error(
             combined, request.target_duration_minutes
         ))
@@ -285,6 +360,7 @@ async def create_merge_job(
 
     # Create job
     job = MergeJob(
+        user_id=current_user["sub"],
         video_ids=request.video_ids,
         target_duration_minutes=request.target_duration_minutes,
         duration_style=get_duration_style(request.target_duration_minutes),
@@ -292,6 +368,8 @@ async def create_merge_job(
         generate_video=request.generate_video,
         highlight_duration_seconds=reel_seconds,
         style=request.style,
+        query=getattr(request, "query", None),
+        selected_keywords=getattr(request, "selected_keywords", []),
     )
 
     # Store in memory and database
@@ -312,17 +390,24 @@ async def create_merge_job(
         progress_percent=job.progress_percent,
         stage_message=job.stage_message,
         estimated_seconds=estimated_seconds,
+        query=job.query,
+        selected_keywords=job.selected_keywords,
     )
 
 
 @router.get("/{job_id}", response_model=MergeJobResponse)
-async def get_job_status(job_id: str):
+async def get_job_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Get current status of a merge job.
 
     Poll this endpoint to track progress.
     """
-    # Check memory first
+    job_data = await _get_owned_job(job_id, current_user)
+
+    # Check memory first after database-backed ownership validation.
     if job_id in _active_jobs:
         job = _active_jobs[job_id]
         return MergeJobResponse(
@@ -332,14 +417,9 @@ async def get_job_status(job_id: str):
             stage_message=job.stage_message,
             error=job.error,
             warning=job.warning,
+            query=job.query,
+            selected_keywords=job.selected_keywords,
         )
-
-    # Check database
-    jobs_collection = await get_jobs_collection()
-    job_data = await jobs_collection.find_one({"job_id": job_id})
-
-    if not job_data:
-        raise HTTPException(404, "Job not found")
 
     return MergeJobResponse(
         job_id=job_data["job_id"],
@@ -348,11 +428,16 @@ async def get_job_status(job_id: str):
         stage_message=job_data["stage_message"],
         error=job_data.get("error"),
         warning=job_data.get("warning"),
+        query=job_data.get("query"),
+        selected_keywords=job_data.get("selected_keywords", []),
     )
 
 
 @router.get("/{job_id}/result")
-async def get_job_result(job_id: str):
+async def get_job_result(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Get the result of a merge job.
 
@@ -363,11 +448,7 @@ async def get_job_result(job_id: str):
     are withheld (returned as None/empty) rather than exposed as an empty
     finished summary.
     """
-    jobs_collection = await get_jobs_collection()
-    job_data = await jobs_collection.find_one({"job_id": job_id})
-
-    if not job_data:
-        raise HTTPException(404, "Job not found")
+    job_data = await _get_owned_job(job_id, current_user)
 
     video_ready_statuses = {
         JobStatus.VIDEO_READY.value,
@@ -395,6 +476,11 @@ async def get_job_result(job_id: str):
         (seg.get("end_time", 0) - seg.get("start_time", 0)) for seg in highlight_segments
     )
 
+    media_subject = current_user["sub"]
+    audio_token = create_media_token(job_id, "audio", media_subject)
+    video_token = create_media_token(job_id, "video", media_subject)
+    subtitle_token = create_media_token(job_id, "subtitles", media_subject)
+
     return {
         "job_id": job_data["job_id"],
         "status": job_data["status"],
@@ -406,13 +492,15 @@ async def get_job_result(job_id: str):
         # never mistaken for a finished, empty one.
         "summary_text": None if summary_pending else job_data.get("summary_text", ""),
         "rich_output": None if summary_pending else job_data.get("rich_output"),
-        "audio_url": f"/api/v1/merge/{job_id}/audio" if job_data.get("audio_path") else None,
-        "video_url": f"/api/v1/merge/{job_id}/video" if job_data.get("video_path") else None,
-        "subtitle_url": f"/api/v1/merge/{job_id}/subtitles" if job_data.get("subtitle_path") else None,
+        "audio_url": f"/api/v1/merge/{job_id}/audio?token={audio_token}" if job_data.get("audio_path") else None,
+        "video_url": f"/api/v1/merge/{job_id}/video?token={video_token}" if job_data.get("video_path") else None,
+        "subtitle_url": f"/api/v1/merge/{job_id}/subtitles?token={subtitle_token}" if job_data.get("subtitle_path") else None,
         "video_ids": job_data.get("video_ids", []),
         # Echoed back so a follow-up job (e.g. the highlight re-compile on the
         # player page) can reuse this job's settings instead of hardcoding them.
         "target_duration_minutes": job_data.get("target_duration_minutes"),
+        "query": job_data.get("query"),
+        "selected_keywords": job_data.get("selected_keywords", []),
         # Actual selected/rendered reel length — available as soon as the
         # video is, independent of the target duration requested.
         "video_duration_seconds": round(video_duration_seconds, 1),
@@ -440,7 +528,11 @@ async def get_job_result(job_id: str):
 
 
 @router.get("/{job_id}/evaluate")
-async def evaluate_job_quality(job_id: str, llm: bool = False):
+async def evaluate_job_quality(
+    job_id: str,
+    llm: bool = False,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Quality scorecard for a completed job — two separate scores:
 
@@ -462,10 +554,7 @@ async def evaluate_job_quality(job_id: str, llm: bool = False):
                              Use for the on-demand "detailed analysis" button.
     """
     jobs_collection = await get_jobs_collection()
-    job_data = await jobs_collection.find_one({"job_id": job_id})
-
-    if not job_data:
-        raise HTTPException(404, "Job not found")
+    job_data = await _get_owned_job(job_id, current_user)
 
     if job_data["status"] not in {JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value}:
         raise HTTPException(400, f"Job not completed. Current status: {job_data['status']}")
@@ -578,15 +667,15 @@ async def _build_quality_report(job_data: dict, use_llm: bool) -> dict:
 
 
 @router.get("/{job_id}/audio")
-async def get_job_audio(job_id: str):
+async def get_job_audio(
+    job_id: str,
+    token: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
     """
     Get the generated audio file for a completed job.
     """
-    jobs_collection = await get_jobs_collection()
-    job_data = await jobs_collection.find_one({"job_id": job_id})
-
-    if not job_data:
-        raise HTTPException(404, "Job not found")
+    job_data = await _get_media_job(job_id, "audio", token, current_user)
 
     audio_path = job_data.get("audio_path")
     if not audio_path or not os.path.exists(audio_path):
@@ -600,15 +689,15 @@ async def get_job_audio(job_id: str):
 
 
 @router.get("/{job_id}/video")
-async def get_job_video(job_id: str):
+async def get_job_video(
+    job_id: str,
+    token: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
     """
     Download the generated highlight reel video.
     """
-    jobs_collection = await get_jobs_collection()
-    job_data = await jobs_collection.find_one({"job_id": job_id})
-
-    if not job_data:
-        raise HTTPException(404, "Job not found")
+    job_data = await _get_media_job(job_id, "video", token, current_user)
 
     video_path = job_data.get("video_path")
     if not video_path or not os.path.exists(video_path):
@@ -622,13 +711,13 @@ async def get_job_video(job_id: str):
 
 
 @router.get("/{job_id}/subtitles")
-async def get_job_subtitles(job_id: str):
+async def get_job_subtitles(
+    job_id: str,
+    token: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
     """Download SRT subtitle file for a completed job."""
-    jobs_collection = await get_jobs_collection()
-    job_data = await jobs_collection.find_one({"job_id": job_id})
-
-    if not job_data:
-        raise HTTPException(404, "Job not found")
+    job_data = await _get_media_job(job_id, "subtitles", token, current_user)
 
     subtitle_path = job_data.get("subtitle_path")
     if not subtitle_path or not os.path.exists(subtitle_path):
@@ -642,18 +731,18 @@ async def get_job_subtitles(job_id: str):
 
 
 @router.get("/{job_id}/export")
-async def export_job(job_id: str, format: str = "text"):
+async def export_job(
+    job_id: str,
+    format: str = "text",
+    current_user: dict = Depends(get_current_user),
+):
     """
     Export summary as text or PDF.
 
     Query params:
         format: "text" or "pdf"
     """
-    jobs_collection = await get_jobs_collection()
-    job_data = await jobs_collection.find_one({"job_id": job_id})
-
-    if not job_data:
-        raise HTTPException(404, "Job not found")
+    job_data = await _get_owned_job(job_id, current_user)
 
     if job_data["status"] != JobStatus.COMPLETED.value:
         raise HTTPException(400, "Job not completed")
@@ -680,12 +769,17 @@ async def export_job(job_id: str, format: str = "text"):
 
 
 @router.get("/{job_id}/stream")
-async def stream_job_progress(job_id: str):
+async def stream_job_progress(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     """
     SSE endpoint for real-time job progress.
     The browser connects once and receives updates every ~1 second.
     Closes automatically when the job completes or errors.
     """
+    await _get_owned_job(job_id, current_user)
+
     async def event_generator():
         while True:
             job = _active_jobs.get(job_id)
@@ -980,6 +1074,13 @@ def _allocate_budgets(durations: Dict[str, float], total_budget: float) -> Dict[
     return {vid: total_budget * (dur / total_source) for vid, dur in durations.items()}
 
 
+def _keyword_evidence_matches(keywords, scores, text, threshold=0.65):
+    """Return only keywords with strong semantic or explicit lexical evidence."""
+    folded_text = (text or "").casefold()
+    return [keyword for keyword, score in zip(keywords, scores)
+            if float(score) >= threshold or keyword.casefold() in folded_text]
+
+
 async def run_semantic_selection(
     job,
     raw_segments: Dict[str, list],
@@ -1012,7 +1113,8 @@ async def run_semantic_selection(
     """
     from ..services.semantic_segmenter import build_semantic_segments
     from ..services.concept_extractor import extract_concepts
-    from ..services.coverage_selector import SelectionWeights, select_segments
+    from ..services.coverage_selector import SelectionWeights, select_segments, DEFAULT_BINS
+    from ..services.knowledge_plan import build_knowledge_plan
     from ..services.summary_metrics import compute_selection_metrics, format_metrics_report
 
     async def say(message: str):
@@ -1024,6 +1126,7 @@ async def run_semantic_selection(
                 pass
 
     budget = float(job.highlight_duration_seconds)
+    timings = {name: 0.0 for name in ("segmentation", "concept_extraction", "embedding", "selection", "ordering")}
     weights = SelectionWeights.from_settings(settings)
 
     durations = {vid: _source_duration(segs) for vid, segs in raw_segments.items() if segs}
@@ -1036,15 +1139,25 @@ async def run_semantic_selection(
     # can distinguish "on-topic" segments from digressions.  It is NOT the
     # final summary (that would require a circular dependency).
     summary_embedding = None
+    query_embedding = None
+    embedder = None
+    keywords = list(dict.fromkeys(k.strip() for k in getattr(job, "selected_keywords", []) if k.strip()))
+    if not keywords and getattr(job, "query", None):
+        keywords = [str(job.query).strip()]
+    embedding_started = perf_counter()
     try:
         from ..services.fusion_engine import get_sentence_transformer
-        embedder = get_sentence_transformer()
+        from ..services.cache_identity import MeasuredEmbedder
+        embedder = MeasuredEmbedder(get_sentence_transformer())
         if semantic_bias_text.strip():
             summary_embedding = embedder.encode(
                 [semantic_bias_text[:4000]], show_progress_bar=False
             )[0]
+        if keywords:
+            query_embedding = embedder.encode(keywords, show_progress_bar=False)
     except Exception as exc:
         print(f"[Semantic] Embedder unavailable ({exc}) — continuing without a relevance reference")
+    timings["embedding"] += perf_counter() - embedding_started
 
     all_selected = []
     baselines = []
@@ -1060,13 +1173,19 @@ async def run_semantic_selection(
 
         # --- 1. semantic segmentation ---
         await say(f"Building semantic segments for {vid}...")
+        stage_started = perf_counter()
+        embed_before = embedder.elapsed if embedder is not None else 0.0
         segments = await asyncio.to_thread(
             build_semantic_segments,
             segs,
             vid,
             settings.SEGMENT_MIN_SECONDS,
             settings.SEGMENT_MAX_SECONDS,
+            embedder,
         )
+        embedded = (embedder.elapsed - embed_before) if embedder is not None else 0.0
+        timings["segmentation"] += max(0.0, perf_counter() - stage_started - embedded)
+        timings["embedding"] += embedded
         if not segments:
             print(f"[Semantic] {vid}: no semantic segments (unusable timestamps) — skipping")
             continue
@@ -1077,22 +1196,47 @@ async def run_semantic_selection(
     # --- 2. concept extraction (Global) ---
     await say(f"Extracting key concepts globally across {len(raw_segments)} videos...")
     total_len = sum(durations.values())
+    stage_started = perf_counter()
+    embed_before = embedder.elapsed if embedder is not None else 0.0
     try:
         concepts = await extract_concepts(
             global_segments,
             total_duration=total_len,
             top_k=settings.CONCEPT_TOP_K,
-            use_llm=settings.ENABLE_CONCEPT_LLM,
+            use_llm=False,
             per_chunk_timeout=settings.CONCEPT_CHUNK_TIMEOUT_SECONDS,
             total_timeout=settings.CONCEPT_TOTAL_TIMEOUT_SECONDS,
+            embedder=embedder,
         )
     except Exception as exc:
         print(f"[Semantic] Concept extraction failed globally: {exc}")
         concepts = []
+    embedded = (embedder.elapsed - embed_before) if embedder is not None else 0.0
+    timings["concept_extraction"] = max(0.0, perf_counter() - stage_started - embedded)
+    timings["embedding"] += embedded
 
     if not concepts:
         print(f"[Semantic] WARNING: 0 concepts extracted globally — "
               f"concept-driven selection is DISABLED; falling back to relevance + temporal coverage only")
+
+    # One shared intent/knowledge-plan layer serves both normal Search (`query`)
+    # and Deep Search (`query` + `selected_keywords`). TF-IDF remains the
+    # candidate generator; this stage filters/canonicalises and adds unit labels.
+    intent_text = " ".join(keywords).strip()
+    knowledge_plan = build_knowledge_plan(
+        global_segments,
+        concepts,
+        query=intent_text,
+        query_embedding=(
+            query_embedding.mean(axis=0) if query_embedding is not None else None
+        ),
+        budget_seconds=budget,
+    )
+    concepts = knowledge_plan.concepts
+    print(
+        f"[KnowledgePlan] {len(concepts)} canonical concepts, "
+        f"{len(knowledge_plan.units)} observed knowledge units"
+    )
 
     # --- 3. budgeted selection (Global) ---
     await say(f"Selecting the best {budget:.0f}s from the global candidate pool...")
@@ -1103,9 +1247,26 @@ async def run_semantic_selection(
         concepts,
         weights,
         summary_embedding,
-        None,
+        embedder,
         durations,  # Dict of video durations
+        DEFAULT_BINS,
+        query_embedding,
+        timings,
+        knowledge_plan.units,
     )
+    if query_embedding is not None:
+        import numpy as np
+        q = np.atleast_2d(query_embedding)
+        q = q / np.maximum(np.linalg.norm(q, axis=1, keepdims=True), 1e-9)
+        for seg in result.segments:
+            vec = getattr(seg, "embedding", None)
+            scores = q @ (vec / max(np.linalg.norm(vec), 1e-9)) if vec is not None else np.zeros(len(keywords))
+            # BGE cosine values are not calibrated probabilities.  A 0.50
+            # cutoff falsely labelled unrelated clips as evidence in the real
+            # no-evidence E2E flow (for example, ML clips "covered" quantum
+            # chromodynamics).  Keep query relevance for ranking unchanged,
+            # but make the user-facing coverage claim fail closed.
+            seg.keyword_matches = _keyword_evidence_matches(keywords, scores, seg.text)
 
     if result.segments:
         baselines.append(result.baseline_similarity)
@@ -1125,11 +1286,78 @@ async def run_semantic_selection(
                 "seconds": round(sum(s.duration for s in vid_selected), 1),
                 "budget": 0.0,
                 "concepts_found": len(concepts),
-                "concepts_covered": result.concepts_covered,
+                "concepts_covered": list(dict.fromkeys(c for s in vid_selected for c in s.concept_scores)),
                 "concept_signal": result.concept_signal,
                 "concepts_omitted_for_budget": result.concepts_omitted_for_budget,
             }
 
+    if not all_selected:
+        return None
+
+    from ..services.concept_block_organizer import organize_concept_blocks
+    all_selected, concept_block_stats = organize_concept_blocks(
+        all_selected, global_segments, all_concepts
+    )
+
+    # The semantic segmenter consumes overlapping display-caption timestamps.
+    # Selection remains unchanged; this final physical pass prevents those
+    # source intervals from being rendered twice.
+    from ..services.manifest_boundary_repair import (
+        aggregate_normalization_metrics,
+        rebuild_final_texts,
+        reconcile_physical_duration,
+        repair_explanation_boundaries,
+        repair_physical_boundaries,
+    )
+    selector_duration = float(result.total_duration)
+    semantic_cores_selected = len(all_selected)
+    normalization_metrics = aggregate_normalization_metrics(raw_segments)
+    all_selected, boundary_expansions = repair_explanation_boundaries(
+        all_selected, raw_segments, global_segments
+    )
+    expanded_duration = sum(s.duration for s in all_selected)
+    all_selected, boundary_stats = repair_physical_boundaries(all_selected)
+    merged_duration = sum(s.duration for s in all_selected)
+    all_selected = rebuild_final_texts(all_selected, raw_segments, global_segments)
+    incomplete_rejections = sum(
+        float(getattr(segment, "completeness", 0.0)) < 1.0
+        for segment in all_selected
+    )
+    initial_non_content_rejections = sum(
+        bool(getattr(segment, "non_content_guard_hits", ())) for segment in all_selected
+    )
+    all_selected = [segment for segment in all_selected
+                    if float(getattr(segment, "completeness", 0.0)) >= 1.0]
+    all_selected, final_boundary_stats = repair_physical_boundaries(all_selected)
+    from ..services.coverage_selector import OVERSHOOT_TOLERANCE
+    all_selected, reconciliation_stats = reconcile_physical_duration(
+        all_selected, global_segments, raw_segments, global_segments, budget,
+        min_fill=weights.min_budget_fill,
+        overshoot_tolerance=OVERSHOOT_TOLERANCE,
+    )
+    all_selected, final_boundary_stats = repair_physical_boundaries(all_selected)
+    all_selected = rebuild_final_texts(all_selected, raw_segments, global_segments)
+    keyword_evidence_preserved = 0
+    if query_embedding is not None:
+        import numpy as np
+        q = np.atleast_2d(query_embedding)
+        q = q / np.maximum(np.linalg.norm(q, axis=1, keepdims=True), 1e-9)
+        for segment in all_selected:
+            before = set(getattr(segment, "keyword_matches", ()) or ())
+            vector = getattr(segment, "embedding", None)
+            scores = (q @ (vector / max(np.linalg.norm(vector), 1e-9))
+                      if vector is not None else np.zeros(len(keywords)))
+            segment.keyword_matches = list(dict.fromkeys(
+                list(before) + _keyword_evidence_matches(keywords, scores, segment.text)
+            ))
+            keyword_evidence_preserved += len(before & set(segment.keyword_matches))
+    post_reconciliation_rejections = sum(
+        float(getattr(segment, "completeness", 0.0)) < 1.0
+        for segment in all_selected
+    )
+    incomplete_rejections += post_reconciliation_rejections
+    all_selected = [segment for segment in all_selected
+                    if float(getattr(segment, "completeness", 0.0)) >= 1.0]
     if not all_selected:
         return None
 
@@ -1178,23 +1406,58 @@ async def run_semantic_selection(
     )
     metrics["per_video"] = per_video
     metrics["weights"] = weights.__dict__.copy()
+    metrics["stage_timings_seconds"] = timings
+    metrics["candidate_count"] = len(global_segments)
+    metrics["duplicates_rejected"] = getattr(result, "duplicates_rejected", 0)
+    metrics["selection_mode"] = "keyword" if keywords else "automatic"
+    metrics["selected_keywords"] = keywords
+    metrics["incomplete_thought_clips"] = 0
+    metrics["semantic_cores_selected"] = semantic_cores_selected
+    metrics["repaired_clips_accepted"] = len(all_selected)
+    metrics["incomplete_explanation_rejections"] = incomplete_rejections
+    metrics["candidates_rejected_without_closure"] = (
+        incomplete_rejections
+        + reconciliation_stats["closure_rejections_during_reconciliation"]
+    )
+    metrics["cta_outro_rejections"] = (
+        initial_non_content_rejections
+        + reconciliation_stats["non_content_candidates_rejected"]
+    )
+    metrics["mid_thought_starts"] = sum(
+        not bool((getattr(segment, "start_boundary_evidence", {}) or {}).get("is_complete"))
+        for segment in all_selected
+    )
+    metrics["mid_thought_ends"] = sum(
+        not bool((getattr(segment, "end_boundary_evidence", {}) or {}).get("is_complete"))
+        for segment in all_selected
+    )
+    metrics.update(normalization_metrics)
+    metrics.update(boundary_stats.to_dict())
+    metrics["explanation_boundary_expansions"] = boundary_expansions
+    metrics["expansion_seconds_added"] = round(max(0.0, expanded_duration - selector_duration), 3)
+    metrics["merge_seconds_removed"] = round(max(0.0, expanded_duration - merged_duration), 3)
+    metrics.update(reconciliation_stats)
+    metrics["keyword_evidence_preservation_count"] = keyword_evidence_preserved
+    metrics.update(concept_block_stats.to_dict())
+    metrics["requested_duration"] = round(budget, 1)
+    metrics["selector_duration"] = round(selector_duration, 3)
+    metrics["final_manifest_duration"] = round(sum(s.duration for s in all_selected), 3)
+    metrics["final_budget_fill_ratio"] = round(
+        metrics["final_manifest_duration"] / max(float(budget), 1e-6), 4
+    )
+    metrics["rendered_duration"] = None
+    metrics["manifest_render_delta_seconds"] = None
+    metrics["selected_duration"] = metrics["final_manifest_duration"]
+    metrics["useful_fill_ratio"] = round(result.useful_fill_ratio, 4)
+    metrics["early_stop_reason"] = result.early_stop_reason
+    metrics["knowledge_units_covered"] = result.knowledge_units_covered
+    metrics["knowledge_plan"] = knowledge_plan.to_dict()
     print(format_metrics_report(metrics, "Semantic selection"))
 
     # --- 5. hand back segments in the shape the reel builder expects ---
-    highlights = []
-    for seg in sorted(all_selected, key=lambda s: (s.video_id, s.start_time)):
-        highlights.append({
-            "video_id": seg.video_id,
-            # No padding is applied. The segment already begins at a sentence
-            # start and ends at a sentence end, so padding would only pull in
-            # the tail of the previous thought — the very artefact this change
-            # exists to remove.
-            "start_time": round(max(0.0, seg.start_time), 3),
-            "end_time": round(seg.end_time, 3),
-            "importance_score": round(float(seg.boundary_confidence), 4),
-            "reason": "Complete semantic segment selected by coverage-aware optimizer",
-            "text": seg.text,
-        })
+    from ..services.clip_manifest import freeze_manifest
+    manifest = freeze_manifest(all_selected)
+    highlights = [clip.to_dict() for clip in manifest]
 
     return {
         "highlights": highlights,
@@ -1225,6 +1488,16 @@ async def process_merge_job(job_id: str):
         job = _active_jobs.get(job_id)
         if not job:
             return
+        pipeline_timings = {name: 0.0 for name in (
+            "download_cache", "transcription", "segmentation", "concept_extraction",
+            "embedding", "selection", "ordering", "rendering")}
+
+        async def timed_stage(name, operation):
+            started = perf_counter()
+            try:
+                return await operation
+            finally:
+                pipeline_timings[name] += perf_counter() - started
 
         # Update status helper
         async def update_status(
@@ -1268,9 +1541,9 @@ async def process_merge_job(job_id: str):
                     JobStatus.TRANSCRIBING, min(job.progress_percent + 5, 28), message
                 )
 
-        transcripts, raw_segments = await fetch_transcripts_with_segments(
+        transcripts, raw_segments = await timed_stage("transcription", fetch_transcripts_with_segments(
             job.video_ids, progress_cb=_transcript_progress
-        )
+        ))
 
         await update_status(
             JobStatus.TRANSCRIBING,
@@ -1569,12 +1842,12 @@ async def process_merge_job(job_id: str):
 
                 # Start tasks concurrently
                 download_task = asyncio.create_task(
-                    video_svc.download_videos(
+                    timed_stage("download_cache", video_svc.download_videos(
                         unique_video_ids,
                         job_id=job_id,
                         progress_callback=video_progress,
                         source_duration_seconds=_total_source_seconds,
-                    )
+                    ))
                 )
 
                 semantic_task = None
@@ -1611,6 +1884,8 @@ async def process_merge_job(job_id: str):
                             f"semantic path is broken, NOT falling back to legacy: {sem_result}"
                         ) from sem_result
                     elif isinstance(sem_result, Exception):
+                        if len(unique_video_ids) > 1:
+                            raise RuntimeError(f"Multi-video semantic selection failed: {sem_result}") from sem_result
                         print(f"[Semantic] Pipeline failed with operational error: {sem_result}")
                         import traceback
                         traceback.print_exception(sem_result)
@@ -1618,17 +1893,21 @@ async def process_merge_job(job_id: str):
                     else:
                         semantic = sem_result
                         if semantic and semantic.get("highlights"):
-                            # Filter highlights for videos that successfully downloaded
-                            semantic["highlights"] = [h for h in semantic["highlights"] if h["video_id"] in video_paths]
+                            from ..services.clip_manifest import validate_manifest
+                            validate_manifest(semantic["highlights"], video_paths)
 
                 if semantic and semantic["highlights"]:
                     highlight_segments_result = semantic["highlights"]
                     job_concepts = semantic["concepts"]
                     selection_metrics = semantic["metrics"]
+                    pipeline_timings.update(selection_metrics.get("stage_timings_seconds", {}))
+                    selection_metrics["stage_timings_seconds"] = pipeline_timings
                     selection_trace = semantic["trace"]
                     selection_mode = "semantic"
                     all_highlights = list(highlight_segments_result)
                 else:
+                    if settings.ENABLE_SEMANTIC_SELECTION and len(unique_video_ids) > 1:
+                        raise RuntimeError("Multi-video semantic selection returned no complete clips")
                     if settings.ENABLE_SEMANTIC_SELECTION:
                         print("[Semantic] No usable selection — running legacy scorer")
                     all_highlights = await _legacy_select_highlights(
@@ -1652,7 +1931,8 @@ async def process_merge_job(job_id: str):
                             key=lambda h: (h["video_id"], h["start_time"])
                         )
                     
-                    highlight_segments_result = _merge_overlapping_clips(highlight_segments_result)
+                    if selection_mode != "semantic":
+                        highlight_segments_result = _merge_overlapping_clips(highlight_segments_result)
 
                     _reel_seconds = sum(
                         h["end_time"] - h["start_time"] for h in highlight_segments_result
@@ -1685,15 +1965,27 @@ async def process_merge_job(job_id: str):
                     f"Cutting and stitching {len(highlight_segments_result)} highlight clips..."
                 )
 
-                video_path = await video_svc.generate_highlight_reel(
+                video_path = await timed_stage("rendering", video_svc.generate_highlight_reel(
                     job_id=job.job_id,
                     highlight_segments=highlight_segments_result,
                     video_paths=video_paths,
                     audio_path=None,   # never overlaid; reel keeps source audio
                     progress_callback=video_progress,
-                )
+                ))
 
                 print(f"[Video] Highlight reel generated: {video_path}")
+
+                if selection_metrics is not None:
+                    from ..services.manifest_boundary_repair import probe_rendered_duration
+                    rendered_duration = probe_rendered_duration(video_path)
+                    selection_metrics["rendered_duration"] = (
+                        round(rendered_duration, 3) if rendered_duration is not None else None
+                    )
+                    manifest_duration = selection_metrics.get("final_manifest_duration")
+                    selection_metrics["manifest_render_delta_seconds"] = (
+                        round(abs(float(manifest_duration) - rendered_duration), 3)
+                        if rendered_duration is not None and manifest_duration is not None else None
+                    )
 
                 # Persist immediately so /video and /result can serve the
                 # video right away — the text summary (BART + enrichment)
@@ -1774,13 +2066,23 @@ async def process_merge_job(job_id: str):
                 )
                 selected_transcripts_map = {}
                 selected_raw_segments = {}
+                selected_evidence = None
                 if job.generate_video and highlight_segments_result and not video_error:
+                    selected_evidence = [
+                        {
+                            "video_id": h.get("video_id"),
+                            "start_time": h.get("start_time", 0.0),
+                            "end_time": h.get("end_time", 0.0),
+                            "text": h.get("text", ""),
+                        }
+                        for h in highlight_segments_result
+                    ]
                     for h in highlight_segments_result:
                         vid = h.get("video_id")
                         if vid not in selected_raw_segments:
                             selected_raw_segments[vid] = []
                         selected_raw_segments[vid].append(h)
-                
+
                     for vid, segs in selected_raw_segments.items():
                         segs.sort(key=lambda x: x.get("start_time", 0))
                         selected_transcripts_map[vid] = " ".join(s.get("text", "") for s in segs)
@@ -1800,6 +2102,7 @@ async def process_merge_job(job_id: str):
                     include_sources=profile.include_sources,
                     include_transitions=profile.include_transitions,
                     raw_segments=selected_raw_segments,
+                    selected_evidence=selected_evidence,
                 )
                 print(
                     f"[Fusion 2/2] Selected-segments pass: "
@@ -1962,6 +2265,8 @@ async def process_merge_job(job_id: str):
         job.audio_path = audio_path
         job.subtitle_path = subtitle_path
         job.video_path = video_path
+        selection_metrics = selection_metrics or {}
+        selection_metrics["stage_timings_seconds"] = pipeline_timings
         job.highlight_segments = highlight_segments_result
         job.keyframes_extracted = keyframes_extracted
         job.concepts = job_concepts

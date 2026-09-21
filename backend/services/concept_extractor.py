@@ -185,6 +185,24 @@ EXCERPT (from {start_label} to {end_label}):
 JSON:"""
 
 
+@dataclass(frozen=True)
+class ConceptOccurrence:
+    """A specific occurrence of a concept grounded in a source video."""
+    video_id: str
+    start: float
+    end: float
+
+    def __post_init__(self):
+        start = max(0.0, float(self.start))
+        end = max(start, float(self.end))
+        object.__setattr__(self, "video_id", str(self.video_id or ""))
+        object.__setattr__(self, "start", start)
+        object.__setattr__(self, "end", end)
+
+    def to_tuple(self) -> Tuple[float, float]:
+        return (self.start, self.end)
+
+
 @dataclass
 class Concept:
     """One important idea, merged across every chunk that mentioned it."""
@@ -194,10 +212,39 @@ class Concept:
     evidence: List[str] = field(default_factory=list)
     # Time windows where this concept was discussed, as (start, end) seconds.
     timestamps: List[tuple] = field(default_factory=list)
+    occurrences: List[ConceptOccurrence] = field(default_factory=list)
     support: int = 1                      # how many chunks independently found it
     aliases: List[str] = field(default_factory=list)
     embedding: Optional[np.ndarray] = None
     source: str = "llm"                   # "llm" or "tfidf"
+
+    def __post_init__(self):
+        if self.occurrences and not self.timestamps:
+            self.timestamps = [(occ.start, occ.end) for occ in self.occurrences]
+        elif self.timestamps and not self.occurrences:
+            occs = []
+            clean_ts = []
+            for item in self.timestamps:
+                if isinstance(item, ConceptOccurrence):
+                    occs.append(item)
+                    clean_ts.append((item.start, item.end))
+                elif isinstance(item, (tuple, list)):
+                    if len(item) == 3 and isinstance(item[0], str):
+                        occs.append(ConceptOccurrence(item[0], float(item[1]), float(item[2])))
+                        clean_ts.append((float(item[1]), float(item[2])))
+                    elif len(item) >= 2:
+                        occs.append(ConceptOccurrence("", float(item[-2]), float(item[-1])))
+                        clean_ts.append((float(item[-2]), float(item[-1])))
+            self.occurrences = occs
+            self.timestamps = clean_ts
+        elif self.occurrences and self.timestamps:
+            clean_ts = []
+            for item in self.timestamps:
+                if isinstance(item, (tuple, list)) and len(item) >= 2:
+                    clean_ts.append((float(item[-2]), float(item[-1])))
+                elif isinstance(item, ConceptOccurrence):
+                    clean_ts.append((item.start, item.end))
+            self.timestamps = clean_ts
 
     def to_dict(self) -> Dict:
         return {
@@ -205,7 +252,11 @@ class Concept:
             "importance": round(float(self.importance), 4),
             "reason": self.reason,
             "evidence": self.evidence[:3],
-            "timestamps": [[round(a, 1), round(b, 1)] for a, b in self.timestamps[:8]],
+            "timestamps": [[a, b] for a, b in self.timestamps],
+            "occurrences": [
+                {"video_id": o.video_id, "start": o.start, "end": o.end}
+                for o in self.occurrences
+            ],
             "support": self.support,
             "aliases": self.aliases[:5],
             "source": self.source,
@@ -219,6 +270,7 @@ class Chunk:
     start: float
     end: float
     index: int
+    video_id: str = ""
 
 
 # =====================================================================
@@ -241,15 +293,28 @@ def build_chunks(
     for seg in segments or []:
         if hasattr(seg, "start_time"):
             text, start, end = seg.text, seg.start_time, seg.end_time
+            video_id = getattr(seg, "video_id", "")
         else:
             text = seg.get("text", "")
             start = seg.get("start_time", seg.get("start", 0.0))
             end = seg.get("end_time")
             if end is None:
                 end = float(start) + float(seg.get("duration", 0.0))
+            video_id = seg.get("video_id", "")
         text = (text or "").strip()
-        if text:
-            units.append({"text": text, "start": float(start), "end": float(end)})
+        try:
+            start, end = float(start), float(end)
+        except (TypeError, ValueError):
+            continue
+        # Invalid intervals must never reach concept extraction. Swapping an
+        # inverted interval would fabricate provenance, so reject it.
+        if text and end > start >= 0:
+            units.append({
+                "text": text,
+                "start": start,
+                "end": end,
+                "video_id": str(video_id or ""),
+            })
 
     if not units:
         return []
@@ -260,33 +325,47 @@ def build_chunks(
     idx = 0
 
     while cursor < len(units):
+        current_vid = units[cursor]["video_id"]
         taken: List[Dict] = []
         words = 0
         j = cursor
         while j < len(units) and words < chunk_words:
+            # Enforce hard video boundary: never mix units from different videos into one chunk
+            if units[j]["video_id"] != current_vid:
+                break
             taken.append(units[j])
             words += len(units[j]["text"].split())
             j += 1
         if not taken:
-            break
+            cursor += 1
+            continue
 
         chunks.append(Chunk(
             text=" ".join(u["text"] for u in taken),
-            start=taken[0]["start"],
-            end=taken[-1]["end"],
+            start=min(u["start"] for u in taken),
+            end=max(u["end"] for u in taken),
             index=idx,
+            video_id=current_vid,
         ))
         idx += 1
 
         if j >= len(units):
             break
 
+        # If we broke because of a different video_id, advance cursor directly to the new video's start
+        if units[j]["video_id"] != current_vid:
+            cursor = j
+            continue
+
         # Step forward by word budget, not unit count, so overlap is stable
         # regardless of how long individual units are.
         advanced = 0
-        while cursor < len(units) and advanced < step:
+        old_cursor = cursor
+        while cursor < j and advanced < step:
             advanced += len(units[cursor]["text"].split())
             cursor += 1
+        if cursor <= old_cursor:
+            cursor = old_cursor + 1
 
     return chunks
 
@@ -366,12 +445,15 @@ async def _extract_from_chunk(ollama, chunk: Chunk, max_concepts: int, timeout: 
             importance = 0.5
         importance = float(np.clip(importance, 0.0, 1.0))
         evidence = str(item.get("evidence", "")).strip()
+        ts_tuples = [(chunk.start, chunk.end)]
+        occs = [ConceptOccurrence(video_id=getattr(chunk, "video_id", ""), start=chunk.start, end=chunk.end)]
         out.append(Concept(
             name=name,
             importance=importance,
             reason=str(item.get("reason", "")).strip(),
             evidence=[evidence] if evidence else [],
-            timestamps=[(chunk.start, chunk.end)],
+            timestamps=ts_tuples,
+            occurrences=occs,
             source="llm",
         ))
     return out
@@ -476,12 +558,18 @@ def extract_concepts_tfidf(chunks: List[Chunk], max_concepts: int = 20) -> List[
         if hits.size == 0:
             continue
         seen_tokens.append(tokens)
+        ts_tuples = [(chunks[h].start, chunks[h].end) for h in hits]
+        occs = [
+            ConceptOccurrence(video_id=getattr(chunks[h], "video_id", ""), start=chunks[h].start, end=chunks[h].end)
+            for h in hits
+        ]
         concepts.append(Concept(
             name=phrase,
             importance=float(salience[pos]),
             reason="Locally concentrated phrase — used heavily in part of the transcript (TF-IDF).",
             evidence=[],
-            timestamps=[(chunks[h].start, chunks[h].end) for h in hits],
+            timestamps=ts_tuples,
+            occurrences=occs,
             support=int(hits.size),
             source="tfidf",
         ))
@@ -644,6 +732,7 @@ def _absorb(head: Concept, other: Concept) -> None:
     head.importance = max(head.importance, other.importance)
     head.support += other.support
     head.timestamps.extend(other.timestamps)
+    head.occurrences.extend(other.occurrences)
     head.evidence.extend(e for e in other.evidence if e and e not in head.evidence)
     if not head.reason and other.reason:
         head.reason = other.reason
@@ -669,13 +758,19 @@ def rank_concepts(concepts: List[Concept], total_duration: float, top_k: int = 2
         support_boost = 1.0 + np.log1p(max(c.support - 1, 0)) * 0.35
 
         spread = 0.0
-        if total_duration > 0 and len(c.timestamps) > 1:
+        if total_duration > 0 and c.occurrences:
+            sources = {}
+            for occurrence in c.occurrences:
+                sources.setdefault(occurrence.video_id, []).append((occurrence.start + occurrence.end) / 2.0)
+            spread = sum(max(mids) - min(mids) for mids in sources.values()) / total_duration
+        elif total_duration > 0 and len(c.timestamps) > 1:
             mids = sorted((a + b) / 2.0 for a, b in c.timestamps)
             spread = (mids[-1] - mids[0]) / total_duration
         spread_boost = 1.0 + np.sqrt(max(spread, 0.0)) * 0.25
 
         c.importance = float(np.clip(c.importance * support_boost * spread_boost, 0.0, 3.0))
         c.timestamps = sorted(set(c.timestamps))
+        c.occurrences = sorted(set(c.occurrences), key=lambda o: (o.video_id, o.start, o.end))
 
     peak = max(c.importance for c in concepts) or 1.0
     for c in concepts:
@@ -694,13 +789,10 @@ def rank_concepts(concepts: List[Concept], total_duration: float, top_k: int = 2
 _CACHE: Dict[str, List[Concept]] = {}
 
 
-def _cache_key(chunks: List[Chunk], use_llm: bool, max_concepts: int) -> str:
-    digest = hashlib.sha1()
-    for c in chunks:
-        digest.update(c.text[:400].encode("utf-8", "ignore"))
-        digest.update(f"{c.start:.1f}".encode())
-    digest.update(f"{use_llm}:{max_concepts}".encode())
-    return digest.hexdigest()
+def _cache_key(chunks: List[Chunk], use_llm: bool, max_concepts: int, **config) -> str:
+    from .cache_identity import content_key
+    return content_key(["concept-v2", use_llm, max_concepts, config,
+                        [(c.video_id, c.start, c.end, c.text) for c in chunks]])
 
 
 async def extract_concepts(
@@ -732,10 +824,20 @@ async def extract_concepts(
     if not chunks:
         return []
 
-    key = _cache_key(chunks, use_llm, top_k)
+    from .cache_identity import model_identity
+    from ..core.config import get_settings
+    key = _cache_key(chunks, use_llm, top_k, model=model_identity(embedder),
+                     total_duration=total_duration, max_per_chunk=max_concepts_per_chunk,
+                     per_chunk_timeout=per_chunk_timeout, total_timeout=total_timeout,
+                     llm_model=get_settings().OLLAMA_MODEL if use_llm else None,
+                     merge_threshold=CONCEPT_MERGE_THRESHOLD,
+                     merge_quantile=CONCEPT_MERGE_QUANTILE,
+                     source_segments=[(s.video_id, s.start_time, s.end_time, s.text)
+                                      if hasattr(s, "start_time") else s for s in segments])
     if key in _CACHE:
         print(f"[Concepts] Cache hit ({len(_CACHE[key])} concepts)")
-        return _CACHE[key]
+        import copy
+        return copy.deepcopy(_CACHE[key])
 
     raw: List[Concept] = []
 
@@ -806,7 +908,10 @@ async def extract_concepts(
         preview = ", ".join(f"{c.name} ({c.importance:.2f})" for c in ranked[:6])
         print(f"[Concepts] Top: {preview}")
 
-    _CACHE[key] = ranked
+    import copy
+    if len(_CACHE) >= 32:
+        _CACHE.pop(next(iter(_CACHE)))
+    _CACHE[key] = copy.deepcopy(ranked)
     return ranked
 
 

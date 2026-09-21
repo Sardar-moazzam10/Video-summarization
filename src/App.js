@@ -28,6 +28,7 @@ import HistoryPage from './panel_pages/HistoryPage.js';
 import AdminAccountInfoPage from './admin_pages/AdminAccountInfoPage.js';
 import AdminSecurityPage from './admin_pages/AdminSecurityPage.js';
 import AdminHistoryPage from './admin_pages/AdminHistoryPage.js';
+import AdminStatsPage from './admin_pages/AdminStatsPage.js';
 import AdminUserListPage from './admin_pages/AdminUserListPage.js';
 
 import Footer from './Footer.js';
@@ -98,6 +99,7 @@ const App = () => {
         {/* PROTECTED PAGES — login required */}
         <Route path="/search-by-title" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SearchPage /></ProtectedRoute>} />
         <Route path="/search-by-keywords" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SearchByKeywordsPage /></ProtectedRoute>} />
+        <Route path="/keyword" element={<Navigate to="/search-by-keywords" replace />} />
         <Route path="/search/:query" element={<ProtectedRoute allowedRoles={['user', 'admin']}><SearchByKeywordsPage /></ProtectedRoute>} />
         <Route path="/transcript-viewer" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TranscriptViewer /></ProtectedRoute>} />
         <Route path="/transcript-viewer/:videoId" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TranscriptViewer /></ProtectedRoute>} />
@@ -124,17 +126,17 @@ const App = () => {
 
         {/* USER PANEL ROUTES */}
         <Route path="/account-info" element={
-          <ProtectedRoute allowedRoles={['user']}>
+          <ProtectedRoute allowedRoles={['user', 'admin']}>
             <AccountInfoPage />
           </ProtectedRoute>
         } />
         <Route path="/security" element={
-          <ProtectedRoute allowedRoles={['user']}>
+          <ProtectedRoute allowedRoles={['user', 'admin']}>
             <SecurityPage />
           </ProtectedRoute>
         } />
         <Route path="/history" element={
-          <ProtectedRoute allowedRoles={['user']}>
+          <ProtectedRoute allowedRoles={['user', 'admin']}>
             <HistoryPage />
           </ProtectedRoute>
         } />
@@ -153,6 +155,11 @@ const App = () => {
         <Route path="/admin-history" element={
           <ProtectedRoute allowedRoles={['admin']}>
             <AdminHistoryPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/admin-stats" element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <AdminStatsPage />
           </ProtectedRoute>
         } />
         <Route path="/admin-users" element={

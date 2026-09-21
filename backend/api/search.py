@@ -6,9 +6,14 @@ Endpoints:
 - GET /api/v1/search/stats - Index statistics
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from ..core.security import get_current_user
 
-router = APIRouter(prefix="/api/v1/search", tags=["search"])
+router = APIRouter(
+    prefix="/api/v1/search",
+    tags=["search"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.get("")

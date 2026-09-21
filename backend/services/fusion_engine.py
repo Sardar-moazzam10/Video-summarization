@@ -51,6 +51,7 @@ class SourcedSentence:
     video_id: str
     video_title: str = ""
     position: int = 0  # Position in original transcript
+    manifest_position: int = 0  # Global canonical order for selected-evidence narratives
     embedding: Optional[np.ndarray] = None
 
 
@@ -126,6 +127,9 @@ class FusionEngine:
         include_sources: bool = True,
         include_transitions: bool = True,
         raw_segments: Optional[Dict[str, list]] = None,  # video_id -> [{text,start,duration}]
+        selected_evidence: Optional[List[Dict[str, Any]]] = None,
+        expected_order: Optional[List[Dict[str, Any]]] = None,
+        detect_conflicts: bool = False,
     ) -> FusionResult:
         """
         Main fusion pipeline.
@@ -144,17 +148,47 @@ class FusionEngine:
         video_titles = video_titles or {}
         raw_segments = raw_segments or {}
 
-        # Step 1: Extract sentences with source tracking
-        print(f"[Fusion] Processing {len(transcripts)} transcripts...")
-        sentences = self._extract_sentences(transcripts, video_titles, raw_segments)
+        selected_order = self._normalize_selected_evidence(selected_evidence)
+        if expected_order is not None:
+            expected = self._normalize_selected_evidence(expected_order)
+            if selected_order != expected:
+                raise ValueError("selected evidence order does not match expected manifest order")
+
+        # Step 1: Extract sentences with source tracking. When a canonical
+        # manifest has already been frozen, keep that exact global sequence and
+        # do not reconstruct evidence grouped by source.
+        if selected_evidence is not None and selected_order:
+            print(
+                f"[Fusion] Processing {len(selected_order)} selected-evidence items in canonical manifest order..."
+            )
+            sentences = [
+                SourcedSentence(
+                    text=str(item["text"]).strip(),
+                    video_id=str(item["video_id"]),
+                    video_title=video_titles.get(str(item["video_id"]), ""),
+                    position=i,
+                    manifest_position=i,
+                )
+                for i, item in enumerate(selected_order)
+                if str(item.get("text", "")).strip()
+            ]
+            source_count = len({str(item["video_id"]) for item in selected_order if item.get("video_id")})
+        else:
+            print(f"[Fusion] Processing {len(transcripts)} transcripts...")
+            sentences = self._extract_sentences(transcripts, video_titles, raw_segments)
+            source_count = len(transcripts)
         print(f"[Fusion] Extracted {len(sentences)} sentences")
 
         if len(sentences) < 3:
+            selection_order = [(item["video_id"], item["start_time"], item["end_time"]) for item in selected_order]
             return FusionResult(
                 narrative=" ".join([s.text for s in sentences]),
                 topics=[],
                 conflicts=[],
-                metadata={"error": "Too few sentences to fuse"}
+                metadata={
+                    "error": "Too few sentences to fuse",
+                    "selected_evidence_order": selection_order,
+                }
             )
 
         # Step 2: Generate embeddings
@@ -176,27 +210,44 @@ class FusionEngine:
         # Step 5: Detect conflicts (cross-source disagreements).
         # Only meaningful with 2+ sources — the feature exists to surface where
         # videos contradict each other. With a single transcript it loads a
-        # 140 MB NLI model for little return, so we skip it there. Multi-video
-        # jobs still run the full NLI detection unchanged.
-        if len(transcripts) > 1:
+        # NLI is opt-in: the normal merge path uses deterministic topic ordering
+        # and must not load or run a cross-encoder.
+        if detect_conflicts and len(transcripts) > 1:
             conflicts = self._detect_conflicts(deduplicated)
             print(f"[Fusion] Found {len(conflicts)} potential conflicts")
         else:
             conflicts = []
-            print("[Fusion] Single source — skipping NLI conflict detection "
-                  "(cross-source conflicts require 2+ videos)")
+            print("[Fusion] Conflict detection disabled for this request")
 
-        # Step 6: Synthesize narrative
-        narrative = self._synthesize_narrative(
-            deduplicated,
-            conflicts,
-            target_words,
-            include_sources,
-            include_transitions
-        )
+        # Step 6: Synthesize narrative.
+        # Selected-evidence runs are order-sensitive: the canonical manifest must
+        # remain the narrative order even when clustering/deduplication changes
+        # the semantic grouping.
+        if selected_evidence is not None and selected_order:
+            ordered_survivors = sorted(
+                (s for cluster in deduplicated for s in cluster.sentences),
+                key=lambda s: s.manifest_position,
+            )
+            self._validate_selected_evidence_narrative(ordered_survivors)
+            narrative = self._synthesize_selected_evidence(
+                ordered_survivors,
+                target_words,
+                include_sources,
+                include_transitions,
+            )
+        else:
+            narrative = self._synthesize_narrative(
+                deduplicated,
+                conflicts,
+                target_words,
+                include_sources,
+                include_transitions
+            )
 
         # Calculate metadata
         total_source_words = sum(len(t.split()) for t in transcripts.values())
+        if selected_evidence is not None and selected_order:
+            total_source_words = sum(len(str(item.get("text", "")).split()) for item in selected_order)
         output_words = len(narrative.split())
         processing_time = (datetime.now() - start_time).total_seconds()
 
@@ -209,7 +260,8 @@ class FusionEngine:
             "clusters_created": len(clusters),
             "dedup_ratio": sum(len(c.sentences) for c in deduplicated) / max(len(sentences), 1),
             "processing_time_seconds": processing_time,
-            "videos_processed": len(transcripts)
+            "videos_processed": source_count,
+            "selected_evidence_order": [(item["video_id"], item["start_time"], item["end_time"]) for item in selected_order],
         }
 
         return FusionResult(
@@ -218,6 +270,32 @@ class FusionEngine:
             conflicts=conflicts,
             metadata=metadata
         )
+
+    def _normalize_selected_evidence(
+        self,
+        selected_evidence: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """Normalize selected evidence into a manifest-order list."""
+        if not selected_evidence:
+            return []
+
+        normalized = []
+        for item in selected_evidence:
+            if not isinstance(item, dict):
+                continue
+            video_id = str(item.get("video_id") or item.get("video") or item.get("source_id") or "")
+            text = item.get("text") or item.get("sentence") or ""
+            start = item.get("start_time", item.get("start", 0.0))
+            end = item.get("end_time", item.get("end", start))
+            if not video_id or not str(text).strip():
+                continue
+            normalized.append({
+                "video_id": video_id,
+                "start_time": float(start),
+                "end_time": float(end),
+                "text": str(text).strip(),
+            })
+        return normalized
 
     def _extract_sentences(
         self,
@@ -549,6 +627,60 @@ class FusionEngine:
             deduplicated.append(cluster)
 
         return deduplicated
+
+    def _validate_selected_evidence_narrative(
+        self,
+        ordered_sentences: List[SourcedSentence],
+    ) -> None:
+        """Selected-evidence narratives must stay in canonical order."""
+        if not ordered_sentences:
+            return
+        positions = [s.manifest_position for s in ordered_sentences]
+        if positions != sorted(positions):
+            raise ValueError("surviving evidence positions are not strictly increasing")
+
+    def _synthesize_selected_evidence(
+        self,
+        ordered_sentences: List[SourcedSentence],
+        target_words: int,
+        include_sources: bool,
+        include_transitions: bool,
+    ) -> str:
+        """Serialize selected evidence in canonical manifest order."""
+        if not ordered_sentences:
+            return ""
+
+        transition_phrases = [
+            "Additionally,",
+            "Furthermore,",
+            "Moreover,",
+            "In related terms,",
+        ]
+
+        parts = []
+        for idx, sentence in enumerate(ordered_sentences):
+            text = sentence.text.strip()
+            if not text:
+                continue
+            if include_sources and sentence.video_id:
+                text = f"{text} (from {sentence.video_id})"
+            if idx > 0 and include_transitions:
+                text = f"{transition_phrases[(idx - 1) % len(transition_phrases)]} {text}"
+            parts.append(text)
+
+        narrative = " ".join(parts)
+        last_index = -1
+        for sentence in ordered_sentences:
+            marker = sentence.text.strip()
+            if not marker:
+                continue
+            index = narrative.find(marker)
+            if index < 0:
+                raise ValueError(f"selected evidence marker missing from narrative: {marker}")
+            if index < last_index:
+                raise ValueError("selected evidence narrative order does not match canonical surviving manifest order")
+            last_index = index
+        return narrative
 
     def _detect_conflicts(
         self,

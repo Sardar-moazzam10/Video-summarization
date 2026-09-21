@@ -59,6 +59,7 @@ const VerifyCodePage = () => {
       setMessage(res.message || 'Code verified!');
       if (res.success) {
         setIsError(false);
+        sessionStorage.setItem('passwordResetToken', res.reset_token);
         setTimeout(() => navigate('/reset-password'), 1500);
       } else {
         setIsError(true);

@@ -25,7 +25,7 @@ This is a **full‑stack “podcast from YouTube” app**:
 You mainly work in:
 
 - **Frontend (React)**: `src/`
-- **Python backends (Flask)**: `auth_backend.py`, `transcript_backend.py`, `merge_backend.py`, `app/`
+- **Unified Python API (FastAPI)**: `backend/main.py`, with routes in `backend/api/`
 - **Node transcript proxy (Express)**: `server.js`
 
 ---
@@ -90,7 +90,7 @@ The rest of this section explains how each of these steps is implemented in code
 
 - UI / text: edit `SearchPage.js`, `SearchBar.js`, `VideoCard.js`, `VideoList.js`.
 - API call to YouTube: edit `youtubeApi.js`.
-- How search is saved to history: see `SearchPage.js` and `auth_backend.py` (history routes).
+- How search is saved to history: see `SearchPage.js` and `backend/api/auth.py`.
 
 ---
 
@@ -201,7 +201,7 @@ There are **two pieces**: frontend (`TranscriptViewer`) and backend (`transcript
 
 #### 2.7 History, user profile, and admin panel
 
-- Backend: `auth_backend.py` (Flask, port **5000**).
+- Backend: `backend/api/auth.py` and `backend/services/auth_service.py` (FastAPI, port **8000**).
 
   - **Auth routes**
     - `POST /api/signup` – create user.
@@ -228,7 +228,8 @@ There are **two pieces**: frontend (`TranscriptViewer`) and backend (`transcript
   - Admin pages: `admin_pages/AdminAccountInfoPage.js`, `AdminSecurityPage.js`, `AdminHistoryPage.js`, `AdminUserListPage.js`.
   - Extra API helper files: `authApi.js`, `pages/authExtraApi.js`, `api.js`.
 
-**To change what is stored per user, or the history behavior**, edit `auth_backend.py` and corresponding frontend panel pages.
+**To change what is stored per user, or the history behavior**, edit
+`backend/api/auth.py`, `backend/services/auth_service.py`, and the corresponding frontend panel pages.
 
 ---
 
@@ -238,7 +239,8 @@ There are **two pieces**: frontend (`TranscriptViewer`) and backend (`transcript
 
 - `package.json` – React app dependencies and scripts.
 - `requirements.txt` – Python dependencies for all Flask backends.
-- `auth_backend.py` – user auth, profile, history (Flask @ 5000).
+- `backend/` – the supported FastAPI application for auth, transcripts, merge, search, and chat (@ 8000).
+- `auth_backend.py` – retired compatibility notice; do not run it.
 - `transcript_backend.py` – transcript fetching + summarization (Flask @ 5001).
 - `merge_backend.py` – merge segments + ElevenLabs voiceover (Flask @ 5002).
 - `server.js` – Node proxy for YouTube transcript HTML parsing (@ 8080).
@@ -290,30 +292,22 @@ pip install -r requirements.txt
 
 Create a `.env` file or set environment variables (recommended instead of hardcoding):
 
-- **MongoDB URI** (currently hardcoded in `auth_backend.py` and `transcript_backend.py`).
-- **ELEVEN_API_KEY** (used in `merge_backend.py`).
-- **Mail credentials** for password reset (currently configured in `auth_backend.py`).
+- **MONGODB_URI** and **MONGODB_DATABASE**.
+- **SECRET_KEY**, generated once with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`.
+- **Mail credentials** used to deliver password-reset codes.
 
-For development you can keep the existing hardcoded values, but for production **you must move them to env vars**.
+Never hardcode credentials. Copy `.env.example` to `.env`; set `ENVIRONMENT=production`
+in deployment so a missing or weak signing key fails startup.
 
 #### 4.4 Run services
 
 In separate terminals, from project root:
 
 ```bash
-# 1. Auth backend (port 5000)
-python auth_backend.py
+# 1. Unified secured API (port 8000)
+venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
-# 2. Transcript backend (port 5001)
-python transcript_backend.py
-
-# 3. Merge + voiceover backend (port 5002)
-python merge_backend.py
-
-# 4. Node proxy (port 8080)
-node server.js
-
-# 5. Frontend React app (port 3000)
+# 2. Frontend React app (port 3000)
 npm start
 ```
 
@@ -365,34 +359,16 @@ Then open `http://localhost:3000` in your browser.
 
 ### 6. API endpoints (summary)
 
-- **Auth backend – `auth_backend.py` (port 5000)**
-  - `POST /api/signup`
-  - `POST /api/login`
-  - `POST /api/send-verification-code`
-  - `POST /api/verify-code`
-  - `POST /api/reset-password`
-  - `GET /api/user/<username>`
-  - `PUT /api/user/update/<username>`
-  - `DELETE /api/user/delete/<username>`
-  - `PUT /api/user/update-password/<username>`
-  - `POST /api/user-history`
-  - `GET /api/user-history/<username>`
-  - `DELETE /api/user-history/delete/<username>`
-  - `DELETE /api/user-history/delete-one`
-  - `GET /api/users`
+- **Unified API – `backend.main:app` (port 8000)**
+  - Auth and recovery: `/api/v1/auth/*`
+  - Transcript: `/api/v1/transcript/*`
+  - Merge jobs and protected media: `/api/v1/merge/*`
+  - Semantic search: `/api/v1/search/*`
+  - Video chat: `/api/v1/chat`
 
-- **Transcript backend – `transcript_backend.py` (port 5001)**
-  - `GET /transcript?videoId=<id>`
-  - `POST /segment-transcript`
-  - `POST /summarize`
-
-- **Merge backend – `merge_backend.py` (port 5002)**
-  - `POST /merge`
-  - `GET /merge/<merge_id>`
-  - `POST /voiceover`
-
-- **Proxy server – `server.js` (port 8080)**
-  - `GET /proxy/:videoId`
+Except signup, login, and password recovery, user data and processing routes
+require `Authorization: Bearer <access_token>`. Admin routes also verify the
+current role from MongoDB on every request.
 
 ---
 
@@ -402,15 +378,14 @@ Then open `http://localhost:3000` in your browser.
   - Edit `App.css`, `Background.css`, `Navbar.css`, `Footer.css`, and individual page components (e.g. `SearchPage.js`, `TranscriptViewer.js`).
 
 - **Change which data is saved for users or history**  
-  - Backend: `auth_backend.py` (`users`, `history` logic).  
+  - Backend: `backend/api/auth.py` and `backend/services/auth_service.py`.
   - Frontend: `panel_pages/HistoryPage.js`, `panel_pages/AccountInfoPage.js`, `admin_pages/*`.
 
 - **Change how transcripts are fetched or summarized**  
-  - `transcript_backend.py` – logic + fallbacks + summarizer.  
-  - `server.js` – YouTube HTML scraping.
+  - `backend/api/transcript.py` and `backend/services/transcript_service.py`.
 
 - **Change how merging/voiceover works**  
-  - `merge_backend.py` – segment generation + ElevenLabs API.
+  - `backend/api/merge.py` and `backend/services/fusion_engine.py`.
 
 - **Add a new page**  
   - Create a React component in `src/`, and register a route in `App.js`.

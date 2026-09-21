@@ -22,21 +22,24 @@ from backend.services.duration_profiles import DURATION_PROFILES
 
 class TestEligibleDurations:
     @pytest.mark.parametrize("seconds,expected", [
-        (320, [5]),            # 5m20s -> only the 5-minute profile
-        (600, [5, 10]),        # exactly 10m -> 10 is allowed
-        (601, [5, 10]),        # 10m01s
-        (599, [5]),            # 9m59s -> 10 is NOT allowed
-        (120, []),             # 2m -> nothing fits
-        (1800, [5, 10, 15, 20, 30]),
+        (120, []),                     # 2m -> nothing fits
+        (300, []),                     # 5m00s -> strict inequality, nothing fits
+        (301, [5]),                    # 5m01s -> 5m allowed
+        (320, [5]),                    # 5m20s -> only the 5-minute profile
+        (599, [5]),                    # 9m59s -> 10 is NOT allowed
+        (600, [5]),                    # exactly 10m -> 10 is NOT allowed under strict <
+        (601, [5, 10]),                # 10m01s -> 10 is allowed
+        (1800, [5, 10, 15, 20]),       # exactly 30m -> 30 is NOT allowed under strict <
+        (1801, [5, 10, 15, 20, 30]),   # 30m01s -> 30 is allowed
     ])
     def test_boundaries(self, seconds, expected):
         assert merge_api.eligible_durations(seconds) == expected
 
-    def test_equal_length_is_allowed_not_rejected(self):
-        """A 10-minute summary of a 10-minute video is degenerate but legal;
-        rejecting it would be an off-by-one against the user."""
+    def test_equal_length_is_rejected(self):
+        """Invariant: requested_summary_duration < total_unique_selected_source_duration.
+        Equal length is rejected."""
         for minutes in DURATION_PROFILES:
-            assert minutes in merge_api.eligible_durations(minutes * 60)
+            assert minutes not in merge_api.eligible_durations(minutes * 60)
 
 
 # =====================================================================
@@ -46,20 +49,21 @@ class TestEligibleDurations:
 class TestErrorPayload:
     def test_shape_and_wording_for_5m20s_asking_10m(self):
         payload = merge_api._duration_error(320, 10)
-        assert payload["error_code"] == "SUMMARY_DURATION_EXCEEDS_VIDEO"
+        assert payload["code"] == "SUMMARY_DURATION_EXCEEDS_SOURCE"
+        assert payload["error_code"] == "SUMMARY_DURATION_EXCEEDS_SOURCE"
         assert payload["source_duration_seconds"] == 320.0
         assert payload["requested_duration_minutes"] == 10
         assert payload["max_allowed_minutes"] == 5
         assert payload["allowed_durations"] == [5]
-        assert payload["message"] == (
-            "This video is only 5m 20s long. Please choose 5 minutes or less."
-        )
+        assert "5 minutes or less" in payload["message"]
 
     def test_source_too_short_for_any_profile(self):
         payload = merge_api._duration_error(120, 5)
+        assert payload["code"] == "SUMMARY_DURATION_EXCEEDS_SOURCE"
+        assert payload["error_code"] == "SUMMARY_DURATION_EXCEEDS_SOURCE"
         assert payload["max_allowed_minutes"] is None
         assert payload["allowed_durations"] == []
-        assert "cannot be summarised" in payload["message"]
+        assert "A 5-minute summary requires more than 5 minutes of source content." in payload["message"]
 
     @pytest.mark.parametrize("seconds,label", [
         (320, "5m 20s"), (300, "5m"), (45, "45s"), (3661, "61m 1s"),
@@ -107,7 +111,7 @@ class TestCreateMergeJobValidation:
         with pytest.raises(HTTPException) as exc:
             await merge_api.create_merge_job(_Req(["vid1"], 10), background_tasks=None)
         assert exc.value.status_code == 422
-        assert exc.value.detail["error_code"] == "SUMMARY_DURATION_EXCEEDS_VIDEO"
+        assert exc.value.detail["error_code"] == "SUMMARY_DURATION_EXCEEDS_SOURCE"
         assert exc.value.detail["max_allowed_minutes"] == 5
         assert not no_job_created, "no job may be created for an invalid duration"
 
@@ -115,7 +119,11 @@ class TestCreateMergeJobValidation:
     async def test_rejects_5m_summary_of_a_2m_video(self, monkeypatch, no_job_created):
         _fake_durations(monkeypatch, {"vid1": 120.0})
         with pytest.raises(HTTPException) as exc:
-            await merge_api.create_merge_job(_Req(["vid1"], 5), background_tasks=None)
+            await merge_api.create_merge_job(
+                _Req(["vid1"], 5),
+                background_tasks=None,
+                current_user={"sub": "test-user", "role": "user"},
+            )
         assert exc.value.status_code == 422
         assert exc.value.detail["max_allowed_minutes"] is None
 
@@ -161,7 +169,11 @@ class TestCreateMergeJobValidation:
 
         monkeypatch.setattr(merge_api, "get_jobs_collection", _marker)
         with pytest.raises(RuntimeError, match="stop-after-validation"):
-            await merge_api.create_merge_job(_Req(["vid1"], 5), background_tasks=None)
+            await merge_api.create_merge_job(
+                _Req(["vid1"], 5),
+                background_tasks=None,
+                current_user={"sub": "test-user", "role": "user"},
+            )
         assert reached.get("yes"), "valid request was rejected by the duration gate"
 
 

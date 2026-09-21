@@ -8,11 +8,17 @@ Endpoints:
 - POST /api/v1/chat - Ask a question about processed video content
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+from ..core.security import get_current_user
+
+router = APIRouter(
+    prefix="/api/v1/chat",
+    tags=["chat"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 # =====================================================

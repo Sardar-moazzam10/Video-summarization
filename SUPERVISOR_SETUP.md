@@ -33,7 +33,9 @@ cp .env.example .env
 ```
 **Required API Keys**:
 - `REACT_APP_YOUTUBE_API_KEY`: Required for the frontend to perform YouTube keyword searches.
-- `JWT_SECRET_KEY`: Can be any secure random string.
+- `SECRET_KEY`: Generate with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`.
+  Use one stable value in production; changing it signs out every user.
+- `ENVIRONMENT`: Set to `production` when deploying so weak/missing signing keys fail startup.
 *(No other API keys are strictly required. Gemini/OpenAI are disabled by default).*
 
 ## D. MongoDB Setup

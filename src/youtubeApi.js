@@ -1,7 +1,7 @@
 import axios from 'axios';
+import { API_BASE_URL } from './config/api.js';
 
-const API_KEY = process.env.REACT_APP_YOUTUBE_API_KEY;
-const BASE_URL = 'https://www.googleapis.com/youtube/v3';
+const SEARCH_URL = `${API_BASE_URL}/api/v1/youtube/search`;
 
 const DEFAULT_OPTIONS = {
   appendPodcast: false, // when true, " podcast" is appended to the query
@@ -14,22 +14,19 @@ const DEFAULT_OPTIONS = {
  *
  * @param {string} searchQuery      Raw user query — sent verbatim unless appendPodcast is set.
  * @param {object} [options]        { appendPodcast, duration, maxResults }
- * @returns {Promise<Array>}        YouTube search items (empty array on failure).
+ * @returns {Promise<Array>}        YouTube search items; rejects with a user-facing error on failure.
  */
 export const fetchVideos = async (searchQuery, options = {}) => {
   const { appendPodcast, duration, maxResults } = { ...DEFAULT_OPTIONS, ...options };
 
-  try {
-    const q = appendPodcast ? `${searchQuery} podcast` : searchQuery;
+  const q = appendPodcast ? `${searchQuery} podcast` : searchQuery;
 
-    const response = await axios.get(`${BASE_URL}/search`, {
+  try {
+    const response = await axios.get(SEARCH_URL, {
       params: {
-        part: 'snippet',
         q,
-        type: 'video',
-        videoDuration: duration,
-        maxResults,
-        key: API_KEY,
+        duration,
+        max_results: maxResults,
       },
     });
 
@@ -54,7 +51,19 @@ export const fetchVideos = async (searchQuery, options = {}) => {
     // Never return nothing when YouTube did return results.
     return relevantVideos.length > 0 ? relevantVideos : items;
   } catch (error) {
-    console.error('Error fetching videos:', error);
-    return [];
+    const reason = error.response?.data?.error?.errors?.[0]?.reason;
+    const apiMessage = error.response?.data?.detail || error.response?.data?.error?.message;
+
+    if (reason === 'quotaExceeded' || reason === 'dailyLimitExceeded') {
+      throw new Error('YouTube search quota has been reached. Please try again later.');
+    }
+    if (reason === 'keyInvalid' || reason === 'accessNotConfigured') {
+      throw new Error('YouTube search is not configured correctly. Please contact the administrator.');
+    }
+    if (!error.response) {
+      throw new Error('Could not connect to YouTube. Check your internet connection and try again.');
+    }
+
+    throw new Error(apiMessage || 'YouTube search failed. Please try again.');
   }
 };

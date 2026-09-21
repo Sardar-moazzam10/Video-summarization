@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { API_BASE_URL } from './config/api.js';
+import { API_BASE_URL, authenticatedFetch } from './config/api.js';
 import { extractErrorMessage } from './utils/apiError.js';
 
 /**
@@ -75,7 +75,7 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
 
   const fetchScores = useCallback(async (withLlm) => {
     const url = `${API_BASE_URL}/api/v1/merge/${mergeId}/evaluate?llm=${withLlm ? 'true' : 'false'}`;
-    const res = await fetch(url);
+    const res = await authenticatedFetch(url);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(extractErrorMessage(body, `Evaluation failed (${res.status})`));

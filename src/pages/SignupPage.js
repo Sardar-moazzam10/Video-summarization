@@ -37,7 +37,7 @@ const getStrength = (pwd) => {
 
 const SignupPage = () => {
   const [formData, setFormData] = useState({
-    name: '', email: '', password: '', role: 'user',
+    name: '', email: '', password: '',
   });
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState('');

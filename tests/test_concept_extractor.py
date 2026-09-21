@@ -220,8 +220,11 @@ class TestExtractConcepts:
     def test_results_are_cached(self, embedder):
         segments = make_segments(10)
         first = asyncio.run(extract_concepts(segments, total_duration=400.0, use_llm=False, embedder=embedder))
+        calls = embedder.calls
         second = asyncio.run(extract_concepts(segments, total_duration=400.0, use_llm=False, embedder=embedder))
-        assert first is second, "identical input must not be recomputed"
+        assert embedder.calls == calls, "identical input must not be recomputed"
+        assert [c.to_dict() for c in first] == [c.to_dict() for c in second]
+        assert first is not second, "job mutations must not leak into cached concepts"
 
     def test_empty_input_returns_empty(self):
         assert asyncio.run(extract_concepts([], use_llm=False)) == []

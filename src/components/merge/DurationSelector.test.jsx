@@ -5,6 +5,8 @@
  * available. Options the source cannot produce must be disabled and must say
  * why — while staying a convenience only: the backend re-checks on submit, so
  * these assertions are about what the user is told, not about enforcement.
+ * Core invariant: requested_summary_duration < total_unique_selected_source_duration
+ * Strict inequality and fail-closed validation.
  */
 
 import React from 'react';
@@ -24,10 +26,10 @@ describe('DurationSelector eligibility', () => {
     expect(screen.queryByTestId('duration-option-2')).not.toBeInTheDocument();
   });
 
-  test('every option stays enabled while duration is unknown (null)', () => {
+  test('options are disabled while duration is unresolved (null / fail-closed)', () => {
     render(<DurationSelector value={10} onChange={() => {}} allowedDurations={null} />);
     ALL.forEach((m) => {
-      expect(screen.getByTestId(`duration-option-${m}`)).not.toBeDisabled();
+      expect(screen.getByTestId(`duration-option-${m}`)).toBeDisabled();
     });
   });
 
@@ -68,29 +70,63 @@ describe('DurationSelector eligibility', () => {
     expect(onChange).toHaveBeenCalledWith(5);
   });
 
-  test('exact-length source keeps that duration enabled', () => {
-    // 10m00s -> a 10-minute summary is degenerate but legal.
+  test('enables only allowed presets in allowedDurations', () => {
     render(
       <DurationSelector
         value={10}
         onChange={() => {}}
         allowedDurations={[5, 10]}
-        sourceDurationLabel="10m"
+        sourceDurationLabel="10m 01s"
       />
     );
+    expect(screen.getByTestId('duration-option-5')).not.toBeDisabled();
     expect(screen.getByTestId('duration-option-10')).not.toBeDisabled();
     expect(screen.getByTestId('duration-option-15')).toBeDisabled();
   });
 
-  test('a source shorter than every profile disables all options', () => {
+  test('a source <= 5m disables all options and shows too_short banner with exact 5:00 wording', () => {
     render(
       <DurationSelector
-        value={5}
+        value={null}
         onChange={() => {}}
         allowedDurations={[]}
-        sourceDurationLabel="2m"
+        sourceDurationLabel="5m 00s"
+        validationStatus="too_short"
       />
     );
+    ALL.forEach((m) => {
+      expect(screen.getByTestId(`duration-option-${m}`)).toBeDisabled();
+    });
+    const banner = screen.getByTestId('duration-too-short-banner');
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent('A 5-minute summary requires more than 5 minutes of source content.');
+  });
+
+  test('shows validating banner when validationStatus is validating', () => {
+    render(
+      <DurationSelector
+        value={null}
+        onChange={() => {}}
+        allowedDurations={null}
+        validationStatus="validating"
+      />
+    );
+    expect(screen.getByTestId('duration-validating-banner')).toBeInTheDocument();
+    ALL.forEach((m) => {
+      expect(screen.getByTestId(`duration-option-${m}`)).toBeDisabled();
+    });
+  });
+
+  test('shows failure banner when validationStatus is verification_failed', () => {
+    render(
+      <DurationSelector
+        value={null}
+        onChange={() => {}}
+        allowedDurations={[]}
+        validationStatus="verification_failed"
+      />
+    );
+    expect(screen.getByTestId('duration-failed-banner')).toBeInTheDocument();
     ALL.forEach((m) => {
       expect(screen.getByTestId(`duration-option-${m}`)).toBeDisabled();
     });

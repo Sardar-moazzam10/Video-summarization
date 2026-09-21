@@ -1,12 +1,14 @@
 """
 User models - Pydantic schemas
 """
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional, Literal
 from datetime import datetime
 
 
 class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     password: str = Field(..., min_length=6)
     # Single optional display name — split into firstName/lastName server-side.
@@ -16,7 +18,8 @@ class UserCreate(BaseModel):
     firstName: Optional[str] = Field(default=None, max_length=50)
     lastName: Optional[str] = Field(default=None, max_length=50)
     username: Optional[str] = Field(default=None, min_length=3, max_length=30)
-    role: Literal["user", "admin"] = "user"
+    # Deliberately no role field. Public registration can only create users;
+    # privileged roles are assigned by the protected admin API.
 
 
 class UserLogin(BaseModel):
@@ -45,7 +48,7 @@ class PasswordUpdate(BaseModel):
 
 
 class PasswordReset(BaseModel):
-    email: EmailStr
+    reset_token: str = Field(..., min_length=32, max_length=256)
     password: str = Field(..., min_length=6)
 
 

@@ -1,7 +1,10 @@
+import { API_BASE_URL, authenticatedFetch } from './config/api.js';
+
 export const fetchTranscript = async (videoId) => {
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/transcript?videoId=${videoId}`);
+      const response = await authenticatedFetch(
+        `${API_BASE_URL}/api/v1/transcript?videoId=${encodeURIComponent(videoId)}`
+      );
       if (!response.ok) {
         throw new Error(`Error: ${response.status}`);
       }
@@ -13,4 +16,3 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
       return []; // Return an empty array in case of an error
     }
   };
-  

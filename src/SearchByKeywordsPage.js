@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchVideos } from './youtubeApi.js';
 import { fetchTranscript, searchKeywordInTranscript } from './youtubeTranscript.mjs';
-import { API_BASE_URL } from './config/api.js';
+import { API_BASE_URL, authenticatedFetch } from './config/api.js';
+import { extractErrorMessage } from './utils/apiError.js';
 import './VideoCard.css';
 import MultiSelectBar from './components/merge/MultiSelectBar.jsx';
 
@@ -16,11 +17,14 @@ const EXAMPLE_KEYWORDS = [
   'Inflation rate',
 ];
 
-// How many videos to fetch transcripts for at once. Transcript fetches can
-// fall back to downloading audio and running Whisper locally, which is slow
-// and CPU-heavy — high enough to feel fast, low enough not to choke the
-// backend if several fallbacks trigger at the same time.
+// Standard helper for resilient video ID extraction
+const getVideoId = (video) =>
+  video?.id?.videoId || video?.id || (typeof video === 'string' ? video : '');
+
+// How many videos to fetch transcripts for at once.
 const TRANSCRIPT_CONCURRENCY = 4;
+const selectedKeywordsFromInput = (value = '') =>
+  [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))].slice(0, 30);
 
 const SearchByKeywordsPage = () => {
   const [keyword, setKeyword] = useState('');
@@ -29,14 +33,15 @@ const SearchByKeywordsPage = () => {
   const [summaryLoading, setSummaryLoading] = useState({});
   const [selectedVideos, setSelectedVideos] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [searchProgress, setSearchProgress] = useState({ done: 0, total: 0 });
+  const [hasSearched, setHasSearched] = useState(false);
+  const [lastSearchedTerm, setLastSearchedTerm] = useState('');
+  const [searchStats, setSearchStats] = useState({ scanned: 0, searchable: 0, skipped: 0, matched: 0 });
   const navigate = useNavigate();
   const { query: urlQuery } = useParams();
-  // Guards against overlapping runSearch calls (double-click, Enter + button
-  // click racing, effects re-firing) — without it, two full 20-video batches
-  // can fire back to back and trip the backend's own rate limiter.
   // Guards against overlapping runSearch calls
-  const searchInFlightRef = useRef(false);
   const searchAbortControllerRef = useRef(null);
   const summaryAbortControllersRef = useRef({});
 
@@ -57,7 +62,7 @@ const SearchByKeywordsPage = () => {
 
   const fetchSummary = async (transcriptText, signal) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/transcript/summarize`, {
+      const response = await authenticatedFetch(`${API_BASE_URL}/api/v1/transcript/summarize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: transcriptText }),
@@ -102,38 +107,76 @@ const SearchByKeywordsPage = () => {
     setSelectedVideos([]);
     setExpandedSummaries({});
     setSummaryLoading({});
+    setErrorMsg('');
     setLoading(true);
+    setHasSearched(false);
+    setLastSearchedTerm(term);
+    setSearchStats({ scanned: 0, searchable: 0, skipped: 0, matched: 0 });
 
     try {
       const videos = await fetchVideos(term, { maxResults: 10 });
       if (signal.aborted) return;
+      if (!videos || videos.length === 0) {
+        setErrorMsg(`No YouTube videos found for "${term}".`);
+        setLoading(false);
+        setHasSearched(true);
+        return;
+      }
       setSearchProgress({ done: 0, total: videos.length });
 
       const collected = [];
       let nextIndex = 0;
+      let criticalError = null;
+
       const worker = async () => {
         while (nextIndex < videos.length) {
-          if (signal.aborted) return;
+          if (signal.aborted || criticalError) return;
           const video = videos[nextIndex++];
+          const vidId = getVideoId(video);
+          if (!vidId) continue;
+
+          let isSearchable = false;
+          let isMatch = false;
+
           try {
-            const transcript = await fetchTranscript(video.id?.videoId || video.id, { signal });
-            if (signal.aborted) return;
+            // Live keyword discovery uses fast English native subtitles path (fastSearch: true)
+            const transcript = await fetchTranscript(vidId, { signal, allowWhisper: false, fastSearch: true });
+            if (signal.aborted || criticalError) return;
             if (transcript && transcript.length > 0) {
+              isSearchable = true;
               const keywordMatches = searchKeywordInTranscript(transcript, term);
               if (keywordMatches.length > 0) {
+                isMatch = true;
                 // Keep transcript for summarization in memory, but omit it from storage
                 const match = { video, matches: keywordMatches, transcript, summary: null };
                 collected.push(match);
-                setResults((prev) => [...prev, match]);
+                // Progressive streaming rendering: add immediately to results
+                setResults((prev) => {
+                  if (prev.some(p => getVideoId(p.video) === vidId)) return prev;
+                  return [...prev, match];
+                });
               }
             }
           } catch (err) {
             if (err.name !== 'AbortError') {
-              console.error('Transcript processing error:', err);
+              if (err.status === 401 || err.isNetworkError) {
+                criticalError = err.message;
+                setErrorMsg(err.message);
+                abortController.abort();
+                return;
+              }
+              console.warn(`[Search] Transcript skipped for ${vidId}:`, err.message || err);
             }
           } finally {
-            if (!signal.aborted) {
+            if (!signal.aborted && !criticalError) {
               setSearchProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+              setSearchStats((prev) => ({
+                ...prev,
+                scanned: prev.scanned + 1,
+                searchable: prev.searchable + (isSearchable ? 1 : 0),
+                skipped: prev.skipped + (isSearchable ? 0 : 1),
+                matched: prev.matched + (isMatch ? 1 : 0),
+              }));
             }
           }
         }
@@ -142,7 +185,8 @@ const SearchByKeywordsPage = () => {
       const workerCount = Math.min(TRANSCRIPT_CONCURRENCY, videos.length);
       await Promise.all(Array.from({ length: workerCount }, worker));
 
-      if (signal.aborted) return;
+      if (signal.aborted || criticalError) return;
+      setHasSearched(true);
 
       sessionStorage.setItem('keyword', term);
       // Strip out the heavy transcript array before storing in sessionStorage
@@ -155,7 +199,7 @@ const SearchByKeywordsPage = () => {
 
       const username = JSON.parse(localStorage.getItem('user'))?.username;
       if (username) {
-        await fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
+        await authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -167,7 +211,10 @@ const SearchByKeywordsPage = () => {
         });
       }
     } catch (err) {
-      if (err.name !== 'AbortError') console.error('Search error:', err);
+      if (err.name !== 'AbortError') {
+        console.error('Search error:', err);
+        setErrorMsg(err.message || extractErrorMessage(err, 'Search error occurred. Please try again.'));
+      }
     } finally {
       if (searchAbortControllerRef.current === abortController) {
         setLoading(false);
@@ -198,7 +245,7 @@ const SearchByKeywordsPage = () => {
 
     const result = results[index];
     if (!result || result.summary || summaryLoading[index]) return;
-    const videoId = result.video.id?.videoId || result.video.id;
+    const videoId = getVideoId(result.video);
 
     setSummaryLoading((prev) => ({ ...prev, [index]: true }));
     const abortController = new AbortController();
@@ -210,7 +257,7 @@ const SearchByKeywordsPage = () => {
       if (result.transcript) {
         transcriptText = result.transcript.map((e) => e.text).join(' ');
       } else {
-        const transcript = await fetchTranscript(videoId, { signal: abortController.signal });
+        const transcript = await fetchTranscript(videoId, { signal: abortController.signal, allowWhisper: false });
         transcriptText = transcript.map((e) => e.text).join(' ');
       }
       
@@ -220,7 +267,7 @@ const SearchByKeywordsPage = () => {
       setResults((prev) => {
         // Map by videoId to prevent race conditions when search results change
         const next = prev.map((r) => {
-          const rVid = r.video.id?.videoId || r.video.id;
+          const rVid = getVideoId(r.video);
           return rVid === videoId ? { ...r, summary } : r;
         });
         const storageSafe = next.map(item => ({ ...item, transcript: undefined }));
@@ -239,78 +286,53 @@ const SearchByKeywordsPage = () => {
 
 
   const handleMerge = async (durationMinutes) => {
-    if (selectedVideos.length < 1) return;
+    if (selectedVideos.length < 1) {
+      setErrorMsg('Please select at least 1 video to summarize.');
+      return;
+    }
     
-    // We already have loading state, but let's re-use it or set a merge state
+    setErrorMsg('');
     setLoading(true);
+    setIsMerging(true);
     try {
       const token = localStorage.getItem('access_token') || '';
+      const term = keyword.trim();
+      const selectedKeywords = selectedKeywordsFromInput(term);
       const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           video_ids: selectedVideos,
           target_duration_minutes: durationMinutes,
           generate_audio: true,
           generate_video: true,
           style: 'educational',
+          query: term || undefined,
+          selected_keywords: selectedKeywords,
         }),
       });
       
-      if (!res.ok) throw new Error('Merge failed');
       const data = await res.json();
-      
-      const selectedResults = results.filter((r) => selectedVideos.includes(r.video.id.videoId));
-      const videoData = selectedResults.map(r => ({
-        id: r.video.id?.videoId,
-        title: r.video.snippet?.title,
-        thumbnail: r.video.snippet?.thumbnails?.medium?.url || r.video.snippet?.thumbnails?.default?.url,
-      }));
-      
-      navigate('/merged-podcast-player', {
-        state: { 
-          jobId: data.job_id,
-          videoData: videoData,
-          durations: data.durations || {},
-          totalDuration: data.total_duration || 0
-        }
-      });
+      if (res.ok && data.job_id) {
+        navigate(`/merged-player/${data.job_id}`, {
+          state: { query: term }
+        });
+      } else {
+        setErrorMsg(extractErrorMessage(data, 'Server error during merge. Please retry.'));
+      }
     } catch (e) {
-      console.error(e);
+      console.error('Merge request error:', e);
+      setErrorMsg('Connection error. Make sure the backend is running.');
+    } finally {
       setLoading(false);
+      setIsMerging(false);
     }
   };
 
-  const handleOpenMergePreview = () => {
-    const selectedResults = results.filter((r) => selectedVideos.includes(r.video.id.videoId));
-    // Parity with SearchPage / SuggestedPodcastsPage: 1 video summarizes, 2+ merges.
-    if (selectedResults.length < 1) {
-      alert('Please select at least 1 video to summarize.');
-      return;
-    }
-    try {
-      sessionStorage.setItem('mergePreviewSelectedResults', JSON.stringify(selectedResults));
-    } catch (e) {
-      console.warn('Could not persist merge preview selection:', e);
-    }
-    navigate('/merge-preview', { state: { selectedResults } });
-  };
 
-  const handleSummarize = () => {
-    if (results.length < 1) return alert('At least 1 result is needed to summarize!');
-    const term = keyword.trim();
-    const topThree = results.slice(0, 3).map((r) => ({
-      videoId: r.video.id.videoId,
-      title: r.video.snippet?.title,
-      // Each moment carries the transcript line it was matched on, so the player
-      // can show what is actually said instead of a bare timecode.
-      timestamps: r.matches.slice(0, 5).map((m) => ({
-        time: Math.floor(m.timestamp),
-        text: m.text,
-      })),
-    }));
-    navigate('/summarized-player', { state: { videoData: topThree, keyword: term } });
-  };
 
   return (
     <div style={styles.page}>
@@ -347,7 +369,7 @@ const SearchByKeywordsPage = () => {
 
         {/* Onboarding: what to search, and when to use this page instead of title
             search. Hidden once results exist — it has done its job by then. */}
-        {results.length === 0 && !loading && (
+        {results.length === 0 && !loading && !hasSearched && (
           <motion.section
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -468,6 +490,43 @@ const SearchByKeywordsPage = () => {
           </p>
         </motion.div>
 
+        {/* Error Banner */}
+        {errorMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              background: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              borderRadius: '14px',
+              padding: '12px 18px',
+              marginBottom: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '18px' }}>⚠️</span>
+              <span style={{ fontSize: '13.5px', color: '#fca5a5', fontWeight: 500 }}>{errorMsg}</span>
+            </div>
+            <button
+              onClick={() => setErrorMsg('')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'rgba(255, 255, 255, 0.5)',
+                cursor: 'pointer',
+                fontSize: '14px',
+                padding: '4px',
+              }}
+            >
+              ✕
+            </button>
+          </motion.div>
+        )}
+
         {/* Loading */}
         {loading && (
           <motion.div
@@ -490,10 +549,10 @@ const SearchByKeywordsPage = () => {
 
         {/* Results — same vc-* card design language as Search & Discover */}
         {results.map((result, index) => {
-          const videoId = result.video.id.videoId;
-          const title = result.video.snippet.title;
+          const videoId = getVideoId(result.video);
+          const title = result.video.snippet?.title || '';
           const channel = result.video.snippet?.channelTitle || '';
-          const thumb = result.video.snippet.thumbnails?.medium?.url || result.video.snippet.thumbnails?.default?.url;
+          const thumb = result.video.snippet?.thumbnails?.medium?.url || result.video.snippet?.thumbnails?.default?.url;
           const isSelected = selectedVideos.includes(videoId);
 
           return (
@@ -528,7 +587,7 @@ const SearchByKeywordsPage = () => {
                         onClick={() => {
                           const username = JSON.parse(localStorage.getItem('user'))?.username;
                           if (username) {
-                            fetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
+                            authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
@@ -630,20 +689,75 @@ const SearchByKeywordsPage = () => {
         
         {/* Using MultiSelectBar instead of custom bottom bar */}
         <MultiSelectBar
-          selectedVideos={results.filter(r => selectedVideos.includes(r.video.id.videoId)).map(r => ({
-            id: r.video.id.videoId,
-            title: r.video.snippet.title,
-            thumbnail: r.video.snippet.thumbnails?.medium?.url || r.video.snippet.thumbnails?.default?.url
-          }))}
-          onRemove={(id) => setSelectedVideos(prev => prev.filter(vid => vid !== id))}
+          selectedVideos={results
+            .filter((r) => selectedVideos.includes(getVideoId(r.video)))
+            .map((r) => {
+              const vidId = getVideoId(r.video);
+              return {
+                id: vidId,
+                title: r.video.snippet?.title || '',
+                thumbnail:
+                  r.video.snippet?.thumbnails?.medium?.url ||
+                  r.video.snippet?.thumbnails?.default?.url ||
+                  '',
+              };
+            })}
+          onRemove={(id) => setSelectedVideos((prev) => prev.filter((vid) => vid !== id))}
           onClear={() => setSelectedVideos([])}
           onMerge={handleMerge}
-          isLoading={loading}
+          isLoading={isMerging}
         />
 
 
-        {/* Empty state */}
-        {!loading && results.length === 0 && (
+        {/* Empty state after search */}
+        {!loading && hasSearched && results.length === 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              textAlign: 'center',
+              padding: '48px 20px',
+              background: 'rgba(255, 255, 255, 0.02)',
+              border: '1px solid rgba(255, 255, 255, 0.06)',
+              borderRadius: '16px',
+              maxWidth: '680px',
+              margin: '20px auto 40px',
+            }}
+          >
+            <div
+              style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '12px',
+                background: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+              }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+            </div>
+            <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: 600, margin: '0 0 8px' }}>
+              No matches found in spoken captions
+            </h3>
+            <p style={{ color: 'rgba(255, 255, 255, 0.65)', fontSize: '14px', lineHeight: 1.6, margin: '0 0 12px' }}>
+              Scanned top {searchStats.scanned || 10} YouTube results
+              {searchStats.searchable > 0 && ` (${searchStats.searchable} with English captions, ${searchStats.skipped} skipped without English captions)`}.
+              <br />
+              The exact words for <strong style={{ color: '#93c5fd' }}>"{lastSearchedTerm}"</strong> were not spoken in those videos.
+            </p>
+            <p style={{ color: 'rgba(255, 255, 255, 0.35)', fontSize: '13px', margin: 0 }}>
+              Tip: Try searching for individual concepts (e.g. <em>linear regression</em> or <em>logistic regression</em>) or check if the videos have captions enabled.
+            </p>
+          </motion.div>
+        )}
+
+        {/* Initial landing empty state */}
+        {!loading && !hasSearched && results.length === 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
