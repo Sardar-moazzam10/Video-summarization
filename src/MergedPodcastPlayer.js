@@ -5,6 +5,7 @@ import { API_BASE_URL, authenticatedFetch } from './config/api.js';
 import { extractErrorMessage } from './utils/apiError.js';
 import { getStepStatus, monotonicPercent, nextVisitedStages } from './utils/progressState.js';
 import QualityPanel from './QualityPanel.js';
+import RightsPanel from './components/rights/RightsPanel.jsx';
 
 const STAGES = [
   { key: 'transcribing', label: 'Transcribing', icon: '01' },
@@ -48,8 +49,9 @@ const MergedPodcastPlayer = () => {
   // Full result payload from /result, used to read summary_unavailable and
   // other fields that the status endpoint (/merge/{id}) does not carry.
   const [resultData, setResultData] = useState(null);
-  const pollIntervalRef = useRef(null);
-  const lastStatusRef = useRef('');
+  const pollTimeoutRef = useRef(null);
+  const pollGenerationRef = useRef(0);
+  const pollAbortRef = useRef(null);
   const videoFetchedRef = useRef(false);
 
   const getPollInterval = (status) => {
@@ -66,11 +68,13 @@ const MergedPodcastPlayer = () => {
     }
   };
 
-  const fetchStatus = async () => {
+  const fetchStatus = async (generation, signal) => {
     try {
-      const res = await authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}`);
+      const res = await authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}`, { signal });
+      if (pollGenerationRef.current !== generation) return;
       if (!res.ok) throw new Error(`Status request failed (${res.status})`);
       const statusData = await res.json();
+      if (pollGenerationRef.current !== generation) return;
       const currentStatus = statusData.status;
       if (statusData.query) {
         setJobQuery((prev) => prev || statusData.query);
@@ -105,12 +109,8 @@ const MergedPodcastPlayer = () => {
           setVideoUrl(`${API_BASE_URL}${result.video_url}`);
         }
         saveToHistory(result);
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
       } else if (currentStatus === 'error') {
         setError(statusData.error || 'An unknown error occurred.');
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
       } else {
         if ((currentStatus === 'video_ready' || ['summarizing', 'enriching', 'generating_voice'].includes(currentStatus) || visitedStages.has('video_ready')) && !videoFetchedRef.current) {
           videoFetchedRef.current = true;
@@ -133,31 +133,36 @@ const MergedPodcastPlayer = () => {
             })
             .catch(() => {});
         }
-        if (lastStatusRef.current !== currentStatus) {
-          clearInterval(pollIntervalRef.current);
-          const pollInterval = getPollInterval(currentStatus);
-          pollIntervalRef.current = setInterval(fetchStatus, pollInterval);
-          lastStatusRef.current = currentStatus;
-        }
+        const pollInterval = getPollInterval(currentStatus);
+        pollTimeoutRef.current = setTimeout(() => fetchStatus(generation, signal), pollInterval);
       }
     } catch (err) {
+      if (pollGenerationRef.current !== generation) return;
       console.error("Polling error:", err);
       setError('Connection to merge server failed.');
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
     }
   };
 
   useEffect(() => {
     // EventSource cannot attach a Bearer header. Authenticated polling keeps
     // progress private and adapts its interval to the current pipeline stage.
-    fetchStatus();
-    pollIntervalRef.current = setInterval(fetchStatus, 3000);
+    const generation = pollGenerationRef.current + 1;
+    pollGenerationRef.current = generation;
+    videoFetchedRef.current = false;
+    const controller = new AbortController();
+    pollAbortRef.current = controller;
+    pollTimeoutRef.current = setTimeout(
+      () => fetchStatus(generation, controller.signal),
+      0
+    );
 
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
+      pollGenerationRef.current += 1;
+      controller.abort();
+      if (pollAbortRef.current === controller) pollAbortRef.current = null;
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -447,6 +452,14 @@ const MergedPodcastPlayer = () => {
                   supported by the summarizer.
                 </p>
               </motion.div>
+            )}
+
+            {/* Rights, Attribution & Publication Guidance */}
+            {isFinal && (
+              <RightsPanel
+                jobId={mergeId}
+                initialGateStatus={resultData?.publication_gate_status}
+              />
             )}
 
             {/* Audio Player */}

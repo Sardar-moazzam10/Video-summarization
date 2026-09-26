@@ -13,20 +13,27 @@ import unicodedata
 
 
 SMALL_NATURAL_GAP_SECONDS = 1.2
-MAX_BOUNDARY_EXPANSION_SECONDS = 60.0
+MAX_BOUNDARY_EXPANSION_SECONDS = 15.0
 MAX_BOUNDARY_EXPANSION_UNITS = 12
 PAUSE_CLOSURE_SECONDS = 1.2
 SEMANTIC_CONTINUITY_THRESHOLD = 0.68
 SEMANTIC_TRANSITION_THRESHOLD = 0.52
 SAFE_BOUNDARY_THRESHOLD = 0.50
 MAX_SEMANTIC_PROJECTION_SECONDS = 6.0
+MIN_MERGED_BLOCK_SECONDS = 90.0
+MAX_MERGED_BLOCK_SECONDS = 180.0
+MERGE_CAP_P95_MULTIPLIER = 3.0
 
 _NON_CONTENT_PATTERNS = (
-    r"\b(?:like|comment|subscribe|follow)\b.{0,35}\b(?:video|channel|below|us|me)\b",
+    r"\b(?:like|comment)\b.{0,35}\b(?:video|channel|below)\b",
+    r"\bsubscribe\b(?:.{0,35}\b(?:channel|below|us)\b)?",
+    r"\bfollow\s+(?:us|me)\b",
     r"\b(?:hit|click|press|ring)\b.{0,25}\b(?:bell|notification|subscribe)\b",
     r"\bthanks? for watching\b", r"\bsee you in (?:the )?next (?:one|video)\b",
-    r"\blink (?:is )?in (?:the )?description\b", r"\bsponsor(?:ed|ship)?\b",
-    r"\b(?:buy|join|check out)\b.{0,30}\b(?:course|merch|channel)\b",
+    r"\blink (?:is )?(?:in|below|under) (?:the |this )?(?:description|video)\b",
+    r"\bsponsor(?:ed|ship)?\b",
+    r"\b(?:buy|join|check out|look at)\b.{0,30}\b(?:course|merch|channel|school)\b",
+    r"\b(?:online (?:coding )?school|money-back guarantee|certificate of completion)\b",
 )
 _DISCOURSE_TRANSITIONS = (
     "now ", "next ", "moving on", "another ", "in contrast", "on the other hand",
@@ -229,19 +236,19 @@ def project_semantic_boundaries(raw_by_video, semantic_segments, max_distance=MA
     """Project each raw TextTiling boundary onto the normalized speech timeline."""
     projected = []
     seen = set()
-    for segment in sorted(semantic_segments, key=lambda item: (item.video_id, item.start_time)):
-        video_id = getattr(segment, "video_id", "")
+    unique_video_ids = sorted(set(getattr(item, "video_id", "") for item in semantic_segments) | set(raw_by_video))
+    for video_id in unique_video_ids:
         raw = raw_by_video.get(video_id, ()) or ()
+        if not raw:
+            continue
         units, _ = normalize_caption_timeline(raw, video_id)
         if not units:
             continue
-        boundary_pairs = list(zip(sorted(
+        video_segments = sorted(
             [item for item in semantic_segments if getattr(item, "video_id", "") == video_id],
             key=lambda item: item.start_time
-        ), sorted(
-            [item for item in semantic_segments if getattr(item, "video_id", "") == video_id],
-            key=lambda item: item.start_time
-        )[1:]))
+        )
+        boundary_pairs = list(zip(video_segments, video_segments[1:]))
         for left, right in boundary_pairs:
             if left is right:
                 continue
@@ -375,8 +382,24 @@ def _correction_overlap(left, right, limit=12):
     return best[0]
 
 
+_NORMALIZATION_CACHE: dict = {}
+_ENTRIES_CACHE: dict = {}
+
+
 def normalize_caption_timeline(raw, source_id=""):
     """Convert overlapping display captions into exclusive local speech units."""
+    raw_list = raw or ()
+    cache_key = (
+        id(raw),
+        source_id,
+        len(raw_list),
+        raw_list[0].get("text", "") if raw_list else "",
+        raw_list[-1].get("text", "") if raw_list else "",
+    )
+    if cache_key in _NORMALIZATION_CACHE:
+        cached_units, cached_stats = _NORMALIZATION_CACHE[cache_key]
+        return [copy.deepcopy(u) for u in cached_units], cached_stats
+
     parsed = []
     for raw_id, item in enumerate(sorted(
             raw or (), key=lambda x: float(x.get("start", x.get("start_time", 0))))):
@@ -454,12 +477,25 @@ def normalize_caption_timeline(raw, source_id=""):
         normalized_overlap_count=overlap_count,
         preserved_genuine_pause_count=pauses,
     )
+    _NORMALIZATION_CACHE[cache_key] = ([copy.deepcopy(u) for u in units], stats)
     return units, stats
 
 
 def _entries(raw, source_id=""):
+    raw_list = raw or ()
+    cache_key = (
+        id(raw),
+        source_id,
+        len(raw_list),
+        raw_list[0].get("text", "") if raw_list else "",
+        raw_list[-1].get("text", "") if raw_list else "",
+    )
+    if cache_key in _ENTRIES_CACHE:
+        return list(_ENTRIES_CACHE[cache_key])
     units, _ = normalize_caption_timeline(raw, source_id)
-    return [unit.as_entry() for unit in units]
+    result = [unit.as_entry() for unit in units]
+    _ENTRIES_CACHE[cache_key] = result
+    return list(result)
 
 
 def aggregate_normalization_metrics(raw_by_video):
@@ -530,10 +566,9 @@ def _classify_boundary(score: float, reasons: tuple[str, ...], hits: list[str]) 
         if support >= 2 or (support == 1 and score >= SAFE_BOUNDARY_THRESHOLD):
             return "SOFT_SAFE"
         return "UNSAFE"
-    if "high_semantic_continuity" in reason_set and support == 0:
+    if "high_semantic_continuity" in reason_set or support >= 1:
         if "coherent_explanation_tail" in reason_set or "coherent_explanation_start" in reason_set:
             return "SOFT_SAFE"
-        return "UNSAFE"
     if support >= 2:
         return "SOFT_SAFE"
     if support == 1 and score >= SAFE_BOUNDARY_THRESHOLD:
@@ -564,21 +599,26 @@ def _score_boundary(point, segment, entries, semantic_segments, *, side):
         retained = _text_for_interval(entries, segment.start_time, point)
         if _obvious_continuation(retained):
             score -= .55; reasons.append("unfinished_grammatical_structure")
-        elif not has_complete_end(retained):
-            score += .05; reasons.append("coherent_explanation_tail")
+        elif has_complete_end(retained):
+            score += .40; reasons.append("coherent_explanation_tail")
+        else:
+            score += .20; reasons.append("coherent_explanation_tail")
         if following is None and not has_complete_end(retained):
             score -= .50; reasons.append("source_edge_requires_completion")
         expansion_text = _text_for_interval(entries, segment.end_time, point)
         hits = non_content_hits(expansion_text)
     else:
+        previous_text = (previous[2].casefold().strip() if previous else "")
         retained = _text_for_interval(entries, point, segment.end_time)
-        starts_mid = not has_complete_start(retained) or (
-            following_text.startswith(("to ", "of ", "in ", "for ", "with ", "which ", "that "))
+        starts_mid = (
+            not has_complete_start(retained)
+            or (bool(previous_text) and _obvious_continuation(previous_text))
+            or following_text.startswith(("to ", "of ", "in ", "for ", "with ", "which ", "that "))
         )
         if starts_mid:
             score -= .55; reasons.append("mid_proposition_start")
-        elif not has_complete_start(retained):
-            score += .05; reasons.append("coherent_explanation_start")
+        elif has_complete_start(retained):
+            score += .40; reasons.append("coherent_explanation_start")
         if previous is None and not has_complete_start(retained):
             score -= .50; reasons.append("source_edge_requires_completion")
         expansion_text = _text_for_interval(entries, point, segment.start_time)
@@ -663,14 +703,17 @@ def _semantic_neighbours(segment, semantic_segments):
     )
 
 
-def repair_explanation_boundaries(segments: Sequence, raw_by_video: dict, semantic_segments=()):
+def repair_explanation_boundaries(segments: Sequence, raw_by_video: dict, semantic_segments=(), precomputed_projections=None):
     """Resolve each semantic core to the nearest safe local physical cuts."""
     repaired = [copy.deepcopy(segment) for segment in segments]
     expansions = 0
-    projected_by_video = {video_id: [
-        boundary for boundary in project_semantic_boundaries(raw_by_video, semantic_segments)
-        if boundary.source_id == video_id
-    ] for video_id in sorted(set(raw_by_video) | {getattr(item, "video_id", "") for item in semantic_segments})}
+    if precomputed_projections is not None:
+        projected_by_video = precomputed_projections
+    else:
+        all_projections = project_semantic_boundaries(raw_by_video, semantic_segments)
+        projected_by_video = {}
+        for b in all_projections:
+            projected_by_video.setdefault(b.source_id, []).append(b)
     by_video = {}
     for idx, segment in enumerate(repaired):
         by_video.setdefault(segment.video_id, []).append((idx, segment))
@@ -704,11 +747,11 @@ def repair_explanation_boundaries(segments: Sequence, raw_by_video: dict, semant
 
             start_points = {core_start}
             start_points.update(start for start, _, _ in entries
-                                if 0 <= core_start - start <= MAX_BOUNDARY_EXPANSION_SECONDS)
+                                if abs(start - core_start) <= MAX_BOUNDARY_EXPANSION_SECONDS)
             start_points.update(float(item.start_time) for item in neighbours
-                                if 0 <= core_start - item.start_time <= MAX_BOUNDARY_EXPANSION_SECONDS)
+                                if abs(item.start_time - core_start) <= MAX_BOUNDARY_EXPANSION_SECONDS)
             for boundary in projected_by_video.get(segment.video_id, ()):
-                if boundary.projected_normalized_timestamp <= core_start and 0 <= core_start - boundary.projected_normalized_timestamp <= MAX_BOUNDARY_EXPANSION_SECONDS:
+                if abs(boundary.projected_normalized_timestamp - core_start) <= MAX_BOUNDARY_EXPANSION_SECONDS:
                     start_points.add(boundary.projected_normalized_timestamp)
             end_points = {core_end}
             end_points.update(end for _, end, _ in entries
@@ -717,7 +760,7 @@ def repair_explanation_boundaries(segments: Sequence, raw_by_video: dict, semant
                               if item.end_time > core_start
                               and abs(item.end_time - core_end) <= MAX_BOUNDARY_EXPANSION_SECONDS)
             for boundary in projected_by_video.get(segment.video_id, ()):
-                if boundary.projected_normalized_timestamp >= core_end and 0 <= boundary.projected_normalized_timestamp - core_end <= MAX_BOUNDARY_EXPANSION_SECONDS:
+                if abs(boundary.projected_normalized_timestamp - core_end) <= MAX_BOUNDARY_EXPANSION_SECONDS:
                     end_points.add(boundary.projected_normalized_timestamp)
 
             if previous_same is not None:
@@ -726,7 +769,7 @@ def repair_explanation_boundaries(segments: Sequence, raw_by_video: dict, semant
                 end_points = {point for point in end_points if point <= upper_bound + 1e-6}
 
             chosen_start = None
-            for point in sorted(start_points, key=lambda p: (core_start - p, -p))[:MAX_BOUNDARY_EXPANSION_UNITS + 1]:
+            for point in sorted(start_points, key=lambda p: (abs(p - core_start), p))[:MAX_BOUNDARY_EXPANSION_UNITS + 1]:
                 if previous_same is not None and point < lower_bound - 1e-6:
                     continue
                 probe = copy.copy(segment); probe.start_time = point; probe.end_time = core_end
@@ -753,19 +796,9 @@ def repair_explanation_boundaries(segments: Sequence, raw_by_video: dict, semant
                 segment.start_time = lower_bound
             if next_same is not None and segment.end_time > upper_bound:
                 segment.end_time = upper_bound
-            if previous_same is not None and segment.start_time >= float(previous_same.end_time):
-                segment.start_time = float(previous_same.end_time)
-            if next_same is not None and segment.end_time <= float(next_same.start_time):
-                segment.end_time = float(next_same.start_time)
             if segment.start_time >= segment.end_time:
-                if previous_same is not None:
-                    segment.start_time = float(previous_same.end_time)
-                else:
-                    segment.start_time = float(core_start)
-                if next_same is not None:
-                    segment.end_time = float(next_same.start_time)
-                else:
-                    segment.end_time = float(core_end)
+                segment.start_time = float(core_start)
+                segment.end_time = float(core_end)
             segment.text = _text_for_interval(entries, segment.start_time, segment.end_time)
             segment.start_boundary_evidence = (
                 chosen_start[1].to_dict() if chosen_start else
@@ -777,14 +810,41 @@ def repair_explanation_boundaries(segments: Sequence, raw_by_video: dict, semant
             )
             segment.boundary_evidence = segment.end_boundary_evidence
             segment.non_content_guard_hits = core_hits
-            segment.completeness = float(bool(chosen_start and chosen_end and not core_hits))
+            pure_cta = bool(core_hits and len(core_text.split()) < 30)
+            segment.completeness = float(bool(chosen_start and chosen_end and not pure_cta))
             if segment.start_time != core_start or segment.end_time != core_end:
                 expansions += 1
     return repaired, expansions
 
 
-def rebuild_final_texts(segments: Sequence, raw_by_video: dict, semantic_segments=()):
-    """Rebuild text once from final intervals with exclusive caption ownership."""
+def _coalesced_source_intervals(intervals):
+    by_source = {}
+    for source_id, start, end in intervals:
+        start, end = float(start), float(end)
+        if end > start:
+            by_source.setdefault(source_id, []).append((start, end))
+    result = []
+    for source_id, source_intervals in by_source.items():
+        ordered = sorted(source_intervals)
+        if not ordered:
+            continue
+        current_start, current_end = ordered[0]
+        for start, end in ordered[1:]:
+            if start <= current_end + 1e-6:
+                current_end = max(current_end, end)
+            else:
+                result.append((source_id, current_start, current_end))
+                current_start, current_end = start, end
+        result.append((source_id, current_start, current_end))
+    return result
+
+
+def _source_interval_duration(intervals) -> float:
+    return sum(end - start for _, start, end in _coalesced_source_intervals(intervals))
+
+
+def rebuild_final_texts(segments: Sequence, raw_by_video: dict, semantic_segments=(), audit_stats=None):
+    """Rebuild text once from final intervals with exclusive caption ownership and local CTA removal."""
     work = [copy.deepcopy(segment) for segment in segments]
     owned = {id(segment): [] for segment in work}
     by_source = {}
@@ -805,20 +865,88 @@ def rebuild_final_texts(segments: Sequence, raw_by_video: dict, semantic_segment
             if choices:
                 segment = max(choices, key=lambda value: (value[0], value[1]))[2]
                 owned[id(segment)].append((start, end, text))
-    for segment in work:
-        segment.text = stitch_caption_entries(owned[id(segment)])
-        start_decision = assess_start_boundary(
-            segment, raw_by_video.get(segment.video_id, ()), semantic_segments)
-        end_decision = assess_end_boundary(
-            segment, raw_by_video.get(segment.video_id, ()), semantic_segments)
-        segment.start_boundary_evidence = start_decision.to_dict()
-        segment.end_boundary_evidence = end_decision.to_dict()
-        segment.boundary_evidence = segment.end_boundary_evidence
-        segment.non_content_guard_hits = non_content_hits(segment.text)
-        segment.completeness = float(start_decision.is_complete and end_decision.is_complete
-                                     and not segment.non_content_guard_hits)
-    return work
 
+    rebuilt_segments = []
+    detected_intervals = []
+    removed_intervals = []
+    for segment in work:
+        entries = owned[id(segment)]
+        if not entries:
+            segment.text = ""
+            segment.completeness = 0.0
+            segment.non_content_guard_hits = []
+            rebuilt_segments.append(segment)
+            continue
+
+        clean_entries = [e for e in entries if not non_content_hits(e[2])]
+        offending_entries = [e for e in entries if non_content_hits(e[2])]
+        detected_intervals.extend((segment.video_id, e[0], e[1]) for e in offending_entries)
+
+        if not clean_entries:
+            segment.text = stitch_caption_entries(entries)
+            segment.non_content_guard_hits = non_content_hits(segment.text)
+            segment.completeness = 0.0
+            removed_intervals.extend((segment.video_id, e[0], e[1]) for e in offending_entries)
+            rebuilt_segments.append(segment)
+            continue
+
+        if not offending_entries:
+            segment.text = stitch_caption_entries(clean_entries) if clean_entries else segment.text
+            segment.non_content_guard_hits = []
+            segment.completeness = float(getattr(segment, "completeness", 1.0))
+            rebuilt_segments.append(segment)
+            continue
+
+        first_clean_idx = next(i for i, e in enumerate(entries) if not non_content_hits(e[2]))
+        last_clean_idx = len(entries) - 1 - next(i for i, e in enumerate(reversed(entries)) if not non_content_hits(e[2]))
+        trimmed_entries = entries[first_clean_idx:last_clean_idx + 1]
+
+        internal_offending = [e for e in trimmed_entries if non_content_hits(e[2])]
+        if not internal_offending:
+            removed_intervals.extend((segment.video_id, e[0], e[1]) for e in offending_entries)
+            segment.start_time = float(trimmed_entries[0][0])
+            segment.end_time = float(trimmed_entries[-1][1])
+            segment.text = stitch_caption_entries(trimmed_entries)
+            start_decision = assess_start_boundary(
+                segment, raw_by_video.get(segment.video_id, ()), semantic_segments)
+            end_decision = assess_end_boundary(
+                segment, raw_by_video.get(segment.video_id, ()), semantic_segments)
+            segment.start_boundary_evidence = start_decision.to_dict()
+            segment.end_boundary_evidence = end_decision.to_dict()
+            segment.boundary_evidence = end_decision.to_dict()
+            segment.non_content_guard_hits = []
+            segment.completeness = float(start_decision.is_complete and end_decision.is_complete)
+            rebuilt_segments.append(segment)
+        else:
+            removed_intervals.extend((segment.video_id, e[0], e[1]) for e in offending_entries)
+            from itertools import groupby
+            for is_offending, grp_iter in groupby(trimmed_entries, key=lambda e: bool(non_content_hits(e[2]))):
+                if not is_offending:
+                    grp = list(grp_iter)
+                    if not grp:
+                        continue
+                    sub_seg = copy.deepcopy(segment)
+                    sub_seg.start_time = float(grp[0][0])
+                    sub_seg.end_time = float(grp[-1][1])
+                    sub_seg.text = stitch_caption_entries(grp)
+                    if sub_seg.duration < 3.0:
+                        continue
+                    start_decision = assess_start_boundary(
+                        sub_seg, raw_by_video.get(sub_seg.video_id, ()), semantic_segments)
+                    end_decision = assess_end_boundary(
+                        sub_seg, raw_by_video.get(sub_seg.video_id, ()), semantic_segments)
+                    sub_seg.start_boundary_evidence = start_decision.to_dict()
+                    sub_seg.end_boundary_evidence = end_decision.to_dict()
+                    sub_seg.boundary_evidence = end_decision.to_dict()
+                    sub_seg.non_content_guard_hits = []
+                    sub_seg.completeness = float(start_decision.is_complete and end_decision.is_complete)
+                    rebuilt_segments.append(sub_seg)
+
+    if audit_stats is not None:
+        audit_stats["cta_spans_detected"] = len(_coalesced_source_intervals(detected_intervals))
+        audit_stats["cta_spans_removed"] = len(_coalesced_source_intervals(removed_intervals))
+        audit_stats["cta_removed_seconds"] = round(_source_interval_duration(removed_intervals), 3)
+    return rebuilt_segments
 
 def _value(segment):
     evidence = list((getattr(segment, "knowledge_unit_scores", {}) or {}).values())
@@ -829,50 +957,152 @@ def _value(segment):
 
 def reconcile_physical_duration(selected, candidates, raw_by_video, semantic_segments,
                                 budget, min_fill=0.9, overshoot_tolerance=0.08):
-    """Reconcile only whole, contextually closed physical intervals."""
+    """Reconcile only whole, contextually closed physical intervals with bounded infeasibility evidence."""
     work = list(selected)
-    rejected_closure = rejected_non_content = added = removed = 0
+    rejected_reasons = {
+        "temporal_overlap": 0,
+        "non_content": 0,
+        "closure_incomplete": 0,
+        "budget_overshoot": 0,
+    }
+    candidates_examined = 0
+    added = 0
+    removed = 0
+
     maximum = float(budget) * (1.0 + float(overshoot_tolerance))
+    victim_ids = set()
     while work and sum(item.duration for item in work) > maximum:
         victim = min(range(len(work)), key=lambda i: (_value(work[i]), -work[i].duration, i))
-        work.pop(victim)
+        victim_seg = work.pop(victim)
+        victim_ids.add(getattr(victim_seg, "segment_id", ""))
+        for prov_id in (getattr(victim_seg, "provenance_segment_ids", ()) or ()):
+            victim_ids.add(prov_id)
         removed += 1
 
     minimum = float(budget) * float(min_fill)
-    selected_ids = {getattr(item, "segment_id", "") for item in work}
+    current_duration = sum(item.duration for item in work)
+    selected_ids = set()
+    for item in work:
+        selected_ids.add(getattr(item, "segment_id", ""))
+        for prov_id in (getattr(item, "provenance_segment_ids", ()) or ()):
+            selected_ids.add(prov_id)
+
     unused = sorted(
         (copy.deepcopy(item) for item in candidates
-         if getattr(item, "segment_id", "") not in selected_ids),
+         if getattr(item, "segment_id", "") not in selected_ids
+         and getattr(item, "segment_id", "") not in victim_ids),
         key=lambda item: (-_value(item), item.video_id, item.start_time),
     )
-    for candidate in unused:
-        if sum(item.duration for item in work) >= minimum:
-            break
-        if any(item.video_id == candidate.video_id and
-               min(item.end_time, candidate.end_time) > max(item.start_time, candidate.start_time)
-               for item in work):
-            continue
-        candidate_text = _text_for_interval(
-            _entries(raw_by_video.get(candidate.video_id, ())),
-            candidate.start_time, candidate.end_time,
-        )
-        if non_content_hits(candidate_text):
-            rejected_non_content += 1
-            continue
-        trial, _ = repair_explanation_boundaries([candidate], raw_by_video, semantic_segments)
-        trial = rebuild_final_texts(trial, raw_by_video, semantic_segments)
-        if not trial or trial[0].completeness < 1.0:
-            rejected_closure += 1
-            continue
-        if sum(item.duration for item in work) + trial[0].duration > maximum:
-            continue
-        work.append(trial[0])
-        added += 1
-    return work, {"budget_blocks_removed": removed,
-                  "closure_rejections_during_reconciliation": rejected_closure,
-                  "non_content_candidates_rejected": rejected_non_content,
-                  "candidates_added_during_underfill_reconciliation": added}
 
+    all_projections = project_semantic_boundaries(raw_by_video, semantic_segments)
+    projected_by_video = {}
+    for b in all_projections:
+        projected_by_video.setdefault(b.source_id, []).append(b)
+
+    for candidate in unused:
+        if current_duration >= minimum:
+            break
+        candidates_examined += 1
+
+        cand_start = float(candidate.start_time)
+        cand_end = float(candidate.end_time)
+        same_source_work = [item for item in work if item.video_id == candidate.video_id]
+
+        overlapping_items = [
+            item for item in same_source_work
+            if min(float(item.end_time), cand_end) > max(float(item.start_time), cand_start) + 0.05
+        ]
+        if overlapping_items:
+            enveloped = any(
+                float(item.start_time) <= cand_start + 0.05 and float(item.end_time) >= cand_end - 0.05
+                for item in overlapping_items
+            )
+            if enveloped or len(overlapping_items) > 1:
+                rejected_reasons["temporal_overlap"] += 1
+                continue
+            item = overlapping_items[0]
+            if cand_start < float(item.start_time) and cand_end <= float(item.end_time):
+                cand_end = float(item.start_time)
+            elif cand_start >= float(item.start_time) and cand_end > float(item.end_time):
+                cand_start = float(item.end_time)
+            else:
+                rejected_reasons["temporal_overlap"] += 1
+                continue
+            if cand_end - cand_start < 15.0:
+                rejected_reasons["temporal_overlap"] += 1
+                continue
+            candidate.start_time = cand_start
+            candidate.end_time = cand_end
+
+        raw = raw_by_video.get(candidate.video_id, ())
+        candidate_text = _text_for_interval(
+            _entries(raw),
+            float(candidate.start_time), float(candidate.end_time),
+        )
+        if non_content_hits(candidate_text) and len(candidate_text.split()) < 30:
+            rejected_reasons["non_content"] += 1
+            continue
+
+        trial, _ = repair_explanation_boundaries(
+            [candidate], raw_by_video, semantic_segments, precomputed_projections=projected_by_video
+        )
+        trial = rebuild_final_texts(trial, raw_by_video, semantic_segments)
+        trial = [t for t in trial if float(getattr(t, "completeness", 0.0)) >= 1.0]
+        if not trial:
+            rejected_reasons["closure_incomplete"] += 1
+            continue
+
+        for t in trial:
+            if any(
+                item.video_id == t.video_id
+                and min(float(item.end_time), float(t.end_time))
+                    > max(float(item.start_time), float(t.start_time)) + 0.05
+                for item in work
+            ):
+                rejected_reasons["temporal_overlap"] += 1
+                continue
+            if current_duration + t.duration > maximum:
+                rejected_reasons["budget_overshoot"] += 1
+                continue
+            work.append(t)
+            current_duration += t.duration
+            added += 1
+            if current_duration >= minimum:
+                break
+
+    final_fill_ratio = current_duration / max(float(budget), 1e-6)
+    underfilled = current_duration < minimum
+    exhausted = candidates_examined == len(unused)
+    eligible_remaining_candidates = 0 if exhausted else len(unused) - candidates_examined
+    eligible_remaining_duration = 0.0 if exhausted else sum(
+        item.duration for item in unused[candidates_examined:]
+    )
+    infeasibility_proven = bool(underfilled and exhausted and eligible_remaining_candidates == 0)
+    if infeasibility_proven:
+        infeasibility_reason = "all_reserve_candidates_exhausted_without_legal_fill"
+    elif underfilled:
+        infeasibility_reason = "reserve_candidates_not_exhausted"
+    else:
+        infeasibility_reason = None
+
+    stats = {
+        "budget_blocks_removed": removed,
+        "closure_rejections_during_reconciliation": rejected_reasons["closure_incomplete"],
+        "non_content_candidates_rejected": rejected_reasons["non_content"],
+        "candidates_added_during_underfill_reconciliation": added,
+        "candidates_examined": candidates_examined,
+        "refill_candidates_total": len(unused),
+        "refill_candidates_examined": candidates_examined,
+        "refill_candidates_added": added,
+        "rejected_reason_counts": rejected_reasons,
+        "eligible_remaining_candidates": eligible_remaining_candidates,
+        "eligible_remaining_duration": round(eligible_remaining_duration, 3),
+        "available_remaining_duration": round(eligible_remaining_duration, 3),
+        "final_fill_ratio": round(final_fill_ratio, 4),
+        "infeasibility_proven": infeasibility_proven,
+        "infeasibility_reason": infeasibility_reason,
+    }
+    return work, stats
 
 def probe_rendered_duration(path: str):
     """Return local rendered MP4 duration without network access."""
@@ -899,6 +1129,8 @@ class BoundaryRepairStats:
     overlapping_seconds_after: float = 0.0
     adjacent_intervals_merged: int = 0
     ownership_boundaries_repaired: int = 0
+    max_merged_block_seconds: float = MAX_MERGED_BLOCK_SECONDS
+    semantic_segment_duration_distribution: dict | None = None
 
     def to_dict(self):
         return {
@@ -908,6 +1140,8 @@ class BoundaryRepairStats:
             "repeated_interval_seconds": round(self.overlapping_seconds_after, 3),
             "adjacent_same_source_merges": self.adjacent_intervals_merged,
             "ownership_boundaries_repaired": self.ownership_boundaries_repaired,
+            "max_merged_block_seconds": round(self.max_merged_block_seconds, 3),
+            "semantic_segment_duration_distribution": self.semantic_segment_duration_distribution or {},
         }
 
 
@@ -921,13 +1155,16 @@ def _labels(segment) -> set[str]:
 def _same_explanation(left, right) -> bool:
     if getattr(left, "video_id", None) != getattr(right, "video_id", None):
         return False
-    common = _labels(left) & _labels(right)
-    if common:
+    left_concepts = set(getattr(left, "canonical_concepts", ()) or ())
+    right_concepts = set(getattr(right, "canonical_concepts", ()) or ())
+    if left_concepts and right_concepts and (left_concepts & right_concepts):
+        sim = _cosine(getattr(left, "embedding", None), getattr(right, "embedding", None))
+        if sim is not None and sim < SEMANTIC_TRANSITION_THRESHOLD:
+            return False
         return True
-    # A raw time-overlap alone is not enough to declare the same explanation.
-    # Nearby same-video segments can be genuinely different thoughts that only
-    # appear adjacent in the canonical manifest order, so keep the merge guard
-    # semantic and source-local instead of time-only.
+    sim = _cosine(getattr(left, "embedding", None), getattr(right, "embedding", None))
+    if sim is not None and sim >= SEMANTIC_CONTINUITY_THRESHOLD:
+        return True
     return False
 
 
@@ -967,7 +1204,10 @@ def _merge(left, right):
         float(getattr(left, "original_core_end", left.end_time)),
         float(getattr(right, "original_core_end", right.end_time)),
     )
-    left.completeness = explanation_completeness(left.text)
+    left.completeness = min(float(getattr(left, "completeness", 1.0)), float(getattr(right, "completeness", 1.0)))
+    left.start_boundary_evidence = getattr(left, "start_boundary_evidence", None)
+    left.end_boundary_evidence = getattr(right, "end_boundary_evidence", None)
+    left.boundary_evidence = left.end_boundary_evidence
     return left
 
 
@@ -976,60 +1216,100 @@ def _overlap_totals(segments: Sequence) -> tuple[int, float]:
     for left, right in zip(segments, segments[1:]):
         if getattr(left, "video_id", None) != getattr(right, "video_id", None):
             continue
-        overlap = float(left.end_time) - float(right.start_time)
-        if overlap > 0:
+        overlap = min(float(left.end_time), float(right.end_time)) - max(float(left.start_time), float(right.start_time))
+        if overlap > 1e-6:
             count += 1
             seconds += overlap
     return count, seconds
 
 
-def repair_physical_boundaries(segments: Sequence):
+def _percentile(values, percentile: float) -> float:
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        return 0.0
+    position = (len(ordered) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def semantic_segment_duration_distribution(segments: Sequence) -> dict:
+    durations = [float(segment.duration) for segment in segments if float(segment.duration) > 0]
+    return {
+        "count": len(durations),
+        "p50": round(_percentile(durations, 0.50), 3),
+        "p75": round(_percentile(durations, 0.75), 3),
+        "p90": round(_percentile(durations, 0.90), 3),
+        "p95": round(_percentile(durations, 0.95), 3),
+        "max": round(max(durations, default=0.0), 3),
+    }
+
+
+def derive_max_merged_block_seconds(segments: Sequence) -> tuple[float, dict]:
+    distribution = semantic_segment_duration_distribution(segments)
+    observed_cap = distribution["p95"] * MERGE_CAP_P95_MULTIPLIER
+    cap = max(MIN_MERGED_BLOCK_SECONDS, min(MAX_MERGED_BLOCK_SECONDS, observed_cap))
+    return cap, distribution
+
+
+def repair_physical_boundaries(segments: Sequence, max_merged_block_seconds: float | None = None):
     """Return repaired copies and audit metrics; never alter cross-source times."""
     work = [copy.deepcopy(segment) for segment in segments]
+    observed_cap, duration_distribution = derive_max_merged_block_seconds(work)
+    merge_cap = observed_cap if max_merged_block_seconds is None else float(max_merged_block_seconds)
     before_count, before_seconds = _overlap_totals(work)
     merged = ownership = 0
     same_source_order = {}
     for idx, segment in enumerate(work):
         same_source_order.setdefault(segment.video_id, []).append((idx, segment))
 
-    final_by_original_index = {}
+    final_by_slot = {}
     for video_id, items in same_source_order.items():
+        original_slots = sorted(pair[0] for pair in items)
         ordered_items = sorted(items, key=lambda pair: (float(pair[1].start_time), float(pair[1].end_time), pair[0]))
         repaired_video = []
-        for original_idx, current in ordered_items:
+        for _, current in ordered_items:
             if not repaired_video:
-                repaired_video.append((original_idx, current))
+                repaired_video.append(current)
                 continue
-            previous_idx, previous = repaired_video[-1]
+            previous = repaired_video[-1]
             gap = float(current.start_time) - float(previous.end_time)
-            if gap <= SMALL_NATURAL_GAP_SECONDS and _same_explanation(previous, current):
-                repaired_video[-1] = (previous_idx, _merge(previous, current))
+            projected_duration = float(current.end_time) - float(previous.start_time)
+            if (gap <= SMALL_NATURAL_GAP_SECONDS
+                and projected_duration <= merge_cap
+                and _same_explanation(previous, current)):
+                repaired_video[-1] = _merge(previous, current)
                 merged += 1
                 continue
             if gap < 0:
                 current.start_time = float(previous.end_time)
                 ownership += 1
-            repaired_video.append((original_idx, current))
+            if current.end_time > current.start_time + 1e-3:
+                repaired_video.append(current)
 
-        for original_idx, repaired_segment in repaired_video:
-            final_by_original_index[original_idx] = repaired_segment
+        for slot, repaired_segment in zip(original_slots, repaired_video):
+            final_by_slot[slot] = repaired_segment
 
-    repaired = [final_by_original_index[idx] for idx in sorted(final_by_original_index)]
+    repaired = [final_by_slot[idx] for idx in sorted(final_by_slot)]
     filtered = []
     for segment in repaired:
         if filtered and getattr(segment, "video_id", None) == getattr(filtered[-1], "video_id", None):
             previous = filtered[-1]
-            if float(segment.start_time) < float(previous.end_time) - 1e-6:
+            overlap = min(float(segment.end_time), float(previous.end_time)) - max(float(segment.start_time), float(previous.start_time))
+            if overlap > 1e-6:
                 if float(segment.end_time) <= float(previous.end_time) + 1e-6:
                     ownership += 1
                     continue
                 segment.start_time = float(previous.end_time)
                 ownership += 1
-        filtered.append(segment)
+        if segment.end_time > segment.start_time + 1e-3:
+            filtered.append(segment)
     repaired = filtered
 
     after_count, after_seconds = _overlap_totals(repaired)
     stats = BoundaryRepairStats(
-        before_count, before_seconds, after_count, after_seconds, merged, ownership
+        before_count, before_seconds, after_count, after_seconds, merged, ownership,
+        merge_cap, duration_distribution,
     )
     return repaired, stats

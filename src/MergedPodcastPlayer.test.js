@@ -11,17 +11,19 @@
  */
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import axios from 'axios';
 
 jest.mock('axios');
 jest.mock('./QualityPanel.js', () => () => <div data-testid="quality-panel-stub" />);
+jest.mock('./components/rights/RightsPanel.jsx', () => () => <div data-testid="rights-panel-stub" />);
 
 const JOB_ID = 'job-abc123';
 
 jest.mock('react-router-dom', () => ({
   useParams: () => ({ mergeId: JOB_ID }),
   useNavigate: () => jest.fn(),
+  useLocation: () => ({ state: {} }),
 }));
 
 jest.mock('framer-motion', () => {
@@ -33,15 +35,33 @@ jest.mock('framer-motion', () => {
   return { motion: new Proxy({}, { get: (_, tag) => passthrough(tag) }) };
 });
 
+jest.mock('./config/api.js', () => ({
+  API_BASE_URL: 'http://localhost:8000',
+  authenticatedFetch: jest.fn(),
+}));
+
+import { authenticatedFetch } from './config/api.js';
 import MergedPodcastPlayer from './MergedPodcastPlayer.js';
 
 const STATUS_URL = `http://localhost:8000/api/v1/merge/${JOB_ID}`;
 const RESULT_URL = `${STATUS_URL}/result`;
 
 function mockEndpoints({ status, result }) {
-  axios.get.mockImplementation((url) => {
-    if (url === STATUS_URL) return Promise.resolve({ data: status });
-    if (url === RESULT_URL) return Promise.resolve({ data: result || {} });
+  authenticatedFetch.mockImplementation((url) => {
+    if (url === STATUS_URL) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(status),
+      });
+    }
+    if (url === RESULT_URL) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(result || {}),
+      });
+    }
     return Promise.reject(new Error(`Unexpected URL in test: ${url}`));
   });
 }
@@ -180,11 +200,14 @@ describe('MergedPodcastPlayer — mid-pipeline processing states', () => {
     render(<MergedPodcastPlayer />);
 
     await waitFor(() => {
-      expect(axios.get).toHaveBeenCalledWith(STATUS_URL);
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        STATUS_URL,
+        expect.objectContaining({ signal: expect.anything() })
+      );
     });
     expect(screen.queryByText('Video Highlights')).not.toBeInTheDocument();
     expect(screen.queryByText('Your summary is ready')).not.toBeInTheDocument();
-    expect(axios.get).not.toHaveBeenCalledWith(RESULT_URL);
+    expect(authenticatedFetch).not.toHaveBeenCalledWith(RESULT_URL);
   });
 
   test('fetches result and renders video when status is summarizing (post-video-ready)', async () => {
@@ -201,7 +224,7 @@ describe('MergedPodcastPlayer — mid-pipeline processing states', () => {
 
     const video = await screen.findByText('Video Highlights');
     expect(video).toBeInTheDocument();
-    expect(axios.get).toHaveBeenCalledWith(RESULT_URL);
+    expect(authenticatedFetch).toHaveBeenCalledWith(RESULT_URL);
   });
 
   test('5. VIDEO_READY -> page refresh still shows video', async () => {
@@ -222,5 +245,78 @@ describe('MergedPodcastPlayer — mid-pipeline processing states', () => {
 
     const video = await screen.findByText('Video Highlights');
     expect(video).toBeInTheDocument();
+  });
+});
+
+
+describe('MergedPodcastPlayer  polling lifecycle', () => {
+  test('keeps at most one status request in flight and stops after unmount', async () => {
+    jest.useFakeTimers();
+    let calls = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    authenticatedFetch.mockImplementation((url, options = {}) => {
+      if (url !== STATUS_URL) {
+        return Promise.reject(new Error(`Unexpected URL in test: ${url}`));
+      }
+
+      calls += 1;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (callback) => {
+          if (settled) return;
+          settled = true;
+          inFlight -= 1;
+          callback();
+        };
+        const timer = setTimeout(() => finish(() => resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            status: 'transcribing',
+            progress_percent: 20,
+            stage_message: 'Transcribing video...',
+          }),
+        })), 100);
+
+        options.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          finish(() => reject(new DOMException('Aborted', 'AbortError')));
+        }, { once: true });
+      });
+    });
+
+    const view = render(
+      <React.StrictMode>
+        <MergedPodcastPlayer />
+      </React.StrictMode>
+    );
+
+    for (let index = 0; index < 12; index += 1) {
+      await act(async () => {
+        jest.advanceTimersByTime(5100);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(calls).toBeGreaterThanOrEqual(10);
+    expect(maxInFlight).toBe(1);
+
+    await act(async () => {
+      view.unmount();
+    });
+    const callsAtUnmount = calls;
+    await act(async () => {
+      jest.advanceTimersByTime(10000);
+      await Promise.resolve();
+    });
+    expect(calls).toBe(callsAtUnmount);
+
+    jest.useRealTimers();
   });
 });

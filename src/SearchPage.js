@@ -18,12 +18,13 @@ const EXAMPLE_QUERIES = [
   'Morning routine habits',
 ];
 
-export const buildMergeRequest = (videoIds, durationMinutes, query) => ({
+export const buildMergeRequest = (videoIds, durationMinutes, query, allowPartial = false) => ({
   video_ids: videoIds,
   target_duration_minutes: durationMinutes,
   generate_audio: true,
   generate_video: true,
   query: (query || '').trim() || undefined,
+  ...(allowPartial ? { allow_partial_sources: true } : {}),
 });
 
 const SearchPage = () => {
@@ -35,6 +36,11 @@ const SearchPage = () => {
   const [searchQuery, setSearchQuery] = useState(
     () => sessionStorage.getItem('normalSearchQuery') || ''
   );
+  const [licenseFilter, setLicenseFilter] = useState('any');
+  const [preflightData, setPreflightData] = useState(null);
+  const [showPreflightModal, setShowPreflightModal] = useState(false);
+  const [pendingDuration, setPendingDuration] = useState(null);
+  const [isPreflighting, setIsPreflighting] = useState(false);
   const navigate = useNavigate();
 
   const username = JSON.parse(localStorage.getItem('user'))?.username;
@@ -45,7 +51,7 @@ const SearchPage = () => {
     if (storedVideos) setVideos(storedVideos);
   }, []);
 
-  const handleSearch = useCallback(async (query) => {
+  const handleSearch = useCallback(async (query, selectedLicense = licenseFilter) => {
     const normalizedQuery = (query || '').trim();
     setSearchQuery(normalizedQuery);
     sessionStorage.setItem('normalSearchQuery', normalizedQuery);
@@ -55,8 +61,11 @@ const SearchPage = () => {
     setIsLoading(true);
 
     try {
-      // Unrestricted search — exactly what the user typed, any duration.
-      const fetchedVideos = await fetchVideos(query);
+      // Search YouTube with optional license filter and rights enrichment
+      const fetchedVideos = await fetchVideos(query, {
+        license: selectedLicense,
+        includeRights: true,
+      });
       setVideos(fetchedVideos);
       localStorage.setItem('searchedVideos', JSON.stringify(fetchedVideos));
       setNoResults(fetchedVideos.length === 0);
@@ -92,20 +101,14 @@ const SearchPage = () => {
         thumbnail: v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url,
       }));
 
-  const handleMerge = async (durationMinutes) => {
-    if (selectedForMerge.length < 1) {
-      setErrorMsg('Please select at least 1 video to summarize.');
-      return;
-    }
-    setErrorMsg('');
+  const executeMergeJob = async (videoIds, durationMinutes, allowPartial = false) => {
     setIsLoading(true);
-
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(buildMergeRequest(
-          selectedForMerge, durationMinutes, searchQuery
+          videoIds, durationMinutes, searchQuery, allowPartial
         )),
       });
       if (res.status === 401) {
@@ -128,6 +131,65 @@ const SearchPage = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleMerge = async (durationMinutes) => {
+    if (selectedForMerge.length < 1) {
+      setErrorMsg('Please select at least 1 video to summarize.');
+      return;
+    }
+    setErrorMsg('');
+    setIsLoading(true);
+
+    try {
+      // Step 1: Preflight check before expensive merge creation if multi-video
+      if (selectedForMerge.length > 1) {
+        setIsPreflighting(true);
+        const pfRes = await fetch(`${API_BASE_URL}/api/v1/merge/preflight`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ video_ids: selectedForMerge }),
+        });
+
+        if (pfRes.status === 401) {
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('user');
+          localStorage.removeItem('refresh_token');
+          navigate('/login', { state: { sessionExpired: true } });
+          return;
+        }
+
+        if (pfRes.ok) {
+          const pfData = await pfRes.json();
+          if (!pfData.can_merge || (pfData.unavailable_video_ids && pfData.unavailable_video_ids.length > 0)) {
+            // Unavailable sources detected! Halt before creating any merge job.
+            setPreflightData(pfData);
+            setPendingDuration(durationMinutes);
+            setShowPreflightModal(true);
+            setIsLoading(false);
+            setIsPreflighting(false);
+            return;
+          }
+        }
+        setIsPreflighting(false);
+      }
+
+      // If all sources ready or single source, proceed to normal merge
+      await executeMergeJob(selectedForMerge, durationMinutes, false);
+    } catch {
+      setErrorMsg('Connection error. Make sure the backend is running.');
+      setIsLoading(false);
+      setIsPreflighting(false);
+    }
+  };
+
+  const handleConfirmPartialMerge = async () => {
+    setShowPreflightModal(false);
+    if (!preflightData?.ready_video_ids?.length) {
+      setErrorMsg('No ready sources available to merge.');
+      return;
+    }
+    await executeMergeJob(preflightData.ready_video_ids, pendingDuration, true);
   };
 
   const handleRemoveVideo = (videoId) =>
@@ -171,7 +233,44 @@ const SearchPage = () => {
       <motion.div className="px-4 pb-8"
         initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
         <div className="max-w-2xl mx-auto" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <SearchBar onSearch={handleSearch} />
+          <SearchBar onSearch={(q) => handleSearch(q, licenseFilter)} />
+
+          {/* License Filter Toggle */}
+          <div className="flex items-center justify-between px-1 text-xs">
+            <span className="text-dark-400 font-medium">Filter Reusable License:</span>
+            <div className="flex items-center gap-1 bg-dark-800/80 p-1 rounded-lg border border-dark-700">
+              <button
+                type="button"
+                data-testid="license-filter-all"
+                onClick={() => {
+                  setLicenseFilter('any');
+                  if (searchQuery) handleSearch(searchQuery, 'any');
+                }}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  licenseFilter === 'any'
+                    ? 'bg-accent-600/30 text-accent-300 border border-accent-500/40'
+                    : 'text-dark-400 hover:text-white'
+                }`}
+              >
+                All Videos
+              </button>
+              <button
+                type="button"
+                data-testid="license-filter-cc"
+                onClick={() => {
+                  setLicenseFilter('creativeCommon');
+                  if (searchQuery) handleSearch(searchQuery, 'creativeCommon');
+                }}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  licenseFilter === 'creativeCommon'
+                    ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40'
+                    : 'text-dark-400 hover:text-white'
+                }`}
+              >
+                ⚖️ Creative Commons (CC BY)
+              </button>
+            </div>
+          </div>
 
           {/* Mode distinction tip */}
           <div style={{
@@ -375,8 +474,109 @@ const SearchPage = () => {
         onRemove={handleRemoveVideo}
         onClear={handleClearSelection}
         onMerge={handleMerge}
-        isLoading={isLoading}
+        isLoading={isLoading || isPreflighting}
       />
+
+      {/* Transcript Preflight Modal */}
+      <AnimatePresence>
+        {showPreflightModal && preflightData && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              data-testid="preflight-failure-modal"
+              className="w-full max-w-lg bg-dark-900 border border-dark-700 rounded-2xl p-6 shadow-2xl space-y-5"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xl font-bold">
+                  ⚠️
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Transcript Preflight Check</h3>
+                  <p className="text-xs text-dark-400">Unavailable sources detected before merge</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 text-center py-2 bg-dark-800/60 rounded-xl border border-dark-700/60">
+                <div className="p-2">
+                  <div className="text-xs text-dark-400 font-medium">Requested</div>
+                  <div className="text-xl font-bold text-white" data-testid="preflight-requested-count">
+                    {preflightData.total_count}
+                  </div>
+                </div>
+                <div className="p-2">
+                  <div className="text-xs text-green-400 font-medium">Ready</div>
+                  <div className="text-xl font-bold text-green-400" data-testid="preflight-ready-count">
+                    {preflightData.ready_count}
+                  </div>
+                </div>
+                <div className="p-2">
+                  <div className="text-xs text-rose-400 font-medium">Unavailable</div>
+                  <div className="text-xl font-bold text-rose-400" data-testid="preflight-unavailable-count">
+                    {preflightData.unavailable_video_ids?.length || 0}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                <p className="text-xs font-semibold uppercase tracking-wider text-dark-400">Source Breakdown</p>
+                {Object.entries(preflightData.sources || {}).map(([vid, info]) => {
+                  const matchingVideo = videos.find(v => (v.id?.videoId || v.id) === vid);
+                  const title = matchingVideo?.snippet?.title || vid;
+                  return (
+                    <div
+                      key={vid}
+                      className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
+                        info.ready
+                          ? 'bg-green-500/10 border-green-500/30 text-green-300'
+                          : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                      }`}
+                    >
+                      <div className="truncate mr-2 font-medium">
+                        {info.ready ? '✓ ' : '✗ '} {title}
+                      </div>
+                      <div className="text-[11px] opacity-80 flex-shrink-0">
+                        {info.ready ? 'Ready' : (info.error || 'No fast transcript')}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="text-xs text-dark-400 bg-dark-800/40 p-3 rounded-xl border border-dark-700/40 leading-relaxed">
+                <strong className="text-white">Strict Source Policy:</strong> By default, multi-video merge jobs do not silently proceed with missing sources. No background merge job has been created.
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  data-testid="preflight-cancel-btn"
+                  onClick={() => setShowPreflightModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-dark-800 hover:bg-dark-700 text-dark-300 hover:text-white border border-dark-600 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                {preflightData.ready_count > 0 && (
+                  <button
+                    type="button"
+                    data-testid="proceed-partial-merge-btn"
+                    onClick={handleConfirmPartialMerge}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-accent-600 hover:bg-accent-500 text-white shadow-lg transition cursor-pointer"
+                  >
+                    Proceed with {preflightData.ready_count} Available Source{preflightData.ready_count > 1 ? 's' : ''}
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

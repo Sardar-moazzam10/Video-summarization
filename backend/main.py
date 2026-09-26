@@ -27,6 +27,7 @@ import time
 from .core.config import get_settings
 from .core.database import close_database
 from .api import auth, transcript, merge, search, chat, youtube
+from .api import auth, transcript, merge, search, chat, youtube, rights
 
 settings = get_settings()
 
@@ -85,6 +86,13 @@ async def lifespan(app: FastAPI):
         print(f"[WARN] Ollama check failed: {e}")
 
     # Audio energy scorer uses ffmpeg + librosa — no model download, no pre-load needed.
+    # Source rights compound index initialization (user_id, source_type, source_id)
+    try:
+        from .services.rights_service import ensure_rights_indexes
+        await ensure_rights_indexes()
+        print("[OK] Source rights MongoDB compound indexes verified")
+    except Exception as e:
+        print(f"[WARN] Could not initialize source rights indexes: {e}")
 
     yield
     # Shutdown
@@ -125,11 +133,21 @@ async def rate_limit_middleware(request: Request, call_next):
         t for t in rate_limit_store[client_ip] if t > window_start
     ]
 
-    # Check limit
-    if len(rate_limit_store[client_ip]) >= settings.RATE_LIMIT_PER_MINUTE:
+    # Check limit - exclude status polling endpoints and merge progress from rate limiting
+    is_polling = (
+        request.url.path.startswith("/api/v1/merge/")
+        or request.url.path.startswith("/api/v1/transcript/")
+        or request.method == "OPTIONS"
+    )
+    if not is_polling and len(rate_limit_store[client_ip]) >= settings.RATE_LIMIT_PER_MINUTE:
+        origin = request.headers.get("origin", "*")
         return JSONResponse(
             status_code=429,
-            content={"detail": "Too many requests. Please wait a minute."}
+            content={"detail": "Too many requests. Please wait a minute."},
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Credentials": "true",
+            },
         )
 
     # Record request
@@ -151,6 +169,7 @@ app.include_router(merge.router)
 app.include_router(search.router)  # FAISS semantic search
 app.include_router(chat.router)  # Chat with video (FAISS + Ollama)
 app.include_router(youtube.router)  # Public video-title/topic search
+app.include_router(rights.router)  # Rights-aware provenance and gating
 
 
 @app.get("/")

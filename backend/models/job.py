@@ -142,6 +142,7 @@ class MergeJobCreate(BaseModel):
     style: str = "educational"
     query: Optional[str] = None
     selected_keywords: List[str] = Field(default_factory=list, max_length=30)
+    allow_partial_sources: bool = False
 
 
 class MergeJob(BaseModel):
@@ -181,6 +182,16 @@ class MergeJob(BaseModel):
     summarization_decision: Optional[Dict] = None
     selection_mode: str = "legacy"      # "semantic" | "legacy"
 
+    # Source duration snapshot (resolved at creation time, used for duration gating & Source Reuse Report)
+    source_durations: Dict[str, float] = Field(default_factory=dict)
+
+    # Rights & Publication Gate status
+    publication_gate_status: Optional[str] = None
+    rights_summary: Optional[Dict] = None
+    # Write-once historical evidence used for this job's media decision.
+    # Normal application flows must never replace an existing value.
+    rights_snapshot: Optional[Dict] = None
+
     # Output paths
     audio_path: Optional[str] = None
     subtitle_path: Optional[str] = None
@@ -207,8 +218,17 @@ class MergeJob(BaseModel):
     summary_unavailable_reason: Optional[str] = None
     detected_language: Optional[str] = None
 
+    # M1 Hardening: Preflight, timings and active source observability
+    allow_partial_sources: bool = False
+    transcript_preflight: Optional[Dict[str, dict]] = None
+    stage_timings_seconds: Dict[str, float] = Field(default_factory=dict)
+    active_source: Optional[str] = None
+    elapsed_seconds: Optional[float] = None
+    job_started_at: Optional[datetime] = None
+
     class Config:
         use_enum_values = True
+        extra = "allow"
 
 
 class MergeJobResponse(BaseModel):
@@ -222,6 +242,14 @@ class MergeJobResponse(BaseModel):
     warning: Optional[str] = None
     query: Optional[str] = None
     selected_keywords: List[str] = Field(default_factory=list)
+    stage_timings_seconds: Dict[str, float] = Field(default_factory=dict)
+    active_source: Optional[str] = None
+    elapsed_seconds: Optional[float] = None
+    transcript_preflight: Optional[Dict[str, dict]] = None
+
+    class Config:
+        use_enum_values = True
+        extra = "allow"
 
 
 class MergeJobResult(BaseModel):

@@ -14,12 +14,13 @@ Endpoints:
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable, Awaitable
 import asyncio
 import json
 from datetime import datetime
 import os
 from time import perf_counter
+from pydantic import BaseModel, Field
 
 from ..models.job import (
     MergeJobCreate,
@@ -168,6 +169,47 @@ async def _get_media_job(
         _assert_job_owner(job_data, principal)
         return job_data
     raise HTTPException(401, "Authentication required")
+
+
+def _media_delivery_allowed(job_data: dict) -> bool:
+    """Only an original, frozen eligible snapshot can authorize source media."""
+    snapshot = job_data.get("rights_snapshot")
+    if not snapshot or snapshot.get("snapshot_origin") != "job_evaluation":
+        return False
+    aggregate = snapshot.get("aggregate") or {}
+    return aggregate.get("publication_gate_status") == "eligible_by_recorded_rights"
+
+
+def _assert_media_delivery_allowed(job_data: dict) -> None:
+    if not _media_delivery_allowed(job_data):
+        raise HTTPException(
+            403,
+            "Source-footage media delivery is blocked by the recorded rights policy.",
+        )
+
+
+async def _freeze_job_rights(job: MergeJob, jobs_collection) -> dict:
+    """Persist a write-once snapshot and mirror its aggregate on the in-memory job."""
+    from ..services.rights_service import freeze_job_rights_snapshot
+
+    video_ids = getattr(job, "used_video_ids", None) or job.video_ids
+    snapshot = await freeze_job_rights_snapshot(
+        jobs_collection=jobs_collection,
+        job_id=job.job_id,
+        user_id=job.user_id or "anonymous",
+        video_ids=video_ids,
+    )
+    aggregate = snapshot.get("aggregate") or {}
+    job.rights_snapshot = snapshot
+    job.publication_gate_status = aggregate.get(
+        "publication_gate_status", "restricted_by_product_policy"
+    )
+    job.rights_summary = {
+        "gate_status": job.publication_gate_status,
+        "warnings": aggregate.get("warnings", []),
+        "source_count": aggregate.get("source_count", 0),
+    }
+    return snapshot
 
 
 # =====================================================
@@ -358,10 +400,15 @@ async def create_merge_job(
         # 1800 = the 30-minute "Comprehensive Summary" ceiling.
         reel_seconds = min(request.target_duration_minutes * 60, 1800)
 
+    canonical_video_ids = [extract_video_id(v) for v in request.video_ids]
+    source_durations_map = {extract_video_id(vid): round(float(d), 1) for vid, d in known.items()}
+
     # Create job
     job = MergeJob(
         user_id=current_user["sub"],
-        video_ids=request.video_ids,
+        video_ids=canonical_video_ids,
+        requested_video_ids=canonical_video_ids,
+        used_video_ids=canonical_video_ids,
         target_duration_minutes=request.target_duration_minutes,
         duration_style=get_duration_style(request.target_duration_minutes),
         generate_audio=request.generate_audio,
@@ -370,6 +417,8 @@ async def create_merge_job(
         style=request.style,
         query=getattr(request, "query", None),
         selected_keywords=getattr(request, "selected_keywords", []),
+        source_durations=source_durations_map,
+        allow_partial_sources=getattr(request, "allow_partial_sources", False),
     )
 
     # Store in memory and database
@@ -392,7 +441,64 @@ async def create_merge_job(
         estimated_seconds=estimated_seconds,
         query=job.query,
         selected_keywords=job.selected_keywords,
+        stage_timings_seconds=job.stage_timings_seconds,
+        active_source=job.active_source,
+        elapsed_seconds=job.elapsed_seconds,
+        transcript_preflight=job.transcript_preflight,
     )
+
+
+class PreflightRequest(BaseModel):
+    video_ids: List[str]
+    per_source_timeout: float = 20.0
+
+
+@router.post("/preflight")
+async def preflight_merge_sources_post(
+    request: PreflightRequest,
+    current_user: dict = Depends(get_current_user_optional),
+):
+    """
+    Transcript-availability preflight check before merge creation.
+    Identifies fast-ready vs slow-recovery vs unavailable sources.
+    """
+    from ..services.transcript_service import get_transcript_service
+    service = await get_transcript_service()
+    results = await service.preflight_sources(request.video_ids, per_source_timeout=request.per_source_timeout)
+    ready_ids = [vid for vid, r in results.items() if r.get("ready")]
+    unavailable_ids = [vid for vid, r in results.items() if not r.get("ready")]
+    return {
+        "can_merge": len(unavailable_ids) == 0,
+        "requested_video_ids": request.video_ids,
+        "ready_video_ids": ready_ids,
+        "unavailable_video_ids": unavailable_ids,
+        "sources": results,
+        "ready_count": len(ready_ids),
+        "total_count": len(request.video_ids),
+    }
+
+
+@router.get("/preflight")
+async def preflight_merge_sources_get(
+    video_ids: List[str] = Query(..., description="List of YouTube video IDs or URLs"),
+    per_source_timeout: float = Query(20.0, description="Per-source preflight timeout in seconds"),
+    current_user: dict = Depends(get_current_user_optional),
+):
+    """GET version of preflight for easy querying."""
+    from ..services.transcript_service import get_transcript_service
+    service = await get_transcript_service()
+    results = await service.preflight_sources(video_ids, per_source_timeout=per_source_timeout)
+    ready_ids = [vid for vid, r in results.items() if r.get("ready")]
+    unavailable_ids = [vid for vid, r in results.items() if not r.get("ready")]
+    return {
+        "can_merge": len(unavailable_ids) == 0,
+        "requested_video_ids": video_ids,
+        "ready_video_ids": ready_ids,
+        "unavailable_video_ids": unavailable_ids,
+        "sources": results,
+        "ready_count": len(ready_ids),
+        "total_count": len(video_ids),
+    }
 
 
 @router.get("/{job_id}", response_model=MergeJobResponse)
@@ -419,6 +525,10 @@ async def get_job_status(
             warning=job.warning,
             query=job.query,
             selected_keywords=job.selected_keywords,
+            stage_timings_seconds=job.stage_timings_seconds,
+            active_source=job.active_source,
+            elapsed_seconds=job.elapsed_seconds,
+            transcript_preflight=job.transcript_preflight,
         )
 
     return MergeJobResponse(
@@ -430,6 +540,10 @@ async def get_job_status(
         warning=job_data.get("warning"),
         query=job_data.get("query"),
         selected_keywords=job_data.get("selected_keywords", []),
+        stage_timings_seconds=job_data.get("stage_timings_seconds", {}),
+        active_source=job_data.get("active_source"),
+        elapsed_seconds=job_data.get("elapsed_seconds"),
+        transcript_preflight=job_data.get("transcript_preflight"),
     )
 
 
@@ -477,9 +591,10 @@ async def get_job_result(
     )
 
     media_subject = current_user["sub"]
-    audio_token = create_media_token(job_id, "audio", media_subject)
-    video_token = create_media_token(job_id, "video", media_subject)
-    subtitle_token = create_media_token(job_id, "subtitles", media_subject)
+    media_allowed = _media_delivery_allowed(job_data)
+    audio_token = create_media_token(job_id, "audio", media_subject) if media_allowed else None
+    video_token = create_media_token(job_id, "video", media_subject) if media_allowed else None
+    subtitle_token = create_media_token(job_id, "subtitles", media_subject) if media_allowed else None
 
     return {
         "job_id": job_data["job_id"],
@@ -492,10 +607,13 @@ async def get_job_result(
         # never mistaken for a finished, empty one.
         "summary_text": None if summary_pending else job_data.get("summary_text", ""),
         "rich_output": None if summary_pending else job_data.get("rich_output"),
-        "audio_url": f"/api/v1/merge/{job_id}/audio?token={audio_token}" if job_data.get("audio_path") else None,
-        "video_url": f"/api/v1/merge/{job_id}/video?token={video_token}" if job_data.get("video_path") else None,
-        "subtitle_url": f"/api/v1/merge/{job_id}/subtitles?token={subtitle_token}" if job_data.get("subtitle_path") else None,
-        "video_ids": job_data.get("video_ids", []),
+        "media_delivery_allowed": media_allowed,
+        "audio_url": f"/api/v1/merge/{job_id}/audio?token={audio_token}" if media_allowed and job_data.get("audio_path") else None,
+        "video_url": f"/api/v1/merge/{job_id}/video?token={video_token}" if media_allowed and job_data.get("video_path") else None,
+        "subtitle_url": f"/api/v1/merge/{job_id}/subtitles?token={subtitle_token}" if media_allowed and job_data.get("subtitle_path") else None,
+        "video_ids": job_data.get("used_video_ids") or job_data.get("video_ids", []),
+        "requested_video_ids": job_data.get("requested_video_ids") or job_data.get("video_ids", []),
+        "used_video_ids": job_data.get("used_video_ids") or job_data.get("video_ids", []),
         # Echoed back so a follow-up job (e.g. the highlight re-compile on the
         # player page) can reuse this job's settings instead of hardcoding them.
         "target_duration_minutes": job_data.get("target_duration_minutes"),
@@ -522,6 +640,14 @@ async def get_job_result(
         "summary_unavailable": job_data.get("summary_unavailable", False),
         "summary_unavailable_reason": job_data.get("summary_unavailable_reason"),
         "detected_language": job_data.get("detected_language"),
+        # Rights & Publication Guidance (private study export remains unrestricted)
+        "publication_gate_status": job_data.get("publication_gate_status") or "manual_review_required",
+        "gate_warnings": (job_data.get("rights_summary") or {}).get("warnings", []),
+        "rights_manifest_url": f"/api/v1/rights/job/{job_id}/manifest",
+        "source_durations": job_data.get("source_durations", {}),
+        "stage_timings_seconds": job_data.get("stage_timings_seconds", {}),
+        "elapsed_seconds": job_data.get("elapsed_seconds"),
+        "transcript_preflight": job_data.get("transcript_preflight"),
         "created_at": job_data["created_at"],
         "completed_at": job_data.get("completed_at"),
     }
@@ -676,6 +802,7 @@ async def get_job_audio(
     Get the generated audio file for a completed job.
     """
     job_data = await _get_media_job(job_id, "audio", token, current_user)
+    _assert_media_delivery_allowed(job_data)
 
     audio_path = job_data.get("audio_path")
     if not audio_path or not os.path.exists(audio_path):
@@ -698,6 +825,7 @@ async def get_job_video(
     Download the generated highlight reel video.
     """
     job_data = await _get_media_job(job_id, "video", token, current_user)
+    _assert_media_delivery_allowed(job_data)
 
     video_path = job_data.get("video_path")
     if not video_path or not os.path.exists(video_path):
@@ -718,6 +846,7 @@ async def get_job_subtitles(
 ):
     """Download SRT subtitle file for a completed job."""
     job_data = await _get_media_job(job_id, "subtitles", token, current_user)
+    _assert_media_delivery_allowed(job_data)
 
     subtitle_path = job_data.get("subtitle_path")
     if not subtitle_path or not os.path.exists(subtitle_path):
@@ -1318,25 +1447,32 @@ async def run_semantic_selection(
     expanded_duration = sum(s.duration for s in all_selected)
     all_selected, boundary_stats = repair_physical_boundaries(all_selected)
     merged_duration = sum(s.duration for s in all_selected)
-    all_selected = rebuild_final_texts(all_selected, raw_segments, global_segments)
+    cta_audit = {}
+    all_selected = rebuild_final_texts(
+        all_selected, raw_segments, global_segments, audit_stats=cta_audit
+    )
     incomplete_rejections = sum(
         float(getattr(segment, "completeness", 0.0)) < 1.0
         for segment in all_selected
     )
+    for s in all_selected:
+        if float(getattr(s, "completeness", 0.0)) < 1.0:
+            print(f"REJECTED: {s.start_time:.2f}-{s.end_time:.2f} dur={s.duration:.1f} start_ev={s.start_boundary_evidence} end_ev={s.end_boundary_evidence} hits={s.non_content_guard_hits}")
+
     initial_non_content_rejections = sum(
         bool(getattr(segment, "non_content_guard_hits", ())) for segment in all_selected
     )
     all_selected = [segment for segment in all_selected
                     if float(getattr(segment, "completeness", 0.0)) >= 1.0]
-    all_selected, final_boundary_stats = repair_physical_boundaries(all_selected)
+    post_cta_duration = sum(s.duration for s in all_selected)
+    all_selected, post_cta_boundary_stats = repair_physical_boundaries(all_selected)
     from ..services.coverage_selector import OVERSHOOT_TOLERANCE
     all_selected, reconciliation_stats = reconcile_physical_duration(
         all_selected, global_segments, raw_segments, global_segments, budget,
         min_fill=weights.min_budget_fill,
         overshoot_tolerance=OVERSHOOT_TOLERANCE,
     )
-    all_selected, final_boundary_stats = repair_physical_boundaries(all_selected)
-    all_selected = rebuild_final_texts(all_selected, raw_segments, global_segments)
+    post_reconciliation_duration = sum(s.duration for s in all_selected)
     keyword_evidence_preserved = 0
     if query_embedding is not None:
         import numpy as np
@@ -1351,13 +1487,7 @@ async def run_semantic_selection(
                 list(before) + _keyword_evidence_matches(keywords, scores, segment.text)
             ))
             keyword_evidence_preserved += len(before & set(segment.keyword_matches))
-    post_reconciliation_rejections = sum(
-        float(getattr(segment, "completeness", 0.0)) < 1.0
-        for segment in all_selected
-    )
-    incomplete_rejections += post_reconciliation_rejections
-    all_selected = [segment for segment in all_selected
-                    if float(getattr(segment, "completeness", 0.0)) >= 1.0]
+    all_selected, final_boundary_stats = repair_physical_boundaries(all_selected)
     if not all_selected:
         return None
 
@@ -1433,18 +1563,42 @@ async def run_semantic_selection(
     )
     metrics.update(normalization_metrics)
     metrics.update(boundary_stats.to_dict())
+    metrics["adjacent_same_source_merges"] = (
+        boundary_stats.adjacent_intervals_merged
+        + post_cta_boundary_stats.adjacent_intervals_merged
+        + final_boundary_stats.adjacent_intervals_merged
+    )
     metrics["explanation_boundary_expansions"] = boundary_expansions
     metrics["expansion_seconds_added"] = round(max(0.0, expanded_duration - selector_duration), 3)
     metrics["merge_seconds_removed"] = round(max(0.0, expanded_duration - merged_duration), 3)
     metrics.update(reconciliation_stats)
+    metrics.update(cta_audit)
     metrics["keyword_evidence_preservation_count"] = keyword_evidence_preserved
     metrics.update(concept_block_stats.to_dict())
     metrics["requested_duration"] = round(budget, 1)
     metrics["selector_duration"] = round(selector_duration, 3)
+    metrics["post_boundary_duration"] = round(merged_duration, 3)
+    metrics["post_cta_duration"] = round(post_cta_duration, 3)
+    metrics["post_reconciliation_duration"] = round(post_reconciliation_duration, 3)
     metrics["final_manifest_duration"] = round(sum(s.duration for s in all_selected), 3)
+    metrics["largest_physical_block_seconds"] = round(
+        max((s.duration for s in all_selected), default=0.0), 3
+    )
     metrics["final_budget_fill_ratio"] = round(
         metrics["final_manifest_duration"] / max(float(budget), 1e-6), 4
     )
+    metrics["bounded_infeasibility_evidence"] = {
+        "candidates_examined": reconciliation_stats.get("candidates_examined", 0),
+        "refill_candidates_total": reconciliation_stats.get("refill_candidates_total", 0),
+        "refill_candidates_examined": reconciliation_stats.get("refill_candidates_examined", 0),
+        "refill_candidates_added": reconciliation_stats.get("refill_candidates_added", 0),
+        "rejected_reason_counts": reconciliation_stats.get("rejected_reason_counts", {}),
+        "eligible_remaining_candidates": reconciliation_stats.get("eligible_remaining_candidates", 0),
+        "eligible_remaining_duration": reconciliation_stats.get("eligible_remaining_duration", 0.0),
+        "final_fill_ratio": metrics["final_budget_fill_ratio"],
+        "infeasibility_proven": reconciliation_stats.get("infeasibility_proven", False),
+        "infeasibility_reason": reconciliation_stats.get("infeasibility_reason"),
+    }
     metrics["rendered_duration"] = None
     metrics["manifest_render_delta_seconds"] = None
     metrics["selected_duration"] = metrics["final_manifest_duration"]
@@ -1488,6 +1642,9 @@ async def process_merge_job(job_id: str):
         job = _active_jobs.get(job_id)
         if not job:
             return
+        if not getattr(job, "job_started_at", None):
+            job.job_started_at = datetime.utcnow()
+
         pipeline_timings = {name: 0.0 for name in (
             "download_cache", "transcription", "segmentation", "concept_extraction",
             "embedding", "selection", "ordering", "rendering")}
@@ -1499,56 +1656,148 @@ async def process_merge_job(job_id: str):
             finally:
                 pipeline_timings[name] += perf_counter() - started
 
-        # Update status helper
+        # Update status helper with timing and active source tracking
         async def update_status(
             status: JobStatus,
             progress: int,
-            message: str
+            message: str,
+            active_source: Optional[str] = None,
+            stage_name: Optional[str] = None,
+            stage_duration: Optional[float] = None,
         ):
             job.status = status
             job.progress_percent = progress
             job.stage_message = message
             job.updated_at = datetime.utcnow()
+            if active_source is not None:
+                job.active_source = active_source
+            if stage_name and stage_duration is not None:
+                job.stage_timings_seconds[stage_name] = round(stage_duration, 3)
+
+            elapsed = None
+            if getattr(job, "job_started_at", None):
+                elapsed = round((datetime.utcnow() - job.job_started_at).total_seconds(), 2)
+                job.elapsed_seconds = elapsed
+
+            set_payload = {
+                "status": status.value if hasattr(status, "value") else status,
+                "progress_percent": progress,
+                "stage_message": message,
+                "updated_at": job.updated_at,
+                "stage_timings_seconds": job.stage_timings_seconds,
+                "elapsed_seconds": elapsed,
+            }
+            if active_source is not None:
+                set_payload["active_source"] = active_source
 
             await jobs_collection.update_one(
                 {"job_id": job_id},
-                {"$set": {
-                    "status": status.value,
-                    "progress_percent": progress,
-                    "stage_message": message,
-                    "updated_at": job.updated_at,
-                }}
+                {"$set": set_payload}
             )
 
-        # STAGE 1: Transcribing (0-30%)
+        # ── MULTI-VIDEO WHISPER POLICY ────────────────────────────────────
+        # For interactive multi-video jobs (>1 source), Whisper audio
+        # download is DISABLED by default. Fast path (YouTube API + yt-dlp
+        # subtitles) completes quickly. Sources without fast captions are
+        # reported through TRANSCRIPT_UNAVAILABLE_FOR_SOURCES so the user can
+        # decide whether to proceed with remaining sources or remove them.
+        _is_multi_video = len(job.video_ids) > 1
+        _allow_whisper = not _is_multi_video  # True only for single-video jobs
+        _per_source_timeout: Optional[float] = 45.0 if _is_multi_video else None
+
+        # STAGE 1: Transcribing (0-15%)
         await update_status(
             JobStatus.TRANSCRIBING,
             5,
-            "Fetching video transcripts..."
+            f"Fetching transcripts for {len(job.video_ids)} video(s)..."
         )
 
-        # Real (not synthetic) mid-stage signal: translation/re-transcription
-        # of non-English captions can take a while, and previously left the
-        # UI showing "5%" with no visible change for that whole window. Each
-        # call nudges progress forward (capped below the 30% "fetched"
-        # checkpoint) rather than jumping to a fixed value, since a video can
-        # report more than one stage (e.g. "translating" then "re-
-        # transcribing with Whisper"). Monotonic — never regresses — because
-        # videos fetch concurrently and callbacks can arrive interleaved.
         async def _transcript_progress(message: str):
-            if job.progress_percent < 28:
-                await update_status(
-                    JobStatus.TRANSCRIBING, min(job.progress_percent + 5, 28), message
-                )
+            if job.progress_percent < 14:
+                new_pct = min(job.progress_percent + 2, 14)
+                await update_status(JobStatus.TRANSCRIBING, new_pct, message)
 
-        transcripts, raw_segments = await timed_stage("transcription", fetch_transcripts_with_segments(
-            job.video_ids, progress_cb=_transcript_progress
-        ))
+        preflight_record: dict = {}
+        _completed_sources = 0
+
+        # Persist transcript-preflight progress after EACH individual source completes
+        # so UI genuinely shows 1/3 -> 2/3 -> 3/3 in real time.
+        async def _on_single_source_completed(vid: str, record: dict):
+            nonlocal _completed_sources
+            _completed_sources += 1
+            ready_c = sum(1 for v in record.values() if v.get("ready"))
+            total_c = len(job.video_ids)
+            msg = f"Transcripts ready: {ready_c} / {total_c}"
+            pct = min(5 + int((_completed_sources / max(total_c, 1)) * 10), 14)
+            job.transcript_preflight = dict(record)
+            await update_status(JobStatus.TRANSCRIBING, pct, msg, active_source=vid)
+            print(f"[Merge] Source completed {vid} ({record.get(vid, {}).get('status')}) -> {msg}")
+
+        t_tr_start = perf_counter()
+        transcripts, raw_segments = await fetch_transcripts_with_segments(
+            job.video_ids,
+            progress_cb=_transcript_progress,
+            allow_whisper=_allow_whisper,
+            per_source_timeout=_per_source_timeout,
+            preflight_record=preflight_record,
+            on_source_completed=_on_single_source_completed,
+        )
+        t_tr_dur = round(perf_counter() - t_tr_start, 3)
+        job.stage_timings_seconds["transcript_acquisition"] = t_tr_dur
+        pipeline_timings["transcription"] = t_tr_dur
+
+        # INVARIANT: Multi-video requests must never silently drop unavailable sources!
+        requested_ids = [extract_video_id(v) for v in job.video_ids]
+        ready_ids = list(transcripts.keys())
+        unavailable_ids = [vid for vid in requested_ids if vid not in ready_ids]
+
+        if _is_multi_video and unavailable_ids:
+            if not getattr(job, "allow_partial_sources", False):
+                err_detail = {
+                    "error_code": "TRANSCRIPT_UNAVAILABLE_FOR_SOURCES",
+                    "message": f"{len(unavailable_ids)} of {len(requested_ids)} selected videos do not have a fast transcript available.",
+                    "requested_video_ids": requested_ids,
+                    "ready_video_ids": ready_ids,
+                    "unavailable_video_ids": unavailable_ids,
+                    "sources": preflight_record,
+                }
+                job.status = JobStatus.ERROR
+                job.error = json.dumps(err_detail)
+                job.stage_message = f"Error: {len(unavailable_ids)} video(s) do not have fast transcripts available."
+                job.completed_at = datetime.utcnow()
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": {
+                        "status": JobStatus.ERROR.value,
+                        "error": job.error,
+                        "stage_message": job.stage_message,
+                        "transcript_preflight": preflight_record,
+                        "stage_timings_seconds": job.stage_timings_seconds,
+                        "completed_at": job.completed_at,
+                    }}
+                )
+                print(f"[Merge] Job {job_id} halted: TRANSCRIPT_UNAVAILABLE_FOR_SOURCES: {err_detail}")
+                return
+            else:
+                job.requested_video_ids = list(requested_ids)
+                job.used_video_ids = list(ready_ids)
+                job.video_ids = list(ready_ids)
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": {
+                        "requested_video_ids": list(requested_ids),
+                        "used_video_ids": list(ready_ids),
+                        "video_ids": list(ready_ids),
+                    }}
+                )
+                print(f"[Merge] Job {job_id} proceeding with partial sources ({len(ready_ids)}/{len(requested_ids)}) due to explicit allow_partial_sources=True")
 
         await update_status(
             JobStatus.TRANSCRIBING,
-            30,
-            f"Fetched {len(transcripts)} transcripts"
+            15,
+            f"Fetched {len(transcripts)} transcripts",
+            stage_name="transcript_acquisition",
+            stage_duration=t_tr_dur,
         )
 
         if not transcripts:
@@ -1733,11 +1982,11 @@ async def process_merge_job(job_id: str):
         selection_bias_fusion = None
 
         if not _language_abort:
-            # STAGE 2: Analyzing (30-40%)
+            # STAGE 2: Fusion / Analysis (15-25%)
             await update_status(
                 JobStatus.ANALYZING,
-                35,
-                "Analyzing content structure..."
+                18,
+                "Analyzing content structure across sources..."
             )
 
             # Get duration profile
@@ -1746,27 +1995,14 @@ async def process_merge_job(job_id: str):
             fusion_budget = profile.target_minutes * profile.words_per_minute
 
             await update_status(
-                JobStatus.ANALYZING,
-                40,
-                f"Target: {target_words} words ({profile.style.value} style)"
-            )
-
-            # STAGE 3: Fusing (40-70%)
-            await update_status(
                 JobStatus.FUSING,
-                45,
-                "Fusing content from multiple sources..."
+                20,
+                f"Fusing transcripts (Target: {target_words} words, {profile.style.value} style)..."
             )
 
             # Run fusion engine
-            # raw_segments carries the per-video timestamped caption lists that
-            # fetch_transcripts_with_segments() already built.  Passing them here
-            # activates Tier 1 (segment-boundary chunking) in _extract_sentences(),
-            # which is the fix for 0-sentence extraction on English auto-captions.
             fusion_engine = get_fusion_engine()
-            # FIRST PASS — full transcript → used ONLY as semantic-bias reference for
-            # segment selection. NOT the BART input. The second pass (below, after
-            # selection) fuses the SELECTED segments and feeds that to BART.
+            t_fus_start = perf_counter()
             selection_bias_fusion = fusion_engine.fuse_transcripts(
                 transcripts=transcripts,
                 target_words=fusion_budget,
@@ -1774,25 +2010,18 @@ async def process_merge_job(job_id: str):
                 include_transitions=profile.include_transitions,
                 raw_segments=raw_segments,
             )
-            if selection_bias_fusion:
-                print(
-                    f"[Fusion 1/2] Full-transcript pass: "
-                    f"{len(selection_bias_fusion.topics)} topics, "
-                    f"{len(selection_bias_fusion.narrative.split())} words "
-                    f"— selection bias only, NOT fed to BART"
-                )
+            t_fus_dur = round(perf_counter() - t_fus_start, 3)
+            job.stage_timings_seconds["fusion_analysis"] = t_fus_dur
+            pipeline_timings["fusion_analysis"] = t_fus_dur
 
-                await update_status(
-                    JobStatus.FUSING,
-                    70,
-                    f"Fusion complete: {len(selection_bias_fusion.topics)} topics identified"
-                )
-            else:
-                await update_status(
-                    JobStatus.FUSING,
-                    70,
-                    "Fusion complete"
-                )
+            topics_count = len(selection_bias_fusion.topics) if selection_bias_fusion else 0
+            await update_status(
+                JobStatus.FUSING,
+                25,
+                f"Fusion analysis complete ({topics_count} topics identified)",
+                stage_name="fusion_analysis",
+                stage_duration=t_fus_dur,
+            )
 
         if not _language_abort:
             # -------------------------------------------------------------
@@ -1961,10 +2190,11 @@ async def process_merge_job(job_id: str):
                 # the text pipeline is still running. Video has no data
                 # dependency on the summary (see selection block above).
                 await update_status(
-                    JobStatus.GENERATING_VIDEO, 65,
+                    JobStatus.GENERATING_VIDEO, 68,
                     f"Cutting and stitching {len(highlight_segments_result)} highlight clips..."
                 )
 
+                t_render_start = perf_counter()
                 video_path = await timed_stage("rendering", video_svc.generate_highlight_reel(
                     job_id=job.job_id,
                     highlight_segments=highlight_segments_result,
@@ -1972,6 +2202,8 @@ async def process_merge_job(job_id: str):
                     audio_path=None,   # never overlaid; reel keeps source audio
                     progress_callback=video_progress,
                 ))
+                t_render_dur = round(perf_counter() - t_render_start, 3)
+                job.stage_timings_seconds["concat_render"] = t_render_dur
 
                 print(f"[Video] Highlight reel generated: {video_path}")
 
@@ -1987,6 +2219,13 @@ async def process_merge_job(job_id: str):
                         if rendered_duration is not None and manifest_duration is not None else None
                     )
 
+                # Rights evidence and the aggregate gate must be frozen before
+                # VIDEO_READY or the media path is exposed to any client.
+                t_rights_start = perf_counter()
+                await _freeze_job_rights(job, jobs_collection)
+                job.stage_timings_seconds["rights_snapshot"] = round(
+                    perf_counter() - t_rights_start, 3
+                )
                 # Persist immediately so /video and /result can serve the
                 # video right away — the text summary (BART + enrichment)
                 # has not started yet at this point.
@@ -1998,7 +2237,7 @@ async def process_merge_job(job_id: str):
                 job.selection_trace = selection_trace
                 job.selection_mode = selection_mode
                 job.status = JobStatus.VIDEO_READY
-                job.progress_percent = 70
+                job.progress_percent = 82
                 # Language-abort jobs surface a different message so the user
                 # knows the video is ready but summary won't follow.
                 job.stage_message = (
@@ -2007,12 +2246,14 @@ async def process_merge_job(job_id: str):
                     else "Highlight video ready — generating AI summary..."
                 )
                 job.updated_at = datetime.utcnow()
+                if getattr(job, "job_started_at", None):
+                    job.elapsed_seconds = round((datetime.utcnow() - job.job_started_at).total_seconds(), 2)
 
                 await jobs_collection.update_one(
                     {"job_id": job_id},
                     {"$set": {
                         "status": JobStatus.VIDEO_READY.value,
-                        "progress_percent": 70,
+                        "progress_percent": 82,
                         "stage_message": job.stage_message,
                         "updated_at": job.updated_at,
                         "video_path": video_path,
@@ -2022,14 +2263,17 @@ async def process_merge_job(job_id: str):
                         "selection_metrics": selection_metrics,
                         "selection_trace": selection_trace,
                         "selection_mode": selection_mode,
-                "warning": job_warning,
+                        "warning": job_warning,
+                        "stage_timings_seconds": job.stage_timings_seconds,
+                        "elapsed_seconds": job.elapsed_seconds,
+                        "active_source": job.active_source,
+                        "transcript_preflight": getattr(job, "transcript_preflight", None),
                         # Carry language-abort metadata into the VIDEO_READY
                         # checkpoint so /result can serve summary_unavailable
                         # as soon as the video is playable.
                         "summary_unavailable": job.summary_unavailable,
                         "summary_unavailable_reason": job.summary_unavailable_reason,
                         "detected_language": job.detected_language,
-                        "warning": job.warning,
                     }}
                 )
 
@@ -2061,7 +2305,7 @@ async def process_merge_job(job_id: str):
             try:
                 # --- Transcript Reconstruction & Selected Fusion ---
                 await update_status(
-                    JobStatus.FUSING, 74,
+                    JobStatus.FUSING, 84,
                     "Reconstructing transcript from selected video segments..."
                 )
                 selected_transcripts_map = {}
@@ -2093,9 +2337,6 @@ async def process_merge_job(job_id: str):
                     selected_raw_segments = raw_segments
 
                 # SECOND PASS — fuse ONLY the selected segments → this is the BART input.
-                # Kept separate from the first-pass (selection_bias_fusion) so the two
-                # purposes never mix: the first pass informs WHAT to pick, the second
-                # pass produces WHAT to summarize.
                 fusion_result = fusion_engine.fuse_transcripts(
                     transcripts=selected_transcripts_map,
                     target_words=fusion_budget,
@@ -2111,10 +2352,10 @@ async def process_merge_job(job_id: str):
                     f"— this is the BART input"
                 )
 
-                # STAGE 4: Summarizing (70-85%) - BART-large-CNN Hierarchical
+                # STAGE 4: Summarizing (85-92%) - BART-large-CNN Hierarchical
                 await update_status(
                     JobStatus.SUMMARIZING,
-                    79,
+                    86,
                     "Running BART-large-CNN hierarchical summarization on selected content..."
                 )
 
@@ -2122,12 +2363,15 @@ async def process_merge_job(job_id: str):
 
                 print(f"[BART] Input narrative: {len(fusion_result.narrative.split())} words")
                 summarizer_svc = get_summarization_service()
+                t_bart_start = perf_counter()
                 summary_text, summarization_decision = await asyncio.to_thread(
                     summarizer_svc.summarize_with_policy,
                     fusion_result.narrative,
                     target_words,
                     profile,
                 )
+                t_bart_dur = round(perf_counter() - t_bart_start, 3)
+                job.stage_timings_seconds["bart_summarization"] = t_bart_dur
 
                 # Store metadata
                 fusion_metadata = FusionMetadata(
@@ -2143,13 +2387,16 @@ async def process_merge_job(job_id: str):
 
                 await update_status(
                     JobStatus.SUMMARIZING,
-                    84,
-                    f"BART summary ready: {len(summary_text.split())} words"
+                    90,
+                    f"BART summary ready: {len(summary_text.split())} words",
+                    stage_name="bart_summarization",
+                    stage_duration=t_bart_dur,
                 )
 
-                # STAGE 4.5: Ollama AI Enrichment (80-90%)
+                # STAGE 4.5: Ollama AI Enrichment (90-95%)
                 rich_output = None
                 _OLLAMA_WALL_TIMEOUT = 120  # hard cap so job never blocks >2 min on this stage
+                t_enr_start = perf_counter()
                 try:
                     from ..services.ollama_service import get_ollama_service
                     ollama = get_ollama_service()
@@ -2160,7 +2407,7 @@ async def process_merge_job(job_id: str):
                     elif ollama.is_available():
                         await update_status(
                             JobStatus.ENRICHING,
-                            88,
+                            92,
                             f"AI enriching with Ollama/{settings.OLLAMA_MODEL} (chapters, takeaways, quotes)..."
                         )
 
@@ -2182,7 +2429,7 @@ async def process_merge_job(job_id: str):
                                 summary_text = rich_output.summary
                             await update_status(
                                 JobStatus.ENRICHING,
-                                93,
+                                95,
                                 f"AI enrichment done: {len(rich_output.chapters)} chapters, "
                                 f"{len(rich_output.key_takeaways)} takeaways"
                             )
@@ -2201,13 +2448,10 @@ async def process_merge_job(job_id: str):
                 if not rich_output or not rich_output.tldr or not rich_output.key_takeaways:
                     print("[LocalEnrich] Generating TLDR+takeaways locally (TF-IDF)...")
                     rich_output = _generate_local_enrichment(summary_text, job.style)
+
+                t_enr_dur = round(perf_counter() - t_enr_start, 3)
+                job.stage_timings_seconds["enrichment"] = t_enr_dur
             except Exception as e:
-                # Video (if requested) was already generated and persisted
-                # as VIDEO_READY before this stage runs. Don't let a text-
-                # pipeline failure destroy it or bubble to the generic ERROR
-                # handler, which would make the video unreachable — unless
-                # there is no video to preserve, in which case this keeps
-                # the previous (pre-video-first) failure behavior.
                 if video_path:
                     summary_failed = True
                     summary_error_msg = str(e)
@@ -2229,11 +2473,8 @@ async def process_merge_job(job_id: str):
                     traceback.print_exc()
                 else:
                     raise
+
         # COMPLETED
-        # Language-abort path: video generation has now finished (or failed).
-        # PARTIAL_SUCCESS is assigned HERE for the first time — only after the
-        # video stage is done, so the frontend never sees a terminal status
-        # before the video has been generated.
         if _language_abort:
             job.status = JobStatus.PARTIAL_SUCCESS
             if video_path:
@@ -2241,11 +2482,6 @@ async def process_merge_job(job_id: str):
             else:
                 job.stage_message = "Highlight video generation failed — written summary also unavailable for this language."
         elif summary_failed and video_path:
-            # Video succeeded and was already persisted (VIDEO_READY),
-            # but the text pipeline failed afterward. Reuse
-            # PARTIAL_SUCCESS — same "one artifact missing" meaning as
-            # the video-failed case below, just the other artifact —
-            # instead of losing the video to an ERROR status.
             job.status = JobStatus.PARTIAL_SUCCESS
             job.stage_message = "Highlight video ready, but AI summary generation failed."
             job_warning = job_warning or summary_error_msg
@@ -2256,9 +2492,6 @@ async def process_merge_job(job_id: str):
             job.status = JobStatus.COMPLETED
             job.stage_message = "Your summary is ready!"
         job.progress_percent = 100
-        # summary_text is None (not "") when the language is unsupported. The
-        # result page checks for None/empty to show the language-unavailable state
-        # instead of "Your summary is ready".
         job.summary_text = summary_text
         job.rich_output = rich_output
         job.fusion_metadata = fusion_metadata
@@ -2276,6 +2509,28 @@ async def process_merge_job(job_id: str):
         job.selection_mode = selection_mode
         job.warning = job_warning
         job.completed_at = datetime.utcnow()
+        if getattr(job, "job_started_at", None):
+            job.elapsed_seconds = round((datetime.utcnow() - job.job_started_at).total_seconds(), 2)
+
+        # Jobs without early video readiness still freeze rights before their
+        # final result becomes visible. Existing snapshots are returned intact.
+        if not getattr(job, "rights_snapshot", None):
+            t_rights_start = perf_counter()
+            try:
+                await _freeze_job_rights(job, jobs_collection)
+            except Exception as e:
+                # Notes may complete, but absent evidence can never authorize
+                # source-footage delivery.
+                print(f"[Rights] Could not freeze snapshot for job {job_id}: {e}")
+                job.publication_gate_status = "restricted_by_product_policy"
+                job.rights_summary = {
+                    "gate_status": "restricted_by_product_policy",
+                    "warnings": ["Rights evidence could not be frozen; media delivery is blocked."],
+                    "source_count": 0,
+                }
+            job.stage_timings_seconds["rights_snapshot"] = round(
+                perf_counter() - t_rights_start, 3
+            )
 
         rich_output_dict = rich_output.model_dump() if rich_output else None
 
@@ -2299,15 +2554,17 @@ async def process_merge_job(job_id: str):
                 "summarization_decision": summarization_decision,
                 "selection_mode": selection_mode,
                 "warning": job_warning,
-                
-                
-                "completed_at": job.completed_at,
-                # Language-abort metadata — persisted so /result and /evaluate
-                # can serve correct language-unavailable responses after the
-                # job reaches its final PARTIAL_SUCCESS state.
-                "summary_unavailable": job.summary_unavailable,
-                "summary_unavailable_reason": job.summary_unavailable_reason,
-                "detected_language": job.detected_language,
+                "publication_gate_status": getattr(job, "publication_gate_status", "manual_review_required"),
+                "rights_summary": getattr(job, "rights_summary", {}),
+                "source_durations": getattr(job, "source_durations", {}),
+                "stage_timings_seconds": getattr(job, "stage_timings_seconds", {}),
+                "elapsed_seconds": getattr(job, "elapsed_seconds", 0.0),
+                "active_source": getattr(job, "active_source", None),
+                "transcript_preflight": getattr(job, "transcript_preflight", None),
+                "completed_at": getattr(job, "completed_at", None),
+                "summary_unavailable": getattr(job, "summary_unavailable", False),
+                "summary_unavailable_reason": getattr(job, "summary_unavailable_reason", None),
+                "detected_language": getattr(job, "detected_language", None),
             }}
         )
 
@@ -2339,52 +2596,86 @@ async def process_merge_job(job_id: str):
         _active_jobs.pop(job_id, None)
 
 
-async def fetch_transcripts_with_segments(video_ids: list, progress_cb=None):
+async def fetch_transcripts_with_segments(
+    video_ids: list,
+    progress_cb=None,
+    allow_whisper: bool = True,
+    per_source_timeout: Optional[float] = None,
+    preflight_record: Optional[dict] = None,
+    on_source_completed: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+):
     """
-    Fetch transcripts for multiple videos in parallel.
-    Returns BOTH flat text and raw segments with timestamps.
+    Fetch transcripts for multiple videos truly concurrently.
 
-    Uses the 3-tier transcript service (YouTube API → yt-dlp → Whisper).
-
-    Args:
-        video_ids: Raw video ids/URLs to fetch.
-        progress_cb: Optional async callback(message) forwarded to
-            TranscriptService.get_transcript, invoked when a per-video stage
-            (e.g. non-English caption translation) starts. Videos fetch
-            concurrently, so callbacks can arrive interleaved/out of order —
-            callers should treat them as "something is happening" signals, not
-            a strict sequence.
-
-    Returns:
-        Tuple of:
-        - Dict[video_id, flat_text]
-        - Dict[video_id, list_of_segments] where each segment has {text, start, duration}
+    Bounded latency guarantees:
+    * allow_whisper=False (the default for interactive multi-video jobs):
+      pipeline uses only YouTube caption API + yt-dlp subtitle extraction.
+      Audio download + Whisper is skipped so no single source silently blocks.
+    * per_source_timeout: hard wall-clock cap per video.
+    * on_source_completed: called as each source finishes so the caller
+      can persist live progress (e.g. Transcripts ready: 1 / 3) immediately.
     """
     from ..services.transcript_service import get_transcript_service, extract_video_id
+    import time as _time
 
     service = await get_transcript_service()
 
     async def _fetch_one(raw_id: str):
         video_id = extract_video_id(raw_id)
+        t0 = _time.perf_counter()
+        method = "youtube_api"
+        res_tuple = None
         try:
-            result = await service.get_transcript(video_id, progress_cb=progress_cb)
-            if result and result.get("transcript"):
-                source = result.get("source", "unknown")
-                segments = []
-                if isinstance(result["transcript"], list):
-                    segments = result["transcript"]
-                    text = " ".join(
-                        seg.get("text", "") for seg in segments
-                    )
-                else:
-                    text = str(result["transcript"])
+            async def _do_fetch():
+                nonlocal method
+                result = await service.get_transcript(
+                    video_id,
+                    progress_cb=progress_cb,
+                    allow_whisper=allow_whisper,
+                )
+                if result and result.get("transcript"):
+                    method = result.get("source", "unknown")
+                    segments = []
+                    if isinstance(result["transcript"], list):
+                        segments = result["transcript"]
+                        text = " ".join(seg.get("text", "") for seg in segments)
+                    else:
+                        text = str(result["transcript"])
 
-                if text.strip():
-                    print(f"[Merge] Got transcript for {video_id} via {source} ({len(text.split())} words, {len(segments)} segments)")
-                    return (video_id, text, segments)
+                    if text.strip():
+                        print(f"[Merge] Got transcript for {video_id} via {method} ({len(text.split())} words, {len(segments)} segments)")
+                        return (video_id, text, segments)
+                return None
+
+            if per_source_timeout:
+                res_tuple = await asyncio.wait_for(_do_fetch(), timeout=per_source_timeout)
+            else:
+                res_tuple = await _do_fetch()
+        except asyncio.TimeoutError:
+            print(f"[WARN] Transcript fetch timed out after {per_source_timeout}s for {video_id}")
+            method = "timeout"
         except Exception as e:
             print(f"[WARN] Could not fetch transcript for {video_id}: {e}")
-        return None
+            method = "error"
+
+        t_elapsed = round(_time.perf_counter() - t0, 3)
+        if preflight_record is not None:
+            preflight_record[video_id] = {
+                "video_id": video_id,
+                "status": "cached_transcript" if "cache" in method else ("caption_ready" if res_tuple else "slow_recovery_required"),
+                "ready": res_tuple is not None,
+                "method": method,
+                "time_seconds": t_elapsed,
+                "error": None if res_tuple else ("Timeout" if method == "timeout" else "Fast transcript unavailable"),
+            }
+
+        if on_source_completed:
+            try:
+                await on_source_completed(video_id, preflight_record or {})
+            except Exception as e:
+                print(f"[Merge] on_source_completed callback error: {e}")
+
+        return res_tuple
 
     results = await asyncio.gather(*[_fetch_one(raw_id) for raw_id in video_ids])
 

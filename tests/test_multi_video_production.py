@@ -453,6 +453,24 @@ def test_rejects_mid_thought_start():
     assert decision.classification == "UNSAFE"
 
 
+@pytest.mark.parametrize("educational_phrase", [
+    "This works like yes or no in English. Let me explain.",
+    "Use a method like the upper method to replace memory safely.",
+    "The program works like this and then asks me for weight.",
+])
+def test_cta_detector_does_not_remove_educational_like_phrases(educational_phrase):
+    assert non_content_hits(educational_phrase) == []
+
+
+@pytest.mark.parametrize("cta_phrase", [
+    "Like this video and comment below.",
+    "Subscribe to the channel.",
+    "Follow us for more lessons.",
+])
+def test_cta_detector_keeps_precise_engagement_patterns(cta_phrase):
+    assert non_content_hits(cta_phrase)
+
+
 def test_ignores_cta_after_valid_content():
     selected = segment("A", "the model learns from data and improves over time", [1, 0], 0, 4)
     raw = [
@@ -540,6 +558,74 @@ def test_reconciliation_rejects_non_content_fill_candidate():
     )
     assert reconciled == selected
     assert stats["non_content_candidates_rejected"] == 1
+
+
+def test_infeasibility_requires_exhaustive_documented_candidate_evaluation():
+    selected = [segment("A", "Educational explanation.", [1, 0], 0, 70)]
+    outro = segment("B", "Like and subscribe to the channel.", [0, 1], 0, 25)
+    raw = {
+        "A": [{"text": selected[0].text, "start": 0, "duration": 70}],
+        "B": [{"text": outro.text, "start": 0, "duration": 25}],
+    }
+    _, stats = reconcile_physical_duration(
+        selected, selected + [outro], raw, selected + [outro], 100, min_fill=.9
+    )
+    assert stats["refill_candidates_total"] == 1
+    assert stats["refill_candidates_examined"] == 1
+    assert stats["refill_candidates_added"] == 0
+    assert stats["eligible_remaining_candidates"] == 0
+    assert stats["eligible_remaining_duration"] == 0
+    assert stats["infeasibility_proven"] is True
+    assert stats["infeasibility_reason"] == "all_reserve_candidates_exhausted_without_legal_fill"
+    assert sum(stats["rejected_reason_counts"].values()) >= 1
+
+
+def test_satisfied_fill_does_not_claim_infeasibility_with_unexamined_reserve():
+    selected = [segment("A", "Complete primary explanation.", [1, 0], 0, 95)]
+    reserve = segment("B", "Complete reserve explanation.", [0, 1], 0, 20)
+    raw = {
+        "A": [{"text": selected[0].text, "start": 0, "duration": 95}],
+        "B": [{"text": reserve.text, "start": 0, "duration": 20}],
+    }
+    _, stats = reconcile_physical_duration(
+        selected, selected + [reserve], raw, selected + [reserve], 100, min_fill=.9
+    )
+    assert stats["refill_candidates_examined"] == 0
+    assert stats["eligible_remaining_candidates"] == 1
+    assert stats["eligible_remaining_duration"] == 20
+    assert stats["infeasibility_proven"] is False
+    assert stats["infeasibility_reason"] is None
+
+
+def test_cta_audit_matches_removed_physical_edge_span():
+    clip = segment("A", "stale text", [1, 0], 0, 7)
+    raw = {"A": [
+        {"text": "The lesson is complete.", "start": 0, "duration": 4},
+        {"text": "Like and subscribe to the channel", "start": 4, "duration": 3},
+    ]}
+    audit = {}
+    rebuilt = rebuild_final_texts([clip], raw, audit_stats=audit)
+    assert [(item.start_time, item.end_time) for item in rebuilt] == [(0, 4)]
+    assert audit == {
+        "cta_spans_detected": 1,
+        "cta_spans_removed": 1,
+        "cta_removed_seconds": 3.0,
+    }
+
+
+def test_merge_cap_is_adaptive_bounded_and_reports_distribution():
+    clips = [
+        segment("A", f"Explanation {index}.", [1, 0], start=index * 100, duration=duration)
+        for index, duration in enumerate((10, 20, 30, 40, 50))
+    ]
+    _, stats = repair_physical_boundaries(clips)
+    distribution = stats.semantic_segment_duration_distribution
+    assert distribution == {
+        "count": 5, "p50": 30.0, "p75": 40.0,
+        "p90": 46.0, "p95": 48.0, "max": 50.0,
+    }
+    assert stats.max_merged_block_seconds == 144.0
+    assert 90.0 <= stats.max_merged_block_seconds <= 180.0
 
 
 def test_real_rolling_caption_fixture_normalizes_to_valid_transition():

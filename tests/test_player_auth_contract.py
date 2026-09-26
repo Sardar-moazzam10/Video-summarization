@@ -6,7 +6,7 @@ def test_player_uses_authenticated_transport_for_protected_job_routes():
     assert "import axios" not in source
     assert "axios.get(`${API_BASE_URL}/api/v1/merge" not in source
     assert "axios.post(`${API_BASE_URL}/api/v1/merge" not in source
-    assert "authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}`)" in source
+    assert "authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}`, { signal })" in source
     assert "authenticatedFetch(`${API_BASE_URL}/api/v1/merge/${mergeId}/result`)" in source
 
 

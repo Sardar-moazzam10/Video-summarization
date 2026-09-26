@@ -40,6 +40,11 @@ def get_sentence_transformer():
             model_name = "all-MiniLM-L6-v2"
         # None when unset → anonymous, same as before
         _sentence_transformer = SentenceTransformer(model_name, token=get_hf_token())
+        token = get_hf_token()
+        try:
+            _sentence_transformer = SentenceTransformer(model_name, token=token, local_files_only=True)
+        except Exception:
+            _sentence_transformer = SentenceTransformer(model_name, token=token)
         print(f"[OK] Loaded Sentence-BERT model: {model_name}")
     return _sentence_transformer
 

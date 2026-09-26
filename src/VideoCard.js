@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { API_BASE_URL } from './config/api.js';
+import RightsBadge from './components/rights/RightsBadge.jsx';
 import './VideoCard.css';
 
 const VideoCard = ({ video, videosList, isSelected = false, onToggleSelectForMerge }) => {
@@ -92,6 +93,9 @@ const VideoCard = ({ video, videosList, isSelected = false, onToggleSelectForMer
       <div className="vc-body">
         <h3 className="vc-title" title={title}>{title}</h3>
         {channelTitle && <p className="vc-channel">{channelTitle}</p>}
+        <div className="my-1">
+          <RightsBadge rights={video?.rights} />
+        </div>
         {description && (
           <p className="vc-desc">{description.slice(0, 100)}{description.length > 100 ? '…' : ''}</p>
         )}

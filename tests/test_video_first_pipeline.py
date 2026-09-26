@@ -63,6 +63,8 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
     async def fake_update_one(query, update, **kw):
         s = update.get("$set", {})
         db_writes.append(s)
+        if call_order is not None and "rights_snapshot" in s:
+            call_order.append("rights_snapshot")
         if call_order is not None and s.get("status") == "video_ready":
             call_order.append("video_ready")
 
@@ -98,6 +100,28 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
             raise reel_side_effect
         return "video.mp4"
 
+    async def fake_freeze_rights(job_arg, collection):
+        snapshot = {
+            "schema_version": "1.0",
+            "policy_version": "rights-v1-fail-closed",
+            "evaluated_at": "2026-01-01T00:00:00+00:00",
+            "snapshot_origin": "job_evaluation",
+            "sources": [],
+            "aggregate": {
+                "publication_gate_status": "eligible_by_recorded_rights",
+                "warnings": [],
+                "source_count": 1,
+            },
+        }
+        job_arg.rights_snapshot = snapshot
+        job_arg.publication_gate_status = "eligible_by_recorded_rights"
+        job_arg.rights_summary = snapshot["aggregate"]
+        await collection.update_one(
+            {"job_id": job_arg.job_id},
+            {"$set": {"rights_snapshot": snapshot}},
+        )
+        return snapshot
+
     with patch("backend.api.merge.get_jobs_collection", new_callable=AsyncMock) as mock_get_collection, \
          patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock) as mock_fetch, \
          patch("backend.api.merge.get_fusion_engine", return_value=fake_fusion_engine), \
@@ -107,6 +131,7 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
                side_effect=fake_generate_highlight_reel), \
          patch("backend.services.summarization_service.SummarizationService.summarize_with_policy",
                side_effect=fake_summarize), \
+         patch("backend.api.merge._freeze_job_rights", side_effect=fake_freeze_rights), \
          patch("asyncio.sleep", new_callable=AsyncMock):
 
         mock_get_collection.return_value = jobs_collection
@@ -138,6 +163,9 @@ class TestVideoFirstPipeline:
 
         assert "video_ready" in call_order, "VIDEO_READY checkpoint was never written"
         assert "bart" in call_order, "BART (summarize_with_policy) was never called"
+        assert call_order.index("rights_snapshot") < call_order.index("video_ready"), (
+            f"rights snapshot must be persisted before VIDEO_READY, got order: {call_order}"
+        )
         assert call_order.index("video_ready") < call_order.index("bart"), (
             f"video_path/VIDEO_READY must be persisted before BART starts, "
             f"got order: {call_order}"

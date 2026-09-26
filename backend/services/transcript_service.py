@@ -21,6 +21,7 @@ import json
 import shutil
 import importlib.util
 import subprocess
+import signal
 import tempfile
 import threading
 import time
@@ -28,6 +29,39 @@ from datetime import datetime
 from typing import Awaitable, Callable, Optional, List
 
 from youtube_transcript_api import YouTubeTranscriptApi
+
+
+def run_subprocess_safe(cmd: List[str], timeout: Optional[float] = None, **kwargs) -> subprocess.CompletedProcess:
+    """
+    Subprocess-safe execution using start_new_session=True and process-group termination (os.killpg).
+    Guarantees that on timeout, the entire process tree (yt-dlp + child procs)
+    is terminated with SIGTERM followed by SIGKILL, preventing orphaned zombie processes.
+    """
+    kwargs.setdefault("stdout", subprocess.PIPE)
+    kwargs.setdefault("stderr", subprocess.PIPE)
+    kwargs.setdefault("text", True)
+    kwargs.setdefault("start_new_session", True)
+
+    proc = subprocess.Popen(cmd, **kwargs)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(args=cmd, returncode=proc.returncode, stdout=stdout, stderr=stderr)
+    except subprocess.TimeoutExpired:
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
+            time.sleep(0.2)
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.communicate(timeout=1.0)
+        except Exception:
+            pass
+        raise subprocess.TimeoutExpired(cmd, timeout)
 
 
 def _ytdlp_cmd() -> Optional[List[str]]:
@@ -606,10 +640,10 @@ class TranscriptService:
     # -------------------------------------------------
     # TIER 2: yt-dlp subtitles
     # -------------------------------------------------
-    def _fetch_ytdlp(self, video_id: str) -> Optional[list]:
+    def _fetch_ytdlp(self, video_id: str, timeout: float = 25.0) -> Optional[list]:
         """
         Fallback: Download subtitles via yt-dlp.
-        Tries auto-subs in multiple languages.
+        Bounded latency: single-shot subtitle fetch with process-group cleanup on timeout.
         """
         ytdlp = _ytdlp_cmd()
         if ytdlp is None:
@@ -618,34 +652,31 @@ class TranscriptService:
 
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        # Approach 1: Download subtitle file to temp directory
+        # Approach 1: Fast single-shot download of available subtitles to temp directory
         with tempfile.TemporaryDirectory() as tmpdir:
-            for sub_lang in ["en", "en.*", "hi", "ur", "es", "fr", "de", ".*"]:
-                try:
-                    out_template = os.path.join(tmpdir, "sub")
-                    cmd = [
-                        *ytdlp,
-                        "--write-auto-sub",
-                        "--skip-download",
-                        "--sub-lang", sub_lang,
-                        "--sub-format", "json3",
-                        "--output", out_template,
-                        "--no-warnings",
-                        "--quiet",
-                        url,
-                    ]
+            try:
+                out_template = os.path.join(tmpdir, "sub")
+                cmd = [
+                    *ytdlp,
+                    "--write-auto-sub",
+                    "--write-sub",
+                    "--skip-download",
+                    "--sub-langs", "en.*,en,hi,ur,es,fr,de",
+                    "--sub-format", "json3",
+                    "--output", out_template,
+                    "--no-warnings",
+                    "--quiet",
+                    "--socket-timeout", "10",
+                    "--retries", "1",
+                    "--fragment-retries", "1",
+                    url,
+                ]
 
-                    if os.path.exists(self.cookie_path):
-                        cmd.extend(["--cookies", self.cookie_path])
+                if os.path.exists(self.cookie_path):
+                    cmd.extend(["--cookies", self.cookie_path])
 
-                    result = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=90
-                    )
-
-                    if result.returncode != 0:
-                        continue
-
-                    # Find the downloaded subtitle file
+                result = run_subprocess_safe(cmd, timeout=timeout)
+                if result.returncode == 0:
                     for fname in os.listdir(tmpdir):
                         if fname.endswith(".json3"):
                             fpath = os.path.join(tmpdir, fname)
@@ -654,30 +685,28 @@ class TranscriptService:
 
                             transcript = self._parse_json3_subtitles(data)
                             if transcript:
-                                print(f"[Transcript] yt-dlp got subs (lang={sub_lang}) for {video_id}")
-                                # Original language kept — get_transcript() decides.
+                                print(f"[Transcript] yt-dlp got subs ({fname}) for {video_id}")
                                 return transcript
+            except subprocess.TimeoutExpired:
+                print(f"[Transcript] yt-dlp timed out ({timeout}s) for {video_id}")
+            except Exception as e:
+                print(f"[Transcript] yt-dlp error for {video_id}: {e}")
 
-                except subprocess.TimeoutExpired:
-                    print(f"[Transcript] yt-dlp timed out for lang={sub_lang}")
-                    continue
-                except Exception as e:
-                    print(f"[Transcript] yt-dlp error for lang={sub_lang}: {e}")
-                    continue
-
-        # Approach 2: Try --print subtitle (older yt-dlp fallback)
+        # Approach 2: Fast print-subtitle fallback
         try:
             cmd = [
                 *ytdlp,
                 "--write-auto-sub", "--skip-download",
                 "--sub-lang", "en", "--sub-format", "json3",
                 "--no-warnings", "--quiet", "--print", "subtitle",
+                "--socket-timeout", "10",
+                "--retries", "1",
                 url,
             ]
             if os.path.exists(self.cookie_path):
                 cmd.extend(["--cookies", self.cookie_path])
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            result = run_subprocess_safe(cmd, timeout=12.0)
             if result.returncode == 0 and result.stdout.strip():
                 data = json.loads(result.stdout)
                 transcript = self._parse_json3_subtitles(data)
@@ -695,7 +724,7 @@ class TranscriptService:
     def _fetch_whisper(self, video_id: str) -> Optional[list]:
         """
         Last resort: Download audio and transcribe with OpenAI Whisper.
-        Slower but works for any video with audio.
+        Slower but works for any video with audio. Bounded download timeout.
         """
         ytdlp = _ytdlp_cmd()
         if ytdlp is None:
@@ -713,7 +742,7 @@ class TranscriptService:
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_out = os.path.join(tmpdir, "audio")
 
-            # Download audio only
+            # Download audio only with bounded timeout (60s)
             try:
                 cmd = [
                     *ytdlp,
@@ -724,15 +753,18 @@ class TranscriptService:
                     "--no-warnings",
                     "--quiet",
                     "--no-playlist",
+                    "--socket-timeout", "15",
+                    "--retries", "1",
+                    "--fragment-retries", "1",
                     url,
                 ]
                 if os.path.exists(self.cookie_path):
                     cmd.extend(["--cookies", self.cookie_path])
 
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                proc = run_subprocess_safe(cmd, timeout=60.0)
                 
                 if proc.returncode != 0:
-                    print(f"[Transcript] yt-dlp failed for {video_id}: {proc.stderr.strip()}")
+                    print(f"[Transcript] yt-dlp audio download failed for {video_id}: {proc.stderr.strip()}")
                     return None
 
                 # Find the downloaded audio file
@@ -904,8 +936,86 @@ class TranscriptService:
                 })
         return transcript if transcript else None
 
-    def summarize(self, text: str, max_length: int = 150, min_length: int = 50) -> str:
-        """Summarize text using T5-small (legacy endpoint)."""
+    async def preflight_source(self, raw_video_id: str, per_source_timeout: float = 20.0) -> dict:
+        """
+        Bounded transcript-availability preflight for a single video.
+        Determines acquisition viability before launching an expensive multi-video job.
+        """
+        video_id = extract_video_id(raw_video_id)
+        t0 = time.perf_counter()
+
+        # 1. Cache check
+        try:
+            cached = await self.transcripts.find_one({"video_id": video_id})
+            if cached and self._transcript_is_sane(cached.get("transcript")):
+                t_elapsed = round(time.perf_counter() - t0, 3)
+                return {
+                    "video_id": video_id,
+                    "status": "cached_transcript",
+                    "ready": True,
+                    "method": "cache",
+                    "time_seconds": t_elapsed,
+                    "error": None,
+                }
+        except Exception as e:
+            print(f"[Preflight] Cache check error for {video_id}: {e}")
+
+        # 2. Fast YouTube Transcript API check (max 1 retry)
+        try:
+            transcript = await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_youtube_api, video_id, 1),
+                timeout=min(per_source_timeout, 10.0),
+            )
+            if transcript and self._transcript_is_sane(transcript):
+                t_elapsed = round(time.perf_counter() - t0, 3)
+                return {
+                    "video_id": video_id,
+                    "status": "caption_ready",
+                    "ready": True,
+                    "method": "youtube_api",
+                    "time_seconds": t_elapsed,
+                    "error": None,
+                }
+        except Exception:
+            pass
+
+        # 3. Fast yt-dlp subtitle check (bounded timeout)
+        try:
+            ytdlp_timeout = max(5.0, per_source_timeout - (time.perf_counter() - t0))
+            transcript = await asyncio.to_thread(self._fetch_ytdlp, video_id, timeout=min(ytdlp_timeout, 12.0))
+            if transcript and self._transcript_is_sane(transcript):
+                t_elapsed = round(time.perf_counter() - t0, 3)
+                return {
+                    "video_id": video_id,
+                    "status": "caption_ready",
+                    "ready": True,
+                    "method": "yt_dlp",
+                    "time_seconds": t_elapsed,
+                    "error": None,
+                }
+        except Exception:
+            pass
+
+        # If captions are not fast-available, slow recovery (Whisper) would be required
+        t_elapsed = round(time.perf_counter() - t0, 3)
+        return {
+            "video_id": video_id,
+            "status": "slow_recovery_required",
+            "ready": False,
+            "method": "whisper_required",
+            "time_seconds": t_elapsed,
+            "error": "Fast captions unavailable (audio download + Whisper recovery required)",
+        }
+
+    async def preflight_sources(self, video_ids: List[str], per_source_timeout: float = 20.0) -> dict:
+        """
+        Bounded concurrent preflight across all requested videos.
+        Returns dict keyed by video_id with preflight status.
+        """
+        tasks = [self.preflight_source(vid, per_source_timeout) for vid in video_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        return {r["video_id"]: r for r in results}
+
     def summarize(self, text: str, max_length: int = 150, min_length: int = 40) -> str:
         """Summarize text using preloaded BART pipeline."""
         if not text or len(text) < 100:

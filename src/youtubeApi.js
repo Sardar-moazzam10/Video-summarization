@@ -7,6 +7,8 @@ const DEFAULT_OPTIONS = {
   appendPodcast: false, // when true, " podcast" is appended to the query
   duration: 'any',      // YouTube videoDuration: 'any' | 'short' | 'medium' | 'long'
   maxResults: 20,
+  license: 'any',       // 'any' | 'creativeCommon' | 'youtube'
+  includeRights: false, // when true, requests status.license enrichment
 };
 
 /**
@@ -14,21 +16,31 @@ const DEFAULT_OPTIONS = {
  *
  * @param {string} searchQuery      Raw user query — sent verbatim unless appendPodcast is set.
  * @param {object} [options]        { appendPodcast, duration, maxResults }
+ * @param {object} [options]        { appendPodcast, duration, maxResults, license, includeRights }
  * @returns {Promise<Array>}        YouTube search items; rejects with a user-facing error on failure.
  */
 export const fetchVideos = async (searchQuery, options = {}) => {
-  const { appendPodcast, duration, maxResults } = { ...DEFAULT_OPTIONS, ...options };
+  const { appendPodcast, duration, maxResults, license, includeRights } = {
+    ...DEFAULT_OPTIONS,
+    ...options,
+  };
 
   const q = appendPodcast ? `${searchQuery} podcast` : searchQuery;
 
   try {
-    const response = await axios.get(SEARCH_URL, {
-      params: {
-        q,
-        duration,
-        max_results: maxResults,
-      },
-    });
+    const params = {
+      q,
+      duration,
+      max_results: maxResults,
+    };
+    if (license && license !== 'any') {
+      params.license = license;
+    }
+    if (includeRights) {
+      params.include_rights = true;
+    }
+
+    const response = await axios.get(SEARCH_URL, { params });
 
     const items = response.data?.items || [];
 

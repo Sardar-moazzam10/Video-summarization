@@ -250,6 +250,12 @@ class Settings(BaseSettings):
     # start returning 429 once it is exhausted; an authenticated pull does not.
     HF_TOKEN: str = ""
 
+    # =====================================================
+    # RIGHTS & PUBLICATION
+    # =====================================================
+    # Rights enforcement mode for publication gating: "warn" or "block"
+    RIGHTS_ENFORCEMENT_MODE: str = "warn"
+
     @model_validator(mode="after")
     def validate_production_security(self):
         """Fail startup instead of silently using an ephemeral/weak key."""

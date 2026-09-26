@@ -14,7 +14,8 @@ export const authHeaders = (extra = {}) => {
 };
 
 export const authenticatedFetch = async (url, options = {}) => {
-  const response = await fetch(url, {
+  const finalUrl = (typeof url === 'string' && url.startsWith('/')) ? `${API_BASE_URL}${url}` : url;
+  const response = await fetch(finalUrl, {
     ...options,
     headers: authHeaders(options.headers || {}),
   });

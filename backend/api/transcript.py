@@ -34,8 +34,6 @@ async def get_transcript(
     When fast_search=True, uses fast English-only caption path without fallback or audio processing.
     """
     service = await get_transcript_service()
-    result = await service.get_transcript(videoId)
-    result = await service.get_transcript(videoId, allow_whisper=allow_whisper)
     result = await service.get_transcript(
         videoId,
         allow_whisper=allow_whisper,
