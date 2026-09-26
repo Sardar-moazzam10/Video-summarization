@@ -132,6 +132,12 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
          patch("backend.services.summarization_service.SummarizationService.summarize_with_policy",
                side_effect=fake_summarize), \
          patch("backend.api.merge._freeze_job_rights", side_effect=fake_freeze_rights), \
+         patch("backend.api.merge.create_shadow_job_decisions", new_callable=AsyncMock), \
+         patch("backend.api.merge.finalize_shadow_manifest", new_callable=AsyncMock), \
+         patch("backend.api.merge.append_event", new_callable=AsyncMock), \
+         patch("backend.api.merge.set_observation_context", return_value="dummy_token"), \
+         patch("backend.api.merge.reset_observation_context"), \
+         patch("backend.api.merge.load_job_decision_ids", new_callable=AsyncMock), \
          patch("asyncio.sleep", new_callable=AsyncMock):
 
         mock_get_collection.return_value = jobs_collection
