@@ -21,6 +21,7 @@ Why original audio?
     a synthetic voice says something different.
 """
 
+from .acquisition_service import append_event
 import os
 import sys
 import shutil
@@ -254,17 +255,45 @@ class VideoService:
         try:
             from video_cache_manager import get_video_cache_manager
             cache_manager = get_video_cache_manager()
+            await append_event(
+                source_id=video_id,
+                operation="video_download",
+                phase="attempted",
+                method="video_cache_manager",
+                outcome_code="started",
+            )
             path = await asyncio.wait_for(
                 asyncio.to_thread(
                     cache_manager.download_and_cache_video, video_id, work_dir
                 ),
                 timeout=_cache_timeout,
             )
+            await append_event(
+                source_id=video_id,
+                operation="video_download",
+                phase="succeeded",
+                method="video_cache_manager",
+                outcome_code="success",
+            )
             return path
         except asyncio.TimeoutError:
+            await append_event(
+                source_id=video_id,
+                operation="video_download",
+                phase="failed",
+                method="video_cache_manager",
+                outcome_code="timeout",
+            )
             print(f"[Video] Cache manager timed out ({_cache_timeout:.0f}s) for {video_id} "
                   f"— falling back to yt-dlp")
         except Exception as e:
+            await append_event(
+                source_id=video_id,
+                operation="video_download",
+                phase="failed",
+                method="video_cache_manager",
+                outcome_code="error",
+            )
             print(f"[Video] Cache manager failed for {video_id}: {e}")
 
         url = f"https://www.youtube.com/watch?v={video_id}"
@@ -296,6 +325,13 @@ class VideoService:
             cmd.extend(["--cookies", cookies_file])
 
         print(f"[Video] Downloading {video_id} (360p max, timeout={_ytdlp_timeout:.0f}s) via yt-dlp...")
+        await append_event(
+            source_id=video_id,
+            operation="video_download",
+            phase="attempted",
+            method="yt_dlp",
+            outcome_code="started",
+        )
         try:
             await asyncio.wait_for(
                 asyncio.to_thread(
@@ -308,15 +344,36 @@ class VideoService:
                 timeout=_ytdlp_timeout + 5,  # asyncio wrapper adds a small margin
             )
         except asyncio.TimeoutError:
+            await append_event(
+                source_id=video_id,
+                operation="video_download",
+                phase="failed",
+                method="yt_dlp",
+                outcome_code="timeout",
+            )
             print(f"[Video] yt-dlp timed out ({_ytdlp_timeout:.0f}s) for {video_id}")
             return None
         except subprocess.CalledProcessError as e:
+            await append_event(
+                source_id=video_id,
+                operation="video_download",
+                phase="failed",
+                method="yt_dlp",
+                outcome_code="error",
+            )
             err = (e.stderr or b"").decode(errors="replace")[-400:] if e.stderr else ""
             print(f"[Video] yt-dlp failed for {video_id}: {err}")
             return None
 
         for fname in os.listdir(work_dir):
             if fname.startswith(f"{video_id}."):
+                await append_event(
+                    source_id=video_id,
+                    operation="video_download",
+                    phase="succeeded",
+                    method="yt_dlp",
+                    outcome_code="success",
+                )
                 fsize_mb = os.path.getsize(os.path.join(work_dir, fname)) / (1024 * 1024)
                 print(f"[Video] yt-dlp download complete: {fname} ({fsize_mb:.1f} MB)")
                 return os.path.join(work_dir, fname)

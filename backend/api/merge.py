@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from typing import Dict, List, Optional, Callable, Awaitable
 import asyncio
 import json
+import logging
 from datetime import datetime
 import os
 from time import perf_counter
@@ -49,6 +50,7 @@ from ..core.security import (
 
 router = APIRouter(prefix="/api/v1/merge", tags=["merge"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 # =====================================================
@@ -152,6 +154,11 @@ async def _get_owned_job(job_id: str, principal: dict) -> dict:
         raise HTTPException(404, "Job not found")
     _assert_job_owner(job_data, principal)
     return job_data
+
+
+def _job_error(job_data: dict) -> Optional[str]:
+    """Read the canonical error field with narrow legacy DB compatibility."""
+    return job_data.get("error") or job_data.get("error_message")
 
 
 async def _get_media_job(
@@ -371,7 +378,27 @@ async def create_merge_job(
 
     # Duration feasibility — checked BEFORE the job exists.
     # Fail closed: ALL unique videos must have their duration resolved.
-    resolved = await asyncio.to_thread(get_durations, clean_ids)
+    
+    import uuid
+    job_id = str(uuid.uuid4())
+    dec_ids = await create_shadow_job_decisions(
+        job_id=job_id,
+        user_id=current_user.get("sub", "anonymous") if isinstance(current_user, dict) else "anonymous",
+        source_ids=clean_ids,
+    )
+    acq_token = set_observation_context(
+        job_id=job_id, user_id=current_user.get("sub", "anonymous") if isinstance(current_user, dict) else "anonymous", decision_ids=dec_ids
+    )
+    try:
+        for vid in clean_ids:
+            await append_event(source_id=vid, operation="metadata_read", phase="attempted", method="duration_probe", outcome_code="started")
+        resolved = await asyncio.to_thread(get_durations, clean_ids)
+        for vid in clean_ids:
+            d = resolved.get(vid)
+            await append_event(source_id=vid, operation="metadata_read", phase="succeeded" if d is not None else "failed", method="duration_probe", outcome_code="success" if d is not None else "not_found")
+    finally:
+        reset_observation_context(acq_token)
+
     known = {vid: d for vid, d in resolved.items() if d is not None}
     unresolved = [vid for vid, d in resolved.items() if d is None]
 
@@ -406,6 +433,7 @@ async def create_merge_job(
 
     # Create job
     job = MergeJob(
+        job_id=job_id,
         user_id=current_user["sub"],
         video_ids=canonical_video_ids,
         requested_video_ids=canonical_video_ids,
@@ -537,7 +565,7 @@ async def get_job_status(
         status=job_data["status"],
         progress_percent=job_data["progress_percent"],
         stage_message=job_data["stage_message"],
-        error=job_data.get("error"),
+        error=_job_error(job_data),
         warning=job_data.get("warning"),
         query=job_data.get("query"),
         selected_keywords=job_data.get("selected_keywords", []),
@@ -633,7 +661,7 @@ async def get_job_result(
         "summarization_decision": job_data.get("summarization_decision"),
         "selection_mode": job_data.get("selection_mode", "legacy"),
         "warning": job_data.get("warning"),
-        "error": job_data.get("error"),
+        "error": _job_error(job_data),
         "metadata": {} if summary_pending else job_data.get("fusion_metadata", {}),
         # Language-abort fields — present on language-abort jobs so the frontend
         # can skip QualityPanel and show the correct unavailable-summary state
@@ -1697,6 +1725,7 @@ async def process_merge_job(job_id: str):
     jobs_collection = await get_jobs_collection()
 
     acq_token = None
+    was_cancelled = False
     try:
         job = _active_jobs.get(job_id)
         if not job:
@@ -2678,27 +2707,72 @@ async def process_merge_job(job_id: str):
         )
 
     except asyncio.CancelledError:
-        pass
-    finally:
-        if acq_token is not None:
+        was_cancelled = True
+        if job.status not in (JobStatus.COMPLETED, JobStatus.PARTIAL_SUCCESS, JobStatus.VIDEO_READY):
+            job.status = JobStatus.CANCELLED
+            job.error = "Job was cancelled"
             try:
                 loop = asyncio.get_running_loop()
                 if not loop.is_closed():
-                    await finalize_shadow_manifest(
-                        job_id,
-                        reason="job_completed" if job.status in (JobStatus.COMPLETED, JobStatus.PARTIAL_SUCCESS, JobStatus.VIDEO_READY) else "job_failed"
+                    await jobs_collection.update_one(
+                        {"job_id": job_id},
+                        {"$set": {
+                            "status": JobStatus.CANCELLED.value,
+                            "error": job.error,
+                            "updated_at": datetime.utcnow(),
+                        }}
                     )
-            except BaseException:
-                pass
-            reset_observation_context(acq_token)
-        # Clean up memory after some time
+            except Exception as exc:
+                logger.warning(
+                    "Cancellation state persistence failed for job %s: %s",
+                    job_id,
+                    exc,
+                )
+        raise
+    finally:
         try:
-            loop = asyncio.get_running_loop()
-            if not loop.is_closed():
-                await asyncio.sleep(300)  # Keep in memory for 5 minutes
-        except BaseException:
-            pass
-        _active_jobs.pop(job_id, None)
+            if acq_token is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    if not loop.is_closed():
+                        if job.status == JobStatus.CANCELLED:
+                            finalization_reason = "job_cancelled"
+                        elif job.status in (
+                            JobStatus.COMPLETED,
+                            JobStatus.PARTIAL_SUCCESS,
+                            JobStatus.VIDEO_READY,
+                        ):
+                            finalization_reason = "job_completed"
+                        else:
+                            finalization_reason = "job_failed"
+                        await finalize_shadow_manifest(job_id, finalization_reason)
+                except Exception as exc:
+                    logger.warning(
+                        "Acquisition manifest finalization failed for job %s: %s",
+                        job_id,
+                        exc,
+                    )
+
+            # Preserve the existing five-minute in-memory retention for normal
+            # completion/error paths. Cancellation performs minimal cleanup and
+            # must propagate immediately.
+            if not was_cancelled:
+                try:
+                    loop = asyncio.get_running_loop()
+                    if not loop.is_closed():
+                        await asyncio.sleep(300)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "Job retention cleanup failed for job %s: %s",
+                        job_id,
+                        exc,
+                    )
+        finally:
+            if acq_token is not None:
+                reset_observation_context(acq_token)
+            _active_jobs.pop(job_id, None)
 
 
 async def fetch_transcripts_with_segments(

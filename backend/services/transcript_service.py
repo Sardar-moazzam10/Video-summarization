@@ -12,6 +12,7 @@ Also handles:
   - Multi-language support with English translation
   - Retry logic for transient failures
 """
+from .acquisition_service import append_event
 
 import asyncio
 import re
@@ -304,9 +305,24 @@ class TranscriptService:
         # holds a plausible timeline — see _transcript_is_sane(). Entries written
         # by the old newline-realignment translator do not, and reusing them
         # silently reproduces the original corruption on every later run.
+        await append_event(
+            source_id=video_id,
+            operation="metadata_read",
+            phase="attempted",
+            method="transcript_cache",
+            outcome_code="started",
+        )
         cached = await self.transcripts.find_one({"video_id": video_id})
         if cached:
             if self._transcript_is_sane(cached.get("transcript")):
+                await append_event(
+                    source_id=video_id,
+                    operation="metadata_read",
+                    phase="succeeded",
+                    method="transcript_cache",
+                    outcome_code="success",
+                    cache_result="hit",
+                )
                 return {
                     "transcript": cached["transcript"],
                     "source": cached.get("source", "cache"),
@@ -314,8 +330,15 @@ class TranscriptService:
                 }
             cached_transcript = cached.get("transcript")
             if self._transcript_is_sane(cached_transcript):
-                # For fast_search, only reuse cached transcript if it is English
                 if not fast_search or self._detect_transcript_language(cached_transcript) == "en":
+                    await append_event(
+                        source_id=video_id,
+                        operation="metadata_read",
+                        phase="succeeded",
+                        method="transcript_cache",
+                        outcome_code="success",
+                        cache_result="hit",
+                    )
                     return {
                         "transcript": cached_transcript,
                         "source": cached.get("source", "cache"),
@@ -326,6 +349,15 @@ class TranscriptService:
                     return None
             print(f"[Transcript] Cached transcript for {video_id} failed the sanity "
                   f"check — refetching instead of reusing it")
+        
+        await append_event(
+            source_id=video_id,
+            operation="metadata_read",
+            phase="succeeded",
+            method="transcript_cache",
+            outcome_code="not_found",
+            cache_result="miss",
+        )
 
         # Fast search mode: English captions only, zero Whisper/translation/download
         if fast_search:
@@ -356,15 +388,45 @@ class TranscriptService:
         # inline would block every other request on this process for the
         # full retry duration (same class of bug fixed for translation/
         # Whisper below).
+        await append_event(
+            source_id=video_id,
+            operation="caption_read",
+            phase="attempted",
+            method="youtube_api",
+            outcome_code="started",
+        )
         transcript = await asyncio.to_thread(self._fetch_youtube_api, video_id)
         source = "youtube_api"
+        await append_event(
+            source_id=video_id,
+            operation="caption_read",
+            phase="succeeded" if transcript else "failed",
+            method="youtube_api",
+            outcome_code="success" if transcript else "not_found",
+            provider="youtube",
+        )
 
         # Tier 2: yt-dlp subtitle extraction. Off the event loop — this
         # shells out via subprocess.run with up to a 90s timeout per
         # language tried, which would otherwise stall the whole server.
         if not transcript:
+            await append_event(
+                source_id=video_id,
+                operation="caption_read",
+                phase="attempted",
+                method="yt_dlp_subtitles",
+                outcome_code="started",
+            )
             transcript = await asyncio.to_thread(self._fetch_ytdlp, video_id)
             source = "yt_dlp"
+            await append_event(
+                source_id=video_id,
+                operation="caption_read",
+                phase="succeeded" if transcript else "failed",
+                method="yt_dlp_subtitles",
+                outcome_code="success" if transcript else "not_found",
+                fallback_from_event_id=None,
+            )
 
         # Language gate.
         #
@@ -465,8 +527,22 @@ class TranscriptService:
                         # otherwise block the SSE progress stream for its
                         # entire run, same class of bug as the translation
                         # call above.
+                        await append_event(
+                            source_id=video_id,
+                            operation="audio_download",
+                            phase="attempted",
+                            method="yt_dlp_audio",
+                            outcome_code="started",
+                        )
                         whisper_transcript = await asyncio.to_thread(
                             self._fetch_whisper, video_id
+                        )
+                        await append_event(
+                            source_id=video_id,
+                            operation="audio_download",
+                            phase="succeeded" if whisper_transcript else "failed",
+                            method="yt_dlp_audio",
+                            outcome_code="success" if whisper_transcript else "not_found",
                         )
                         if whisper_transcript:
                             transcript = whisper_transcript
@@ -485,8 +561,22 @@ class TranscriptService:
         # every other in-flight request (including other videos in the same
         # search) appears frozen until this one finishes.
         if not transcript and allow_whisper:
+            await append_event(
+                source_id=video_id,
+                operation="audio_download",
+                phase="attempted",
+                method="yt_dlp_audio",
+                outcome_code="started",
+            )
             transcript = await asyncio.to_thread(self._fetch_whisper, video_id)
             source = "whisper"
+            await append_event(
+                source_id=video_id,
+                operation="audio_download",
+                phase="succeeded" if transcript else "failed",
+                method="yt_dlp_audio",
+                outcome_code="success" if transcript else "not_found",
+            )
 
         if not transcript:
             return None
