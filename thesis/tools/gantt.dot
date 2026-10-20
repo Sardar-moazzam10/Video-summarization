@@ -1,0 +1,85 @@
+digraph Gantt {
+  layout=neato;
+  graph [fontname="Segoe UI", bgcolor="white", overlap=false];
+  node [shape=plaintext, fontname="Segoe UI"];
+  edge [style=invis];
+
+  // A Gantt chart is drawn as a grid of filled/empty cells rather than a
+  // flow diagram: one HTML table, tasks as rows, months as columns, with a
+  // solid bar marking which month(s) each task ran in. Timeline: January
+  // 2026 (7th semester start) through September 2026 (submission), the
+  // real academic window for this project rather than an invented one.
+
+  chart [pos="0,0!", label=<
+    <table border="1" cellborder="1" cellspacing="0" cellpadding="6" bgcolor="white">
+      <tr>
+        <td bgcolor="#eaf3ff"><b>Task</b></td>
+        <td bgcolor="#eaf3ff"><b>Jan<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>Feb<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>Mar<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>Apr<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>May<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>Jun<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>Jul<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>Aug<br/>2026</b></td>
+        <td bgcolor="#eaf3ff"><b>Sep<br/>2026</b></td>
+      </tr>
+      <tr>
+        <td align="left">FYP proposal &amp; topic approval</td>
+        <td bgcolor="#0a66c2"></td>
+        <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+      </tr>
+      <tr>
+        <td align="left">Requirement analysis &amp; SRS</td>
+        <td></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td></td><td></td><td></td><td></td><td></td><td></td>
+      </tr>
+      <tr>
+        <td align="left">System design (ERD, class,<br/>architecture diagrams)</td>
+        <td></td><td></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td></td><td></td><td></td><td></td><td></td>
+      </tr>
+      <tr>
+        <td align="left">Backend implementation<br/>(auth, pipeline, durable workers)</td>
+        <td></td><td></td><td></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td></td><td></td><td></td>
+      </tr>
+      <tr>
+        <td align="left">Semantic selection pipeline<br/>(segmentation, concepts, selector)</td>
+        <td></td><td></td><td></td><td></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td></td><td></td>
+      </tr>
+      <tr>
+        <td align="left">Testing &amp; gold-standard<br/>evaluation harness</td>
+        <td></td><td></td><td></td><td></td><td></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td align="left">Rights governance &amp;<br/>Docker Compose deployment</td>
+        <td></td><td></td><td></td><td></td><td></td><td></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td align="left">Documentation &amp; final<br/>submission</td>
+        <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        <td bgcolor="#0a66c2"></td>
+        <td bgcolor="#0a66c2"></td>
+      </tr>
+    </table>
+  >];
+}

@@ -1,0 +1,72 @@
+graph UseCase {
+  layout=neato;
+  graph [fontname="Segoe UI", bgcolor="white", overlap=false, splines=line];
+  node [fontname="Segoe UI", fontsize=12];
+  edge [fontname="Segoe UI", fontsize=10, color="#1a2744", penwidth=1.1];
+
+  Boundary [pos="7,5.5!", shape=box, width=7.4, height=9.6, fixedsize=true,
+            label="", color="#14315c", penwidth=1.3];
+  BoundaryLabel [pos="7,10.3!", shape=plaintext, fixedsize=false,
+                 fontname="Segoe UI Semibold", fontsize=16, fontcolor="#14315c",
+                 label="VidFusion"];
+
+  node [shape=plaintext, fixedsize=false, width=0, height=0];
+  Guest  [pos="0,10!",  label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1"><TR><TD><FONT POINT-SIZE="26">&#128100;</FONT></TD></TR><TR><TD><FONT POINT-SIZE="12">Guest</FONT></TD></TR></TABLE>>];
+  User   [pos="0,5.5!", label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1"><TR><TD><FONT POINT-SIZE="26">&#128100;</FONT></TD></TR><TR><TD><FONT POINT-SIZE="12">Registered User</FONT></TD></TR></TABLE>>];
+  Admin  [pos="0,1!",   label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1"><TR><TD><FONT POINT-SIZE="26">&#128100;</FONT></TD></TR><TR><TD><FONT POINT-SIZE="12">Admin</FONT></TD></TR></TABLE>>];
+  AI     [pos="14.5,9!",  label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1"><TR><TD><FONT POINT-SIZE="26">&#128100;</FONT></TD></TR><TR><TD><FONT POINT-SIZE="12">External AI Service<BR/>(Whisper/SBERT/<BR/>distilBART/Ollama)</FONT></TD></TR></TABLE>>];
+  Worker [pos="14.5,5!",label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1"><TR><TD><FONT POINT-SIZE="26">&#128100;</FONT></TD></TR><TR><TD><FONT POINT-SIZE="12">Background Worker<BR/>(Video / Text)</FONT></TD></TR></TABLE>>];
+  YT     [pos="14.5,1!",  label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="1"><TR><TD><FONT POINT-SIZE="26">&#128100;</FONT></TD></TR><TR><TD><FONT POINT-SIZE="12">Video Platform<BR/>(YouTube)</FONT></TD></TR></TABLE>>];
+
+  node [shape=ellipse, style=filled, fillcolor="#dbe9fb", color="#14315c",
+        fontcolor="#14315c", fixedsize=true, width=2.3, height=0.8];
+  UC1  [pos="4.3,10!",  label="Register\nAccount"];
+  UC2  [pos="9.7,10!",  label="Login"];
+  UC3  [pos="4.3,8.3!", label="Create\nMerge Job"];
+  UC5  [pos="9.7,8.3!", label="Preflight Check\nSources"];
+  UC4  [pos="4.3,6.6!", label="Monitor Job\nProgress"];
+  UC6  [pos="9.7,6.6!", label="Retry Failed\nOutput"];
+  UC7  [pos="4.3,4.9!", label="Retrieve\nJob Result"];
+  UC8  [pos="9.7,4.9!", label="Search\nTranscripts"];
+  UC9  [pos="4.3,3.2!", label="Chat with\nVideo Content"];
+  UC10 [pos="9.7,3.2!", label="Record Source\nRights"];
+  UC11 [pos="4.3,1.5!", label="View Job\nRights Manifest"];
+  UC13 [pos="9.7,1.5!", label="View\nHistory"];
+  UC12 [pos="4.3,-0.2!", label="Manage\nUsers", fillcolor="#fde3b8", color="#8a5a00", fontcolor="#5c3c00"];
+  UCProc  [pos="9.7,-0.2!", label="Process\nMerge Job", fillcolor="#fde3b8", color="#8a5a00", fontcolor="#5c3c00"];
+  UCVid   [pos="12.2,-1.9!", label="Render\nHighlight Video", fillcolor="#fde3b8", color="#8a5a00", fontcolor="#5c3c00"];
+  UCTxt   [pos="7.2,-1.9!", label="Generate Written\nSummary", fillcolor="#fde3b8", color="#8a5a00", fontcolor="#5c3c00"];
+
+  Guest -- UC1;
+  Guest -- UC2;
+
+  User -- UC2;
+  User -- UC3;
+  User -- UC4;
+  User -- UC7;
+  User -- UC8;
+  User -- UC9;
+  User -- UC10;
+  User -- UC11;
+  User -- UC13;
+
+  Admin -- UC2;
+  Admin -- UC12;
+
+  UC3 -- UC5 [style=dashed, label="<<include>>"];
+  UC4 -- UCProc [style=dashed, label="<<include>>"];
+  UC9 -- UC8 [style=dashed, label="<<include>>"];
+  UCProc -- UCVid [style=dashed, label="<<include>>"];
+  UCProc -- UCTxt [style=dashed, label="<<include>>"];
+
+  UCProc -- AI;
+  UC9 -- AI;
+  UC8 -- AI;
+  UC3 -- YT;
+
+  UCProc -- Worker;
+  UCVid -- Worker;
+  UCTxt -- Worker;
+
+  UC10 -- UC11 [style=dashed, label="<<extend>>"];
+}

@@ -1,0 +1,101 @@
+digraph ClassDiagram {
+  graph [fontname="Segoe UI", bgcolor="white", rankdir=TB, nodesep=0.5, ranksep=0.9];
+  node [fontname="Segoe UI", shape=none, fontsize=10];
+  edge [fontname="Segoe UI", fontsize=9, color="#33475b"];
+
+  User [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eef5fd" COLOR="#0a66c2">
+      <TR><TD BGCOLOR="#0a66c2"><FONT COLOR="white"><B>User</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ email: str</TD></TR>
+      <TR><TD ALIGN="LEFT">+ username: str</TD></TR>
+      <TR><TD ALIGN="LEFT">+ role: "user"|"admin"</TD></TR>
+    </TABLE>>];
+
+  MergeJob [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#fdeaea" COLOR="#c62828">
+      <TR><TD BGCOLOR="#c62828"><FONT COLOR="white"><B>MergeJob</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ job_id: str</TD></TR>
+      <TR><TD ALIGN="LEFT">+ status: JobStatus</TD></TR>
+      <TR><TD ALIGN="LEFT">+ target_duration_minutes: int</TD></TR>
+      <TR><TD ALIGN="LEFT">+ video_component: OutputComponentState</TD></TR>
+      <TR><TD ALIGN="LEFT">+ text_component: OutputComponentState</TD></TR>
+    </TABLE>>];
+
+  ConceptInfo [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#fff4e0" COLOR="#c77700">
+      <TR><TD BGCOLOR="#c77700"><FONT COLOR="white"><B>ConceptInfo</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ concept: str</TD></TR>
+      <TR><TD ALIGN="LEFT">+ importance: float</TD></TR>
+      <TR><TD ALIGN="LEFT">+ evidence: list</TD></TR>
+      <TR><TD ALIGN="LEFT">+ timestamps: list</TD></TR>
+    </TABLE>>];
+
+  VideoSegment [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#fff4e0" COLOR="#c77700">
+      <TR><TD BGCOLOR="#c77700"><FONT COLOR="white"><B>VideoSegment</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ video_id: str</TD></TR>
+      <TR><TD ALIGN="LEFT">+ start_time: float</TD></TR>
+      <TR><TD ALIGN="LEFT">+ end_time: float</TD></TR>
+    </TABLE>>];
+
+  SourceRightsRecord [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#f3eaff" COLOR="#6a2fb0">
+      <TR><TD BGCOLOR="#6a2fb0"><FONT COLOR="white"><B>SourceRightsRecord</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ source_id: str</TD></TR>
+      <TR><TD ALIGN="LEFT">+ rights_basis: RightsBasis</TD></TR>
+    </TABLE>>];
+
+  OutputTask [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#fff4e0" COLOR="#c77700">
+      <TR><TD BGCOLOR="#c77700"><FONT COLOR="white"><B>OutputTask</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ task_id: str</TD></TR>
+      <TR><TD ALIGN="LEFT">+ output_type: "video"|"text"</TD></TR>
+      <TR><TD ALIGN="LEFT">+ lease_expires_at: datetime</TD></TR>
+    </TABLE>>];
+
+  SemanticSegmenter [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eafbea" COLOR="#1f8a3d">
+      <TR><TD BGCOLOR="#1f8a3d"><FONT COLOR="white"><B>SemanticSegmenter</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ build_sentences()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ segment_semantically()</TD></TR>
+    </TABLE>>];
+
+  ConceptExtractor [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eafbea" COLOR="#1f8a3d">
+      <TR><TD BGCOLOR="#1f8a3d"><FONT COLOR="white"><B>ConceptExtractor</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ extract_concepts()</TD></TR>
+    </TABLE>>];
+
+  CoverageSelector [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eafbea" COLOR="#1f8a3d">
+      <TR><TD BGCOLOR="#1f8a3d"><FONT COLOR="white"><B>CoverageSelector</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ select_segments()</TD></TR>
+    </TABLE>>];
+
+  VideoService [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eafbea" COLOR="#1f8a3d">
+      <TR><TD BGCOLOR="#1f8a3d"><FONT COLOR="white"><B>VideoService</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ generate_highlight_reel()</TD></TR>
+    </TABLE>>];
+
+  RightsService [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eafbea" COLOR="#1f8a3d">
+      <TR><TD BGCOLOR="#1f8a3d"><FONT COLOR="white"><B>RightsService</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ evaluate_publication_gate()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ build_job_rights_snapshot()</TD></TR>
+    </TABLE>>];
+
+  User -> MergeJob [arrowhead=none, arrowtail=diamond, dir=back, headlabel="1", taillabel="0..N", label="owns"];
+  User -> SourceRightsRecord [arrowhead=none, arrowtail=diamond, dir=back, headlabel="1", taillabel="0..N", label="asserts"];
+  MergeJob -> ConceptInfo [arrowhead=diamond, headlabel="0..N", taillabel="1", label="contains", color="#c62828"];
+  MergeJob -> VideoSegment [arrowhead=diamond, headlabel="0..N", taillabel="1", label="contains", color="#c62828"];
+  MergeJob -> OutputTask [arrowhead=none, arrowtail=diamond, dir=back, headlabel="0..2", taillabel="1", label="has"];
+  MergeJob -> SourceRightsRecord [style=dashed, label="snapshot of", color="#6a2fb0"];
+
+  SemanticSegmenter -> CoverageSelector [style=dashed, label="segments ->"];
+  ConceptExtractor -> CoverageSelector [style=dashed, label="concepts ->"];
+  CoverageSelector -> VideoService [style=dashed, label="manifest ->"];
+  CoverageSelector -> MergeJob [style=dashed, label="populates"];
+  RightsService -> MergeJob [style=dashed, label="reads segments"];
+  VideoService -> MergeJob [style=dashed, label="updates\nvideo_component"];
+}

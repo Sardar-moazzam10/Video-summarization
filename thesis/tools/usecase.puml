@@ -1,0 +1,48 @@
+@startuml
+left to right direction
+skinparam backgroundColor white
+skinparam usecase {
+  BackgroundColor #eaf3ff
+  BorderColor #0a66c2
+  FontName Segoe UI
+}
+skinparam actor {
+  FontName Segoe UI
+}
+
+actor "Guest" as Guest
+actor "Registered User" as User
+actor "Admin" as Admin
+actor "Background Worker" as Worker
+actor "External AI / Model Service" as AI
+
+rectangle "VidFusion" {
+  usecase "Register Account" as UC1
+  usecase "Login" as UC2
+  usecase "Create Merge Job" as UC3
+  usecase "Monitor Job Progress\n(SSE)" as UC4
+  usecase "View Result / Export" as UC5
+  usecase "Search Transcripts\n(FAISS)" as UC6
+  usecase "Chat / Ask Question" as UC7
+  usecase "Attest Source Rights" as UC8
+  usecase "Manage Users" as UC9
+}
+
+Guest --> UC1
+Guest --> UC2
+User --> UC2
+User --> UC3
+User --> UC4
+User --> UC5
+User --> UC6
+User --> UC7
+User --> UC8
+Admin --> UC9
+
+UC3 ..> Worker : <<include>>
+UC3 --> AI
+UC6 --> AI
+UC7 --> AI
+UC4 ..> UC3 : <<extend>>
+UC5 ..> UC3 : <<extend>>
+@enduml

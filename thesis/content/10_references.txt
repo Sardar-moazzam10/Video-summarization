@@ -1,0 +1,33 @@
+REFERENCES
+
+[1] Sommerville, I., "Software Engineering," 10th ed., Pearson Education, 2015.
+
+[2] International Organization for Standardization, "ISO/IEC 25010:2011 — Systems and software engineering — Systems and software Quality Requirements and Evaluation (SQuaRE) — System and software quality models," ISO/IEC, Geneva, Switzerland, 2011. Available: https://www.iso.org/standard/35733.html
+
+[3] Jones, M. B., Bradley, J., and Sakimura, N., "JSON Web Token (JWT)," RFC 7519, Internet Engineering Task Force (IETF), May 2015. Available: https://www.rfc-editor.org/rfc/rfc7519
+
+[4] FastAPI, "FastAPI Documentation," 2024. Available: https://fastapi.tiangolo.com/
+
+[5] Meta Platforms, Inc., "React Documentation," 2024. Available: https://react.dev/
+
+[6] MongoDB, Inc., "MongoDB Manual," 2024. Available: https://www.mongodb.com/docs/manual/
+
+[7] yt-dlp contributors, "yt-dlp Documentation," 2024. Available: https://github.com/yt-dlp/yt-dlp
+
+[8] Radford, A., Kim, J. W., Xu, T., Brockman, G., McLeavey, C., and Sutskever, I., "Robust Speech Recognition via Large-Scale Weak Supervision," arXiv:2212.04356, OpenAI, 2022. Available: https://arxiv.org/abs/2212.04356
+
+[9] Reimers, N., and Gurevych, I., "Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks," in Proceedings of EMNLP-IJCNLP 2019, Association for Computational Linguistics, 2019. Available: https://arxiv.org/abs/1908.10084
+
+[10] Lewis, M., Liu, Y., Goyal, N., et al., "BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension," arXiv:1910.13461, 2019. Available: https://arxiv.org/abs/1910.13461
+
+[11] Johnson, J., Douze, M., and Jegou, H., "Billion-scale similarity search with GPUs," IEEE Transactions on Big Data, 2019 (FAISS library). Available: https://github.com/facebookresearch/faiss
+
+[12] Ollama, "Ollama Documentation," 2024. Available: https://ollama.com/
+
+[13] python-jose contributors, "python-jose Documentation," 2024. Available: https://python-jose.readthedocs.io/
+
+[14] Docker, Inc., "Docker Compose Documentation," 2024. Available: https://docs.docker.com/compose/
+
+[15] pytest developers, "pytest Documentation," 2024. Available: https://docs.pytest.org/
+
+[16] NLLB Team et al., "No Language Left Behind: Scaling Human-Centered Machine Translation," arXiv:2207.04672, Meta AI, 2022. Available: https://arxiv.org/abs/2207.04672

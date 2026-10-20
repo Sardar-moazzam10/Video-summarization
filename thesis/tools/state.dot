@@ -1,0 +1,41 @@
+digraph StateTransition {
+  graph [fontname="Segoe UI", bgcolor="white", rankdir=LR, nodesep=0.5, ranksep=0.9];
+  node [fontname="Segoe UI", shape=ellipse, style=filled, fillcolor="#dbe9fb", color="#14315c", fontsize=10];
+  edge [fontname="Segoe UI", fontsize=8.5, color="#33475b"];
+
+  start [shape=circle, style=filled, fillcolor="#14315c", label="", width=0.2, fixedsize=true];
+
+  pending [label="pending"];
+  transcribing [label="transcribing"];
+  analyzing [label="analyzing"];
+  fusing [label="fusing"];
+  summarizing [label="summarizing"];
+  enriching [label="enriching"];
+  generating_video [label="generating_video"];
+  video_ready [label="video_ready\n(non-terminal)", fillcolor="#fde3b8", color="#8a5a00"];
+  completed [label="completed", shape=doublecircle, fillcolor="#c9f2d8", color="#1f8a3d"];
+  partial_success [label="partial_success", shape=doublecircle, fillcolor="#fde3b8", color="#8a5a00"];
+  error [label="error", shape=doublecircle, fillcolor="#f8d2d2", color="#c62828"];
+  cancelled [label="cancelled", shape=doublecircle, fillcolor="#e5e5e5", color="#555555"];
+
+  start -> pending;
+  pending -> transcribing;
+  transcribing -> analyzing;
+  analyzing -> fusing;
+  fusing -> summarizing;
+  summarizing -> enriching;
+  enriching -> generating_video;
+  generating_video -> video_ready [label="video component ready,\ntext still running"];
+  video_ready -> completed [label="text component ready"];
+  video_ready -> partial_success [label="text component fails"];
+  generating_video -> completed [label="both components ready"];
+
+  transcribing -> error [label="unrecoverable failure /\nattempts exhausted"];
+  analyzing -> error;
+  fusing -> error;
+  summarizing -> partial_success [label="one component fails"];
+  enriching -> partial_success;
+
+  pending -> cancelled [label="user cancels"];
+  transcribing -> cancelled [style=dashed];
+}

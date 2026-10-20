@@ -1,0 +1,199 @@
+CHAPTER 3: USE CASE ANALYSIS
+
+Use Case Diagram Description
+
+The aggregated use case diagram for VidFusion shows five actors: Guest, Registered User, Admin, Background Worker, and External AI Service (the locally-hosted Whisper/SBERT/distilBART/Ollama models, drawn as a single secondary actor since at this level which specific model answers a given call is an implementation detail). The Guest actor can only reach Register Account and Login — everything else requires an authenticated session. The Registered User actor reaches the bulk of the use cases: Login, Create Merge Job, Monitor Job Progress, Retrieve Job Result, Search Transcripts, Chat with Video Content, Record Source Rights, and View History. Several of these are drawn with an include relationship into the concrete step that does the work: Create Merge Job includes Preflight Check Sources, since a well-behaved client checks source eligibility before committing to a full job; Monitor Job Progress includes Process Merge Job, the use case owned by the Background Worker actor that actually performs transcription, selection, summarisation, and rendering asynchronously rather than inside the HTTP request; and Chat with Video Content includes Search Transcripts, since the chat endpoint's first step is exactly the same FAISS retrieval the dedicated search page uses. Process Merge Job in turn includes two further use cases owned by the two independent output workers: Render Highlight Video and Generate Written Summary, reflecting that once the core pipeline publishes its evidence manifest, these two outputs are produced by separate durable workers rather than as one monolithic step. The External AI Service actor is reached by every use case that calls out to a transcription, embedding, summarisation, or language model (Process Merge Job, Chat with Video Content). The Admin actor reaches a separate lane of use cases — Manage Users and View Platform Statistics — that a Registered User cannot reach. Record Source Rights and View Job Rights Manifest are drawn as their own lane reachable from a completed job, since they can be exercised independently of actively creating a new merge job.
+
+USE CASE 1: Register Account
+
+ID: UC-01
+Name: Register Account
+Description: A new user creates an account with an email, password, and optional display name.
+Primary Actor: Guest
+Secondary Actor: None
+Pre-Condition: No existing account holds the given email.
+Post-Condition: A user document exists with role "user" and a bcrypt-hashed password.
+Basic Flow:
+1. Guest submits email, password, and optionally a display name on the Sign Up page.
+2. System checks for an existing account with that email.
+3. System auto-generates a username from the email if one was not supplied, hashes the password with bcrypt, and creates the account.
+4. System returns the created user's profile.
+Alternate Flow:
+A1. If the email is already registered, the request is rejected rather than silently overwriting the existing account.
+A2. Public registration can never set role to "admin"; the request schema deliberately has no role field, so an administrative account can only be created through the protected admin-only create-user route.
+
+USE CASE 2: Login
+
+ID: UC-02
+Name: Login
+Description: A registered user authenticates with a username or email and password and receives a session token.
+Primary Actor: Registered User
+Secondary Actor: None
+Pre-Condition: The user holds an account.
+Post-Condition: The user holds a valid JWT access token carrying their id and role.
+Basic Flow:
+1. User submits a login identifier (username or email) and password.
+2. System looks up the account and compares the password against the stored bcrypt hash.
+3. System issues a JWT access token.
+4. Client attaches the token as a Bearer header on subsequent requests.
+Alternate Flow:
+A1. If the stored password hash is in the legacy SHA-256 format (predating the project's adoption of bcrypt), the system verifies against that format instead and transparently re-hashes the password with bcrypt on this successful login, so the account is upgraded without requiring the user to reset anything.
+A2. An incorrect password or unknown login both return an equivalent authentication failure, avoiding an obvious signal that would let an attacker distinguish a wrong password from a nonexistent account.
+
+USE CASE 3: Create Merge Job
+
+ID: UC-03
+Name: Create Merge Job
+Description: A user submits one to ten YouTube videos and a target duration, and the system begins producing a condensed video and/or written summary.
+Primary Actor: Registered User
+Secondary Actor: Background Worker; External AI Service
+Pre-Condition: User is authenticated.
+Post-Condition: A MergeJob document exists in a non-terminal status and background processing has begun, or the request was rejected with a specific, structured error before any job was created.
+Basic Flow:
+1. User selects one or more videos (via search or direct link) and a duration profile in the Merge Preview page.
+2. System deduplicates and validates the video ids, resolves each source's actual duration, and rejects the request if the target duration is not strictly less than the combined source duration.
+3. System creates the MergeJob document and dispatches it to background processing.
+4. System returns a job_id and an estimated completion time.
+Alternate Flow:
+A1. If any source's duration cannot be resolved (e.g. the video is private, deleted, or region-blocked), the system returns a structured SOURCE_DURATION_UNAVAILABLE error naming the specific unresolved video ids, rather than a generic failure.
+A2. If the requested duration is not feasible given the combined source length, the system returns a duration-infeasibility error describing what durations would actually be achievable.
+
+USE CASE 4: Monitor Job Progress
+
+ID: UC-04
+Name: Monitor Job Progress
+Description: A user watches the live status of a submitted merge job as it moves through transcription, selection, summarisation, and rendering.
+Primary Actor: Registered User
+Secondary Actor: Background Worker
+Pre-Condition: A job has been created.
+Post-Condition: The user observes the job's current status, stage, and progress percentage; no state is changed by observing.
+Basic Flow:
+1. User opens the job-progress view, which connects to the job's Server-Sent Events stream.
+2. System pushes status/progress/stage updates as the pipeline advances (transcribing, analyzing, fusing, summarizing, enriching, generating_video).
+3. Once the highlight video specifically is ready, the job may enter a non-terminal "video_ready" checkpoint, letting the user view the video immediately while the written summary continues generating in the background.
+4. The job reaches a terminal status: completed, partial_success (one output component failed but the other succeeded), or error.
+Alternate Flow:
+A1. If the SSE connection drops, the client falls back to polling the job's status endpoint directly, which reflects the same underlying state.
+
+USE CASE 5: Retrieve Job Result
+
+ID: UC-05
+Name: Retrieve Job Result
+Description: A user views or downloads the completed output of a merge job.
+Primary Actor: Registered User
+Secondary Actor: None
+Pre-Condition: The job has produced at least one ready output component.
+Post-Condition: No state is changed; content is returned or streamed to the user.
+Basic Flow:
+1. User opens the result view for a completed (or partially completed) job.
+2. System returns the written summary (chapters, key takeaways, quotes, TL;DR), the ranked concepts with their supporting evidence and timestamps, and the selection-quality metrics computed for this specific job.
+3. User downloads the rendered highlight video, an audio-only export, SRT subtitles, or a text/PDF export of the written summary.
+Alternate Flow:
+A1. If only one output component (video or text) is ready, the result view shows that component and indicates the other's current status rather than withholding the whole result.
+
+USE CASE 6: Retry a Failed Output Component
+
+ID: UC-06
+Name: Retry a Failed Output Component
+Description: A user re-attempts only the video or only the text half of a job whose output partially failed.
+Primary Actor: Registered User
+Secondary Actor: Background Worker
+Pre-Condition: The job's video_component or text_component status is "failed".
+Post-Condition: A fresh durable task for that component is queued against the job's existing evidence manifest.
+Basic Flow:
+1. User sees a failed component on the result view and selects Retry.
+2. System re-queues a durable output task for the named component, reusing the already-selected segments and concepts rather than re-running segmentation and selection from scratch.
+3. The corresponding worker claims and processes the task as in UC-04.
+
+USE CASE 7: Search Transcripts
+
+ID: UC-07
+Name: Search Transcripts
+Description: A user runs a natural-language search across every video the platform has previously processed.
+Primary Actor: Registered User
+Secondary Actor: External AI Service (embedding model, FAISS index)
+Pre-Condition: User is authenticated; at least one video has been indexed by a prior merge job.
+Post-Condition: No state change; ranked results are returned.
+Basic Flow:
+1. User enters a free-text query.
+2. System embeds the query with the same sentence-embedding model used during indexing and searches the FAISS vector index.
+3. System returns ranked transcript segments, each attributed to its source video and timestamp.
+Alternate Flow:
+A1. If the FAISS index is empty (nothing indexed yet), the system returns an explicit "still being indexed" message rather than an empty result that could be mistaken for "no matches".
+
+USE CASE 8: Chat with Video Content
+
+ID: UC-08
+Name: Chat with Video Content
+Description: A user asks a natural-language question and receives an answer grounded in the platform's indexed transcripts.
+Primary Actor: Registered User
+Secondary Actor: External AI Service (FAISS, optionally Ollama)
+Pre-Condition: User is authenticated; relevant content has been indexed.
+Post-Condition: No state change; an answer with source attribution is returned.
+Basic Flow:
+1. User asks a question, optionally scoped to specific videos.
+2. System retrieves the top-k relevant segments from the FAISS index (UC-07's retrieval step, reused).
+3. If a local Ollama model is reachable, system sends the retrieved context and the question to it for answer synthesis; otherwise the top retrieved segments are stitched together directly as the answer.
+4. System returns the answer together with the literal source segments it was grounded in, so the user can verify it against the original material.
+Alternate Flow:
+A1. If no relevant segments are retrieved at all, the system states plainly that it could not find relevant information, rather than letting a language model answer ungrounded.
+
+USE CASE 9: Record Source Rights
+
+ID: UC-09
+Name: Record Source Rights
+Description: A user records the basis under which they are entitled to reuse a given source video.
+Primary Actor: Registered User
+Secondary Actor: None
+Pre-Condition: User is authenticated.
+Post-Condition: A SourceRightsRecord exists for the (user, source) pair.
+Basic Flow:
+1. User declares a claim type (ownership, fair use, or public domain) for a source video, or records third-party permission evidence (grantor, evidence URL, scope).
+2. System persists the record, keyed to the user and the canonical source id.
+Alternate Flow:
+A1. A user attestation is recorded as an unverified declaration distinct from a platform-verified basis; the two are not conflated when the publication gate is later evaluated.
+
+USE CASE 10: View Job Rights Manifest
+
+ID: UC-10
+Name: View Job Rights Manifest
+Description: A user views a complete rights-and-attribution report for a completed job.
+Primary Actor: Registered User
+Secondary Actor: None
+Pre-Condition: User owns the job (or is an Admin).
+Post-Condition: No state change; the manifest is returned.
+Basic Flow:
+1. User requests the rights manifest for a job they own.
+2. System verifies ownership without revealing whether a job id exists to anyone who does not own it.
+3. System returns the job's frozen rights_snapshot — captured once, at render time, as a write-once historical record — together with an objective report of which physical clip intervals came from which source, and the resulting publication-gate status.
+Alternate Flow:
+A1. If the job predates the rights_snapshot feature, a reconstruction is built from current rights records instead, but is explicitly labelled as a reconstruction rather than historical evidence, and can never itself authorise publication.
+
+USE CASE 11: View History
+
+ID: UC-11
+Name: View History
+Description: A user views their past searches, transcript views, and merge jobs.
+Primary Actor: Registered User
+Secondary Actor: None
+Pre-Condition: User is authenticated.
+Post-Condition: No state change.
+Basic Flow:
+1. User opens the History panel.
+2. System returns the user's history entries, newest first, each carrying its type and type-specific fields (a search query, a viewed video id, or a completed merge's job id and video count).
+
+USE CASE 12: Manage Users (Admin)
+
+ID: UC-12
+Name: Manage Users
+Description: An administrator lists all users, views aggregate platform statistics, and activates, deactivates, or edits a user account.
+Primary Actor: Admin
+Secondary Actor: None
+Pre-Condition: The caller's role, verified from the token on every request rather than trusted from client state, is "admin".
+Post-Condition: The requested listing is returned, or the targeted account is updated.
+Basic Flow:
+1. Admin opens the admin user-list or statistics panel.
+2. System returns every user's profile and role (never a password hash) or the requested aggregate statistics.
+3. Admin toggles a user's active status or edits their profile fields.
+Alternate Flow:
+A1. An admin cannot deactivate their own account through this use case, preventing an admin from locking themselves out of the platform.

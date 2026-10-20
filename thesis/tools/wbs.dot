@@ -1,0 +1,55 @@
+graph WBS {
+  layout=neato;
+  graph [fontname="Segoe UI", bgcolor="white", overlap=false, splines=ortho];
+  node [fontname="Segoe UI", shape=box, style="rounded,filled", fontsize=11, fillcolor="#eaf3ff", color="#0a66c2"];
+  edge [color="#555555", arrowhead=none, penwidth=1.0];
+
+  Root [pos="6.6,3.9!", label="VidFusion", fontsize=14, style="bold,filled", fillcolor="#0a66c2", fontcolor=white, width=2.0, height=0.55];
+
+  node [fillcolor="#dbe9fb", color="#0a3d7a", fontsize=11, style="bold,filled", width=2.1, height=0.55];
+  Auth   [pos="1.8,5.6!",  label="Account &\nAuthentication"];
+  Video  [pos="6.6,5.6!",  label="Acquisition &\nTranscription"];
+  Image  [pos="11.4,5.6!", label="Semantic Selection\nPipeline"];
+  Chat   [pos="1.8,2.2!",  label="Output Generation &\nDurable Workers"];
+  QA     [pos="6.6,2.2!",  label="Testing &\nEvaluation"];
+  Deploy [pos="11.4,2.2!", label="Rights Governance &\nDeployment"];
+
+  RootUp [pos="6.6,4.8!", shape=point, width=0.01, style=invis];
+  RootDown [pos="6.6,3.0!", shape=point, width=0.01, style=invis];
+  Root -- RootUp [style=invis];
+  Root -- RootDown [style=invis];
+  RootUp -- Auth; RootUp -- Video; RootUp -- Image;
+  RootDown -- Chat; RootDown -- QA; RootDown -- Deploy;
+
+  node [fillcolor="#ffffff", color="#0a66c2", fontsize=9.5, style="rounded,filled", width=1.85, height=0.5];
+
+  Auth1 [pos="0.5,7.2!", label="Register / Login\n(JWT + bcrypt)"];
+  Auth2 [pos="0.5,6.5!", label="Admin role &\nuser management"];
+  Auth3 [pos="3.1,6.85!", label="Password reset\n(email OTP)"];
+  Auth -- Auth1; Auth -- Auth2; Auth -- Auth3;
+
+  Video1 [pos="5.3,7.2!", label="yt-dlp source\nacquisition"];
+  Video2 [pos="5.3,6.5!", label="Caption + Whisper\nfallback transcription"];
+  Video3 [pos="7.9,6.85!", label="Language detection\n& translation"];
+  Video -- Video1; Video -- Video2; Video -- Video3;
+
+  Image1 [pos="10.1,7.2!", label="Semantic\nsegmentation (SBERT)"];
+  Image2 [pos="10.1,6.5!", label="Concept extraction\n(Ollama / TF-IDF)"];
+  Image3 [pos="12.7,6.85!", label="Coverage-budgeted\nselection optimizer"];
+  Image -- Image1; Image -- Image2; Image -- Image3;
+
+  Chat1 [pos="0.5,1.0!", label="Durable output\ntask queue"];
+  Chat2 [pos="0.5,0.3!", label="Video worker\n(ffmpeg render)"];
+  Chat3 [pos="3.1,0.65!", label="Text worker\n(distilBART summary)"];
+  Chat -- Chat1; Chat -- Chat2; Chat -- Chat3;
+
+  QA1 [pos="5.3,1.0!", label="548 automated\nbackend tests"];
+  QA2 [pos="5.3,0.3!", label="Gold-standard\nconcept evaluation"];
+  QA3 [pos="7.9,0.65!", label="Held-out ablation\nstudy"];
+  QA -- QA1; QA -- QA2; QA -- QA3;
+
+  Deploy1 [pos="10.1,1.0!", label="Source rights &\npublication gate"];
+  Deploy2 [pos="10.1,0.3!", label="Docker Compose\n(app + 2 workers + mongo)"];
+  Deploy3 [pos="12.7,0.65!", label="FYP\ndocumentation"];
+  Deploy -- Deploy1; Deploy -- Deploy2; Deploy -- Deploy3;
+}

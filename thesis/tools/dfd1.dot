@@ -1,0 +1,52 @@
+digraph DFD1 {
+  graph [fontname="Segoe UI", bgcolor="white", rankdir=TB, nodesep=0.55, ranksep=0.9];
+  node [fontname="Segoe UI", fontsize=10];
+  edge [fontname="Segoe UI", fontsize=8.5, color="#33475b"];
+
+  node [shape=box, style=filled, fillcolor="#eef5fd", color="#0a66c2"];
+  UserEnt [label="User"];
+
+  node [shape=ellipse, style=filled, fillcolor="#fff4e0", color="#c77700", fontcolor="#5c3c00"];
+  P1 [label="1.0\nAuthentication"];
+  P2 [label="2.0\nMerge Job Creation\n(+ Preflight)"];
+  P3 [label="3.0\nSemantic Selection\n(segment, extract, select)"];
+  P4 [label="4.0\nOutput Generation\n(video + text workers)"];
+  P5 [label="5.0\nSearch / Chat"];
+  P6 [label="6.0\nRights Governance"];
+
+  node [shape=cylinder, style=filled, fillcolor="#fdeaea", color="#c62828", fontcolor="#8e1f1f"];
+  DUsers [label="D1 Users"];
+  DJobs [label="D2 Jobs"];
+  DTranscripts [label="D3 Transcripts"];
+  DFaiss [label="D4 FAISS Index"];
+  DRights [label="D5 Source Rights"];
+  DTasks [label="D6 Output Tasks"];
+
+  UserEnt -> P1 [label="credentials"];
+  P1 -> DUsers [label="verify / create"];
+  DUsers -> P1 [label="account record"];
+  P1 -> UserEnt [label="JWT session"];
+
+  UserEnt -> P2 [label="video ids,\ntarget duration"];
+  P2 -> DJobs [label="create job"];
+  P2 -> P3 [label="dispatch"];
+
+  P3 -> DTranscripts [label="read / write"];
+  P3 -> DFaiss [label="index segments"];
+  P3 -> DJobs [label="publish evidence\nmanifest"];
+  P3 -> P4 [label="manifest"];
+
+  P4 -> DTasks [label="claim (lease)"];
+  P4 -> DJobs [label="write result"];
+  P4 -> UserEnt [label="progress / result\n(via SSE)"];
+
+  UserEnt -> P5 [label="query / question"];
+  P5 -> DFaiss [label="nearest-neighbour search"];
+  DFaiss -> P5 [label="ranked segments"];
+  P5 -> UserEnt [label="answer + sources"];
+
+  UserEnt -> P6 [label="rights attestation"];
+  P6 -> DRights [label="record basis"];
+  P6 -> DJobs [label="read segments,\nfreeze snapshot"];
+  P6 -> UserEnt [label="rights manifest"];
+}

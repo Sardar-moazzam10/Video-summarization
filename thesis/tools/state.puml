@@ -1,0 +1,22 @@
+@startuml
+skinparam backgroundColor white
+skinparam stateFontName Segoe UI
+skinparam state {
+  BackgroundColor #eaf3ff
+  BorderColor #0a66c2
+}
+title State Transition Diagram - Background Job Lifecycle
+
+[*] --> queued : enqueue()
+queued --> processing : worker claims job\n(atomic lease)
+processing --> completed : render/generation\nsucceeds
+processing --> failed : error thrown /\nlease expired too many times
+failed --> queued : attempts < MAX_ATTEMPTS\n(automatic retry)
+failed --> [*] : attempts exhausted
+completed --> [*]
+
+processing : progress 0-100%
+processing : stage text updated live
+completed : result{videoUrl, videoId} stored
+failed : error message stored
+@enduml

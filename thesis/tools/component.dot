@@ -1,0 +1,54 @@
+digraph Component {
+  graph [fontname="Segoe UI", bgcolor="white", rankdir=LR, nodesep=0.5, ranksep=1.0];
+  node [fontname="Segoe UI", shape=component, style=filled, fillcolor="#eef5fd", color="#14315c", fontsize=10];
+  edge [fontname="Segoe UI", fontsize=8.5, color="#33475b"];
+
+  Frontend [label="React SPA"];
+
+  subgraph cluster_routers {
+    label="Routers"; style=rounded; color="#0a66c2"; bgcolor="#f5f9ff";
+    MergeAPI [label="MergeAPI"];
+    AuthAPI [label="AuthAPI"];
+    ChatAPI [label="ChatAPI"];
+    RightsAPI [label="RightsAPI"];
+  }
+
+  subgraph cluster_services {
+    label="Pipeline / Services"; style=rounded; color="#1f8a3d"; bgcolor="#eafbea";
+    SelectionPipeline [label="SelectionPipelineAPI\n(segment/extract/select)"];
+    OutputQueue [label="OutputTaskQueueAPI"];
+    VectorSearch [label="VectorSearchAPI\n(FAISS)"];
+    RightsSvc [label="RightsServiceAPI"];
+  }
+
+  subgraph cluster_infra {
+    label="Infrastructure"; style=rounded; color="#c62828"; bgcolor="#fdeaea";
+    VideoWorker [label="VideoWorker"];
+    TextWorker [label="TextWorker"];
+    MediaProc [label="MediaProcessingAPI\n(ffmpeg)"];
+    SummModel [label="SummarizationModelAPI\n(distilBART)"];
+    LLMProv [label="LLMProviderAPI\n(Ollama, optional)"];
+    Persistence [label="PersistenceAPI\n(MongoDB)"];
+  }
+
+  Frontend -> MergeAPI [arrowhead=odot];
+  Frontend -> AuthAPI [arrowhead=odot];
+  Frontend -> ChatAPI [arrowhead=odot];
+  Frontend -> RightsAPI [arrowhead=odot];
+
+  MergeAPI -> SelectionPipeline [style=dashed];
+  MergeAPI -> OutputQueue [style=dashed];
+  ChatAPI -> VectorSearch [style=dashed];
+  ChatAPI -> LLMProv [style=dashed, label="optional"];
+  RightsAPI -> RightsSvc [style=dashed];
+
+  VideoWorker -> OutputQueue [style=dashed];
+  VideoWorker -> MediaProc [style=dashed];
+  VideoWorker -> Persistence [style=dashed];
+  TextWorker -> OutputQueue [style=dashed];
+  TextWorker -> SummModel [style=dashed];
+  TextWorker -> Persistence [style=dashed];
+  SelectionPipeline -> Persistence [style=dashed];
+  RightsSvc -> Persistence [style=dashed];
+  VectorSearch -> Persistence [style=dashed];
+}

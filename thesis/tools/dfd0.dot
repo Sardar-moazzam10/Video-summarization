@@ -1,0 +1,30 @@
+digraph DFD0 {
+  graph [fontname="Segoe UI", bgcolor="white", rankdir=LR, nodesep=0.8, ranksep=1.3];
+  node [fontname="Segoe UI", fontsize=11];
+  edge [fontname="Segoe UI", fontsize=9, color="#33475b"];
+
+  node [shape=box, style=filled, fillcolor="#eef5fd", color="#0a66c2"];
+  UserEnt [label="User\n(via Browser)"];
+  YTEnt [label="Video Platform\n(YouTube)"];
+
+  node [shape=box, style=filled, fillcolor="#fdeaea", color="#c62828"];
+  DBEnt [label="Database\n(MongoDB)"];
+
+  node [shape=box, style=filled, fillcolor="#f3eaff", color="#6a2fb0"];
+  AIEnt [label="AI Model Layer\n(Whisper / SBERT /\ndistilBART / Ollama)"];
+
+  node [shape=ellipse, style=filled, fillcolor="#fff4e0", color="#c77700", fontcolor="#5c3c00"];
+  P0 [label="0\nVidFusion\n(Summarise Video Content)"];
+
+  UserEnt -> P0 [label="video selection,\ntarget duration, query"];
+  P0 -> UserEnt [label="job progress,\nsummary + highlight video"];
+
+  P0 -> YTEnt [label="download / caption request"];
+  YTEnt -> P0 [label="source video, audio, captions"];
+
+  P0 -> DBEnt [label="user, job, transcript,\nrights records"];
+  DBEnt -> P0 [label="stored records"];
+
+  P0 -> AIEnt [label="transcript / segments\n/ retrieved context"];
+  AIEnt -> P0 [label="transcription, embeddings,\nconcepts, summary"];
+}

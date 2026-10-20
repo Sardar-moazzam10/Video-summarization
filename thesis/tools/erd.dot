@@ -1,0 +1,85 @@
+digraph ERD {
+  graph [rankdir=LR, fontname="Segoe UI", bgcolor="white", nodesep=0.6, ranksep=1.1];
+  node [fontname="Segoe UI", shape=none, fontsize=11];
+  edge [fontname="Segoe UI", fontsize=9, color="#33475b", arrowsize=0.7];
+
+  User [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eef5fd" COLOR="#0a66c2">
+      <TR><TD BGCOLOR="#0a66c2"><FONT COLOR="white"><B>users</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">_id (PK)</TD></TR>
+      <TR><TD ALIGN="LEFT">firstName, lastName</TD></TR>
+      <TR><TD ALIGN="LEFT">email, username</TD></TR>
+      <TR><TD ALIGN="LEFT">password (bcrypt / legacy sha256)</TD></TR>
+      <TR><TD ALIGN="LEFT">role: user | admin</TD></TR>
+    </TABLE>>];
+
+  Job [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#fdeaea" COLOR="#c62828">
+      <TR><TD BGCOLOR="#c62828"><FONT COLOR="white"><B>jobs</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">job_id (PK)</TD></TR>
+      <TR><TD ALIGN="LEFT">user_id (FK -&gt; users)</TD></TR>
+      <TR><TD ALIGN="LEFT">status, progress_percent, stage_message</TD></TR>
+      <TR><TD ALIGN="LEFT">video_ids[], target_duration_minutes</TD></TR>
+      <TR><TD ALIGN="LEFT">segments[], concepts[] (embedded)</TD></TR>
+      <TR><TD ALIGN="LEFT">rich_output, fusion_metadata (embedded)</TD></TR>
+      <TR><TD ALIGN="LEFT">selection_metrics, evidence_manifest</TD></TR>
+      <TR><TD ALIGN="LEFT">video_component, text_component</TD></TR>
+      <TR><TD ALIGN="LEFT">rights_snapshot (write-once)</TD></TR>
+    </TABLE>>];
+
+  Task [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#fff4e0" COLOR="#c77700">
+      <TR><TD BGCOLOR="#c77700"><FONT COLOR="white"><B>output_tasks</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">task_id (PK)</TD></TR>
+      <TR><TD ALIGN="LEFT">job_id (FK -&gt; jobs)</TD></TR>
+      <TR><TD ALIGN="LEFT">output_type: video | text</TD></TR>
+      <TR><TD ALIGN="LEFT">status, worker_id, lease_expires_at</TD></TR>
+      <TR><TD ALIGN="LEFT">attempts, manifest_version</TD></TR>
+    </TABLE>>];
+
+  Transcript [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eafbea" COLOR="#1f8a3d">
+      <TR><TD BGCOLOR="#1f8a3d"><FONT COLOR="white"><B>transcripts</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">video_id (PK)</TD></TR>
+      <TR><TD ALIGN="LEFT">transcript[] (text, start, duration)</TD></TR>
+      <TR><TD ALIGN="LEFT">fetched_at, source</TD></TR>
+      <TR><TD ALIGN="LEFT">detected_language</TD></TR>
+    </TABLE>>];
+
+  Rights [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#f3eaff" COLOR="#6a2fb0">
+      <TR><TD BGCOLOR="#6a2fb0"><FONT COLOR="white"><B>source_rights</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">record_id (PK)</TD></TR>
+      <TR><TD ALIGN="LEFT">user_id (FK -&gt; users)</TD></TR>
+      <TR><TD ALIGN="LEFT">source_id, source_type</TD></TR>
+      <TR><TD ALIGN="LEFT">rights_basis</TD></TR>
+      <TR><TD ALIGN="LEFT">platform_evidence, user_claim,<BR/>permission_evidence (embedded)</TD></TR>
+    </TABLE>>];
+
+  History [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#eef5fd" COLOR="#0a66c2">
+      <TR><TD BGCOLOR="#0a66c2"><FONT COLOR="white"><B>history</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">_id (PK)</TD></TR>
+      <TR><TD ALIGN="LEFT">username (FK -&gt; users)</TD></TR>
+      <TR><TD ALIGN="LEFT">type: watch|search|transcript-view|merge</TD></TR>
+      <TR><TD ALIGN="LEFT">videoId, query, jobId, videoCount</TD></TR>
+      <TR><TD ALIGN="LEFT">timestamp</TD></TR>
+    </TABLE>>];
+
+  Acquisition [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" BGCOLOR="#fdeaea" COLOR="#c62828">
+      <TR><TD BGCOLOR="#c62828"><FONT COLOR="white"><B>acquisition_events</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">event_id (PK)</TD></TR>
+      <TR><TD ALIGN="LEFT">decision_id (FK)</TD></TR>
+      <TR><TD ALIGN="LEFT">source_id, operation, outcome_code</TD></TR>
+      <TR><TD ALIGN="LEFT">previous_event_hash, event_hash</TD></TR>
+    </TABLE>>];
+
+  User -> Job [label="1..N owns", dir=back, arrowtail=crow, arrowhead=none];
+  Job -> Task [label="1..N has", dir=back, arrowtail=crow, arrowhead=none];
+  User -> History [label="1..N logs", dir=back, arrowtail=crow, arrowhead=none];
+  User -> Rights [label="1..N asserts", dir=back, arrowtail=crow, arrowhead=none];
+  Job -> Transcript [label="N..N references", dir=both, arrowtail=crow, arrowhead=crow, style=dashed];
+  Job -> Rights [label="snapshot of", style=dashed, color="#6a2fb0"];
+  Job -> Acquisition [label="N..N observed by", dir=back, arrowtail=crow, arrowhead=none, color="#c62828"];
+}

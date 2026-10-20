@@ -1,0 +1,36 @@
+digraph Deployment {
+  graph [fontname="Segoe UI", bgcolor="white", rankdir=TB, nodesep=0.6, ranksep=0.9];
+  node [fontname="Segoe UI", fontsize=10];
+
+  subgraph cluster_host {
+    label="Docker Host (docker-compose.yml)";
+    style=rounded; color="#14315c"; fontsize=12; fontname="Segoe UI Semibold"; bgcolor="#f5f9ff";
+
+    node [shape=box3d, style=filled, fillcolor="#eafbea", color="#1f8a3d"];
+    App [label="app\n(FastAPI, port 8000)"];
+    VW [label="video-worker\n(backend.workers.video_worker)"];
+    TW [label="text-worker\n(backend.workers.text_worker)"];
+
+    node [shape=cylinder, style=filled, fillcolor="#fdeaea", color="#c62828"];
+    MongoC [label="mongo\n(MongoDB 7)"];
+
+    node [shape=folder, style=filled, fillcolor="#fff4e0", color="#c77700"];
+    VolCache [label="audio_cache\n(named volume)"];
+    VolFaiss [label="faiss_index\n(named volume)"];
+    VolMongo [label="mongo_data\n(named volume)"];
+
+    App -> MongoC [label="27017"];
+    VW -> MongoC;
+    TW -> MongoC;
+    App -> VolCache [dir=both];
+    VW -> VolCache [dir=both];
+    TW -> VolCache [dir=both];
+    App -> VolFaiss [dir=both];
+    VW -> VolFaiss [dir=both];
+    MongoC -> VolMongo [dir=both];
+  }
+
+  node [shape=box, style=filled, fillcolor="#eef5fd", color="#0a66c2"];
+  ClientBrowser [label="Client Browser"];
+  ClientBrowser -> App [label="HTTPS :8000"];
+}

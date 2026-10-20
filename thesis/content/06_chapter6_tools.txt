@@ -1,0 +1,57 @@
+CHAPTER 6: TOOLS AND TECHNIQUES
+
+Languages
+
+Python 3.12: The entire backend, all AI/ML services, and the semantic selection pipeline are written in Python, chosen because every machine-learning library the project depends on (transformers, sentence-transformers, faiss-cpu, openai-whisper, scikit-learn) is Python-first, and writing the orchestration layer in the same language avoids a cross-language boundary between the API and the models it calls.
+
+JavaScript/JSX (React): The frontend is written in JSX, chosen for its component model's fit with the genuinely stateful, live-updating parts of the UI — the job-progress view consuming a Server-Sent Events stream, and the merge-preview page's multi-video selection state.
+
+Frameworks and Libraries
+
+FastAPI: Chosen as the backend web framework [4] for native async support (used throughout for MongoDB access via Motor and for the SSE progress stream), automatic OpenAPI documentation generation (exposed at /docs), and first-class Pydantic integration, which is what lets every request and response model in the project (MergeJobCreate, MergeJob, the rights models) be validated declaratively rather than by hand.
+
+React 18 with Tailwind CSS: React [5] was chosen for the frontend for its component reusability across the search, transcript-viewer, and merge-preview pages. Tailwind CSS was layered on top for utility-first styling rather than a full component-library dependency, keeping the frontend's own bundle size and styling surface smaller than adopting a complete design-system library would have.
+
+Database
+
+MongoDB with Motor/Pymongo: A document database [6] was chosen because the core content record — a MergeJob, with its embedded segments, concepts, rich_output, and fusion_metadata — is naturally document-shaped and varies in structure between a single-source and a multi-source job, which would require more schema-migration overhead in a relational model. Motor (the async driver) is used from the FastAPI request path so database access never blocks the event loop; Pymongo (synchronous) is used from the worker processes, which run their own process loop rather than FastAPI's.
+
+Media Acquisition and Processing
+
+yt-dlp: Used for downloading source audio/video from YouTube [7], chosen as the de facto standard tool for this purpose, actively maintained against YouTube's frequently-changing internal APIs; the project additionally depends on yt-dlp-ejs specifically for resilience against YouTube's JavaScript-challenge-based access restrictions.
+
+ffmpeg: The actual video compositor — it trims and concatenates the segments the coverage selector chooses, applies transitions between segments from different time ranges or different source videos, and produces the final highlight-reel file. ffmpeg was the only realistic choice for this: it is the de facto standard for programmatic, scriptable video composition, and the project's Docker image build depends on a correctly-configured installation of it.
+
+OpenCV and PySceneDetect: Used for visual keyframe extraction and shot-boundary detection, forming the visual-signal input to the selection pipeline. This signal is currently disabled by default (MERGE_ENABLE_VISUAL_SCORING=0) in favour of a lighter-weight audio-energy scorer for single-speaker, audio-led content such as podcasts and lectures, which is the dominant content type the system was developed and evaluated against; the visual path remains implemented and tested rather than removed, for content types (demonstrations, visually-driven tutorials) where it would matter more.
+
+AI / ML Models
+
+OpenAI Whisper: Used as the transcription fallback [8] when a video has no usable platform-provided captions — the primary path tries YouTube's own caption track first, since it is free and instantaneous, and only falls back to running Whisper locally (the "base" model by default, trading some accuracy for roughly 3.4x real-time throughput on CPU) when captions are unavailable or in an unsupported format.
+
+Sentence-BERT (BAAI/bge-base-en-v1.5): The embedding model behind semantic segmentation, concept-deduplication, redundancy scoring, and the FAISS search index [9]. It was chosen over the originally-used all-MiniLM-L6-v2 specifically for ranking highly on the MTEB benchmark at a still-practical CPU inference cost; the migration from MiniLM to BGE required recalibrating a downstream similarity threshold (concept-deduplication merging) that had been tuned against MiniLM's narrower similarity range, which is documented directly as a lesson learnt in Chapter 9, since an absolute threshold tuned for one encoder is not safely portable to another.
+
+distilBART (sshleifer/distilbart-cnn-12-6): The abstractive summarisation model used for hierarchical compression of selected transcript text [10]. It was chosen over full BART-large specifically for its much smaller footprint (306 MB versus roughly 1.6 GB) at a measured quality cost the project judged acceptable for this use case, since the model only ever has to compress already-selected, already-concept-relevant text rather than summarise an entire raw transcript from scratch.
+
+FAISS: Facebook AI Similarity Search [11] backs the semantic-search and chat-retrieval features, chosen for its maturity and its ability to perform exact or approximate nearest-neighbour search over the dense embedding vectors produced by the SBERT model at a scale well beyond what a naive linear scan could sustain as the number of indexed videos grows.
+
+Ollama (llama3.2:3b): An optionally-present, locally-hosted LLM used for two purposes: concept extraction (asking what a transcript chunk is about, in JSON mode) and chat answer synthesis (producing a natural-language answer from retrieved context) [12]. It is disabled for concept extraction by default (ENABLE_CONCEPT_LLM=false) specifically because it was benchmarked at roughly 180 seconds per transcript chunk on the project's CPU-only development hardware — a genuinely measured hardware constraint, not a design preference — with a deterministic TF-IDF keyphrase extractor used as the default fallback instead; both the LLM path and the fallback are fully implemented and tested, so enabling the LLM path on more capable (GPU) hardware requires only a configuration change.
+
+deep-translator and NLLB-200: Used for translating non-English transcripts along a fast, free Google-Translate-backed path with a circuit breaker (after a small number of consecutive failures, the remaining text is left untranslated rather than retried indefinitely against a provider that has started blocking requests), and a slower, more accurate NLLB-200 fallback reserved for short transcripts specifically because it was measured to be too slow (over 2 seconds per segment on CPU) to apply to a long transcript within a usable request timeout.
+
+edge-tts: A free text-to-speech engine used where an audio narration output is requested, chosen for requiring no API key and no paid quota, consistent with the project's broader preference for dependencies that do not introduce a per-request cost or an external quota the platform does not control.
+
+Authentication and Security
+
+JWT (python-jose) and bcrypt (passlib): JWTs [13] were chosen for stateless session authentication, with the algorithm pinned to HS256 at the configuration-validation level rather than left client-negotiable. bcrypt was chosen for password hashing as the established standard for this purpose; the system additionally carries a documented migration path for accounts whose password was hashed under an older SHA-256 scheme, verifying against that legacy format and transparently upgrading it to bcrypt on the account's next successful login, rather than forcing every existing user through a disruptive password reset.
+
+DevOps
+
+Docker and Docker Compose: The backend API, the dedicated text-output worker, and the dedicated video-output worker are each built from the same Docker image but started with a different process entry point, alongside a MongoDB container, orchestrated with Docker Compose [14]. Compose was chosen over a heavier orchestrator because the project's actual deployment target is a small, fixed set of services on a single host, for which Compose's declarative multi-container file is sufficient.
+
+Testing
+
+pytest and pytest-asyncio: Chosen as the test framework [15] for its fixture system (used extensively to provide a clean, isolated environment for each of the 548 tests without requiring a live MongoDB instance for the majority of them) and native support for testing FastAPI's async request handlers and the workers' async claim/lease logic directly.
+
+Version Control
+
+Git and GitHub: Used for source control and collaboration throughout development.

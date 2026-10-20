@@ -1,0 +1,69 @@
+APPENDIX A: ENVIRONMENT SETUP AND INSTALLATION GUIDE
+
+A.1 Overview
+
+This appendix documents how to actually run VidFusion from source, for a reader who wants to reproduce the system rather than only read about it. Two supported paths exist: running the backend and frontend directly for day-to-day development, or running the whole stack with Docker Compose as a single reproducible unit, which is also the project's deployment target.
+
+A.2 Prerequisites
+
+Python 3.12 or later (tested on 3.12.3), Node.js v20 or later (tested on v20.20.0) with npm, ffmpeg v6.1 or later installed and reachable on the system PATH, a running MongoDB 7 instance (local, Dockerised, or a cloud Atlas URI), and Git. No GPU is required for any run mode; every model in the pipeline is sized to run on CPU, and the LLM-backed concept-extraction path is disabled by default specifically because it is not practically usable on CPU-only hardware (Chapter 6).
+
+A.3 Option A — Local development (Python + Node directly)
+
+Set up the Python virtual environment and install backend dependencies:
+
+1. python3 -m venv venv
+2. source venv/bin/activate (or venv\Scripts\activate on Windows)
+3. pip install -r requirements.txt
+
+This also installs yt-dlp into the virtual environment. Install frontend dependencies separately:
+
+4. npm install
+
+Configure the environment by copying .env.example to .env and filling in the required values: MONGODB_URI (defaults to a local instance), MONGODB_DATABASE, and SECRET_KEY, generated with python3 -c "import secrets; print(secrets.token_urlsafe(48))". Set ENVIRONMENT=production only when actually deploying, since the configuration module deliberately refuses to start in that mode with a weak or missing signing key, which is the system failing fast on a misconfiguration rather than booting insecurely. REACT_APP_YOUTUBE_API_KEY is required for the frontend's own keyword-search feature to reach the YouTube Data API; no other API key is strictly required, since Ollama, Gemini-era legacy integrations, and ElevenLabs are all optional or unused by the current default pipeline.
+
+Pre-warm the model cache (optional but recommended before a live demonstration, to avoid a slow first request while HuggingFace downloads the summarisation, embedding, and transcription models):
+
+5. python prewarm_demo.py
+
+Start MongoDB (if not already running elsewhere):
+
+6. docker compose up -d mongo
+
+Run the two halves in separate terminals:
+
+backend: python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 (serves the API on http://localhost:8000, with interactive API docs at /docs)
+frontend: npm start (the React dev server on http://localhost:3000)
+
+Run the automated test suite:
+
+7. PYTHONPATH=. pytest tests/ backend/tests/ -q
+
+This exercises the semantic segmenter, concept extractor, coverage selector, summarisation policy, the durable output-task queue and worker-recovery logic, and the rights/acquisition services described in Chapter 5, entirely without a reachable MongoDB instance or live model downloads for the large majority of the 548 tests.
+
+A.4 Option B — Docker Compose (whole stack, production topology)
+
+The whole stack — the FastAPI app, a dedicated text-output worker, a dedicated video-output worker, and a MongoDB container — is brought up with:
+
+docker compose up -d --build
+
+The first build installs ffmpeg and the Python dependencies inside the image, so it takes several minutes; subsequent builds are cached. Once running, the API is reachable at http://localhost:8000 and its health check at http://localhost:8000/health. Setting SEPARATE_OUTPUT_WORKERS_ENABLED=true (the default in docker-compose.yml) is what makes the app container stop at evidence-manifest publication and hand off to the two independent worker containers, rather than processing both output components inline within the API process itself.
+
+Named Docker volumes (audio_cache, faiss_index) are shared across all three application containers, so a container rebuild or docker compose down does not discard in-progress media or force the FAISS search index to be rebuilt from scratch; only docker compose down -v removes those volumes, and is used deliberately rather than by accident.
+
+A.5 Common operational commands
+
+docker compose ps: container status for every service.
+docker compose logs -f video-worker: follow highlight-reel render progress and ffmpeg output specifically.
+docker compose logs -f text-worker: follow summarisation-stage progress specifically.
+docker compose restart app: restart only the API without rebuilding.
+docker compose down: stop and remove containers while keeping the named volumes (generated media and the search index survive).
+docker compose down -v: stop and remove containers and volumes together (destructive).
+
+A.6 Known setup caveats
+
+A FAISS dimension-mismatch error at backend startup (seen after changing the configured embedding model, e.g. between all-MiniLM-L6-v2 and BAAI/bge-base-en-v1.5) is resolved by deleting the faiss_index directory and restarting, since the index must be rebuilt rather than mixed between two different embedding dimensions; the backend's own startup lifespan code additionally guards against this automatically for a known set of expected dimensions. A "429 Too Many Requests" error on YouTube search specifically indicates the configured REACT_APP_YOUTUBE_API_KEY is exhausted or invalid, not a backend fault. A video that consistently fails to download is often resolved by upgrading yt-dlp (pip install -U yt-dlp inside the virtual environment), since YouTube's internal APIs change frequently enough that an outdated downloader is a common, easily-fixed cause. Ollama being entirely absent is an expected, supported configuration, not an error state — backend startup logs a warning and the concept-extraction and chat features transparently use their non-LLM fallbacks.
+
+A.7 Key backend API routes referenced in this document
+
+A short index of the routes exercised by the use cases in Chapter 3 and the test cases in Chapter 5: POST /api/signup and /api/login for account creation and authentication; POST /api/v1/merge and GET /api/v1/merge/{job_id} for job creation and status polling, with GET /api/v1/merge/{job_id}/stream for live Server-Sent Events progress; GET /api/v1/merge/{job_id}/result for the completed output; POST /api/v1/merge/{job_id}/retry-{video|text} for component-level retry; GET /api/v1/search for semantic transcript search; POST /api/v1/chat for grounded question-answering; the rights routes under /api/v1/rights for attestation, permission recording, and job rights manifests; and GET /health, used by the Docker healthcheck.

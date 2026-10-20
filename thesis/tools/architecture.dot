@@ -1,0 +1,139 @@
+digraph Architecture {
+  graph [rankdir=TB, fontname="Segoe UI", bgcolor="white", nodesep=0.55, ranksep=1.05,
+         compound=true, splines=ortho];
+  node [fontname="Segoe UI", shape=box, style="rounded,filled", fontsize=11, margin="0.18,0.12"];
+  edge [fontname="Segoe UI", fontsize=9, color="#33475b", arrowsize=0.8, penwidth=1.1];
+
+  subgraph cluster_client {
+    label="Client Layer";
+    style="rounded";
+    color="#0a66c2";
+    fontsize=13;
+    fontname="Segoe UI Semibold";
+    fontcolor="#0a3d7a";
+    bgcolor="#eef5fd";
+    Browser [label="Web Browser\n(React 18 SPA + Tailwind)", fillcolor="#ffffff", color="#0a66c2"];
+  }
+
+  subgraph cluster_server {
+    label="Application Server (FastAPI)";
+    style="rounded";
+    color="#1f8a3d";
+    fontsize=13;
+    fontname="Segoe UI Semibold";
+    fontcolor="#155e29";
+    bgcolor="#eafbea";
+
+    API    [label="REST Routers\n(auth / merge / search /\nchat / rights / youtube)", fillcolor="#ffffff", color="#1f8a3d"];
+    Auth   [label="Auth Middleware\n(JWT + bcrypt)", fillcolor="#ffffff", color="#1f8a3d"];
+    Pipe   [label="Merge Pipeline\n(segment -> extract -> select ->\npublish evidence manifest)", fillcolor="#ffffff", color="#1f8a3d"];
+    SSE    [label="SSE Progress Stream\n(/api/v1/merge/{id}/stream)", fillcolor="#ffffff", color="#1f8a3d"];
+
+    { rank=same; API; Auth; }
+    { rank=same; Pipe; SSE; }
+  }
+
+  subgraph cluster_worker {
+    label="Durable Background Processing";
+    style="rounded";
+    color="#c77700";
+    fontsize=13;
+    fontname="Segoe UI Semibold";
+    fontcolor="#8a5400";
+    bgcolor="#fff4e0";
+
+    Queue [label="Output Task Queue\n(MongoDB lease-based)", fillcolor="#ffffff", color="#c77700"];
+    VWorker [label="Video Worker\n(ffmpeg highlight reel)", fillcolor="#ffffff", color="#c77700"];
+    TWorker [label="Text Worker\n(distilBART summary)", fillcolor="#ffffff", color="#c77700"];
+    { rank=same; VWorker; TWorker; }
+  }
+
+  subgraph cluster_data {
+    label="Data & Storage";
+    style="rounded";
+    color="#c62828";
+    fontsize=13;
+    fontname="Segoe UI Semibold";
+    fontcolor="#8e1f1f";
+    bgcolor="#fdeaea";
+
+    Mongo [label="MongoDB\nUsers, Jobs, Transcripts,\nRights, Acquisition, Tasks", fillcolor="#ffffff", color="#c62828"];
+    Faiss [label="FAISS Index\nTranscript embeddings\n(shared volume)", fillcolor="#ffffff", color="#c62828"];
+    Cache [label="Local Media Cache\n(audio_cache volume)", fillcolor="#ffffff", color="#c62828"];
+  }
+
+  subgraph cluster_external {
+    label="Local AI Models / External Platform (Third-Party)";
+    style="rounded";
+    color="#6a2fb0";
+    fontsize=13;
+    fontname="Segoe UI Semibold";
+    fontcolor="#4a1f80";
+    bgcolor="#f3eaff";
+
+    Whisper [label="Whisper\n(transcription fallback)", fillcolor="#ffffff", color="#6a2fb0"];
+    SBERT   [label="SBERT / BGE\n(embeddings)", fillcolor="#ffffff", color="#6a2fb0"];
+    BART    [label="distilBART\n(summarisation)", fillcolor="#ffffff", color="#6a2fb0"];
+    OllamaN [label="Ollama (optional)\n(concepts / chat)", fillcolor="#ffffff", color="#6a2fb0"];
+    FFmpegN [label="ffmpeg / yt-dlp\n(acquisition + render)", fillcolor="#ffffff", color="#6a2fb0"];
+    YouTube [label="YouTube\n(source videos/captions)", fillcolor="#ffffff", color="#6a2fb0"];
+
+    { rank=same; Whisper; SBERT; BART; }
+    { rank=same; OllamaN; FFmpegN; YouTube; }
+    Whisper -> SBERT -> BART [style=invis];
+    OllamaN -> FFmpegN -> YouTube [style=invis];
+    BART -> OllamaN [style=invis];
+  }
+
+  YouTube -> Mongo [style=invis];
+
+  Browser -> API [label="HTTPS / JSON", dir=both];
+  Browser -> SSE [label="EventSource (live progress)", color="#c77700"];
+
+  API -> Auth [label="verifies", dir=both];
+  API -> Pipe [label="delegates"];
+
+  Pipe -> Queue [label="publishes evidence\nmanifest", color="#c77700"];
+  Queue -> VWorker [label="claims (lease)", color="#c77700"];
+  Queue -> TWorker [label="claims (lease)", color="#c77700"];
+  VWorker -> SSE [label="progress events", color="#c77700"];
+  TWorker -> SSE [label="progress events", color="#c77700"];
+  Queue -> Mongo [label="lease state", color="#c62828"];
+
+  Pipe -> Mongo [label="reads / writes", color="#c62828"];
+  Pipe -> Faiss [label="indexes segments", color="#c62828"];
+  VWorker -> Cache [label="scratch + output", color="#c62828"];
+
+  Pipe -> Whisper [label="transcribe"];
+  Pipe -> SBERT [label="segment / rank"];
+  TWorker -> BART [label="compress"];
+  Pipe -> OllamaN [label="concepts (optional)"];
+  API -> OllamaN [label="chat answers (optional)"];
+  Pipe -> FFmpegN [label="acquire source"];
+  VWorker -> FFmpegN [label="render reel"];
+  FFmpegN -> YouTube [label="download"];
+
+  subgraph cluster_legend {
+    label="Legend";
+    style="rounded";
+    color="#888888";
+    fontsize=12;
+    fontname="Segoe UI Semibold";
+    fontcolor="#333333";
+    bgcolor="#fafafa";
+    rank=sink;
+    node [shape=point, width=0.01, style=invis];
+
+    a1; a2; a1 -> a2 [xlabel="Client <-> API", color="#33475b", constraint=false];
+    b1; b2; b1 -> b2 [xlabel="Background job / SSE", color="#c77700", constraint=false];
+    c1; c2; c1 -> c2 [xlabel="Database / storage", color="#c62828", constraint=false];
+    d1; d2; d1 -> d2 [xlabel="Local model / platform call", color="#6a2fb0", constraint=false];
+
+    { rank=same; a1; a2; b1; b2; c1; c2; d1; d2; }
+    a2 -> b1 [style=invis];
+    b2 -> c1 [style=invis];
+    c2 -> d1 [style=invis];
+  }
+
+  Mongo -> a1 [style=invis];
+}

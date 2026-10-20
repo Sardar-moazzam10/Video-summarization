@@ -1,0 +1,139 @@
+@startuml
+skinparam backgroundColor white
+skinparam classFontName Segoe UI
+skinparam class {
+  BackgroundColor #eaf3ff
+  BorderColor #0a66c2
+}
+
+class User {
+  +ObjectId _id
+  +String username
+  +String email
+  -String password
+  +String role
+  +Number tokenVersion
+  +Boolean emailVerified
+  +register()
+  +login()
+  +revokeAllSessions()
+}
+
+class Video {
+  +ObjectId _id
+  +ObjectId owner
+  +String prompt
+  +String videoUrl
+  +String[] subtitles
+  +String[] images
+  +Scene[] scenes
+  +String status
+  +Number durationSec
+}
+
+class Scene {
+  +String image
+  +String narration
+  +String subtitle
+  +Number durationSec
+  +Number motionIndex
+}
+
+class Image {
+  +ObjectId _id
+  +ObjectId owner
+  +String prompt
+  +String imageUrl
+}
+
+class Analysis {
+  +ObjectId _id
+  +ObjectId owner
+  +String[] labels
+  +String description
+  +SuggestedPrompt[] suggestedPrompts
+}
+
+class SuggestedPrompt {
+  +String style
+  +String prompt
+}
+
+class Job {
+  +ObjectId _id
+  +ObjectId owner
+  +String type
+  +String status
+  +Number progress
+  +Mixed payload
+  +Mixed result
+  +claimNextJob()
+  +failOrRetry()
+}
+
+class Asset {
+  +ObjectId _id
+  +String kind
+  +String publicId
+  +String resourceType
+}
+
+class Conversation {
+  +ObjectId _id
+  +ObjectId owner
+  +String title
+  +String mode
+}
+
+class ChatMessage {
+  +ObjectId _id
+  +ObjectId conversation
+  +String role
+  +String content
+  +ToolCall[] toolCalls
+}
+
+class ToolCall {
+  +String name
+  +Mixed arguments
+  +Mixed result
+}
+
+class VideoGeneratorService {
+  +generateVideo(prompt, options)
+  +sentenceCountForVideoLength(minutes)
+}
+
+class VideoEditService {
+  +reRenderVideoFromScenes(payload)
+  +normalizeEditRenderPayload(body)
+}
+
+class TTSService {
+  +generateSpeech(text, provider, options)
+  +getAvailableProviders()
+}
+
+class AgentService {
+  +handleChatTurn(conversation, message)
+}
+
+User "1" --> "N" Video : owns
+User "1" --> "N" Image : owns
+User "1" --> "N" Analysis : owns
+User "1" --> "N" Job : owns
+User "1" --> "N" Asset : owns
+User "1" --> "N" Conversation : owns
+Video "1" *-- "N" Scene : contains
+Analysis "1" *-- "N" SuggestedPrompt : contains
+Conversation "1" --> "N" ChatMessage : contains
+ChatMessage "1" *-- "N" ToolCall : contains
+Video "N" --> "1" Asset : stored as
+Image "N" --> "1" Asset : stored as
+
+VideoGeneratorService ..> Video : creates
+VideoGeneratorService ..> TTSService : uses
+VideoEditService ..> Video : updates
+AgentService ..> VideoGeneratorService : invokes (tool)
+AgentService ..> ChatMessage : creates
+@enduml

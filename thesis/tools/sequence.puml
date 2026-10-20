@@ -1,0 +1,46 @@
+@startuml
+skinparam backgroundColor white
+skinparam sequenceFontName Segoe UI
+skinparam sequence {
+  ArrowColor #0a66c2
+  ActorBorderColor #0a66c2
+  LifeLineBorderColor #999999
+  ParticipantBorderColor #1f8a3d
+  ParticipantBackgroundColor #eafbea
+}
+title Sequence Diagram - Create Merge Job (through video_ready)
+
+actor User
+participant "React SPA" as FE
+participant "Merge Router" as Router
+participant "Selection Pipeline" as Pipe
+participant "Output Task Queue" as Queue
+participant "Video Worker" as VW
+participant "Text Worker" as TW
+database "MongoDB" as DB
+
+User -> FE : select videos + target duration
+FE -> Router : POST /api/v1/merge
+Router -> Router : validate duration feasibility
+Router -> DB : create MergeJob(status=pending)
+Router --> FE : 200 OK (job_id)
+FE -> FE : open SSE stream /merge/{id}/stream
+
+Pipe -> DB : claim job
+Pipe -> Pipe : transcribe, segment, extract concepts
+Pipe -> Pipe : select_segments() (coverage selector)
+Pipe -> DB : publish evidence_manifest
+Pipe -> Queue : enqueue video + text tasks
+
+Queue -> VW : claim video task (lease)
+VW -> VW : render highlight reel (ffmpeg)
+VW -> DB : video_component = ready
+VW -> FE : SSE: status=video_ready
+
+Queue -> TW : claim text task (lease)
+TW -> TW : run summarisation policy
+TW -> DB : text_component = ready
+TW -> FE : SSE: status=completed
+
+FE -> User : show highlight video (early),\nthen full result
+@enduml

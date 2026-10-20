@@ -1,0 +1,66 @@
+CHAPTER 1: INTRODUCTION TO THE PROBLEM
+
+1.1 Introduction
+
+Long-form video — podcasts, lectures, interviews, hour-long tutorials — carries a lot of a viewer's time cost against a comparatively small amount of information density. A one-hour conversation might contain fifteen minutes of material a given viewer actually needs, surrounded by introductions, tangents, and repeated explanations of the same point in different words. Two broad approaches exist to deal with this today: ask someone (or something) to write a text summary, or ask a platform's own auto-chapter feature to mark rough topic boundaries. Neither actually produces a shorter video a person can watch, and neither tells you why a given sentence was chosen over another.
+
+VidFusion treats "produce a shorter version of this video" as the primary product, with a written summary as a complementary output rather than the only one. A user supplies one or more YouTube videos and a target duration, and the system returns both a condensed video — built from real cut segments of the original footage with the original audio intact, not a synthetic voiceover over stock visuals — and a structured text summary with chapters, takeaways, and quotes, so the same underlying selection decision can be consumed either way depending on what the user actually wants.
+
+1.2 Purpose
+
+The purpose of this project is to build and rigorously evaluate a video-summarisation system whose core claim — "these are the parts of the source that matter" — is measurable rather than asserted. Most existing summarisation tools report, at best, that their output text reads fluently; they rarely demonstrate that the underlying selection decision covered the material a human would judge important, or that it did not quietly over-represent the first few minutes of the source, which is the part every similarity-based selector is naturally biased toward (an early segment that introduces a topic looks similar to almost any summary of that topic). This project set out to build the selection pipeline on principles that make that bias visible and correctable, and to prove it with a held-out evaluation rather than only a qualitative "it looks reasonable" judgement.
+
+1.3 Objective
+
+The concrete objectives of the project were:
+
+- To build an end-to-end pipeline that converts one or more YouTube videos into both a condensed highlight video and a structured written summary, within a user-selected target duration.
+- To replace naive "sort candidates by similarity to one generated summary and take the top N" selection with a principled, budget-constrained optimisation that explicitly rewards concept coverage, timeline coverage, and segment coherence, and explicitly penalises redundant picks.
+- To extract what a video is actually about — a ranked list of concepts with supporting evidence and timestamps — rather than relying on a single abstractive summary as the only signal for what is "important."
+- To make every numeric claim about a finished job checkable: duration accuracy, timeline coverage, redundancy, and concept recall/precision computed once per job and returned by the API rather than asserted in documentation.
+- To evaluate the system against a gold standard that the system itself had no part in producing, including a genuinely held-out partition of videos never used while tuning the selection weights, so the reported numbers are not simply re-discovering the training signal.
+- To make the background work (downloading, transcribing, selecting, rendering) durable: a server crash or restart partway through a job should recover and finish it, not lose it or silently double-process it.
+- To support multiple source videos in one job — fusing related content, detecting near-duplicate material across sources, and producing one coherent output rather than requiring one job per video.
+- To build a source-rights and publication-gating layer so that what the platform can produce is explicitly tied to a recorded basis for reusing the source material, rather than treating every public YouTube URL as unconditionally safe to re-publish from.
+
+1.4 Existing Solution
+
+Several categories of existing tools address parts of this problem:
+
+Platform-native auto-chapters and auto-generated descriptions (as offered by YouTube itself) mark rough topic boundaries using view-behaviour and metadata signals, but they do not produce a shorter video, do not fuse multiple sources, and are not something a third party can evaluate or tune — the chaptering logic is entirely opaque and platform-controlled.
+
+Browser-extension and SaaS "AI YouTube summariser" tools (e.g. Eightify, Glasp, NoteGPT, and similar products) take a single video's transcript, send it to a hosted large language model, and return bullet-point text notes. This is useful for a quick read but does not produce a shortened video, is limited to one source at a time, and — because the underlying selection is "ask an LLM to summarise this transcript" — offers no mechanism to check whether the output actually covers the source evenly rather than over-weighting whatever appeared early or was phrased memorably.
+
+Generic "paste a transcript into ChatGPT" workflows work for short material but require the user to do their own chunking for anything beyond a model's context window, require a separate tool entirely to produce a shortened video rather than just text, and provide no persistence, job tracking, or per-user history.
+
+Manual video editing remains the only approach that reliably produces a genuinely well-chosen highlight reel, but it is slow, requires editing skill, and does not scale to a library of videos a person wants summarised regularly.
+
+A recurring limitation across the automated tools above is that none of them separate "what is this video about" from "write me a summary of it." Scoring candidate material by similarity to a single generated summary — which is what most of these tools do under the hood, whether or not they expose that detail — makes the summary itself a bottleneck: a topic the summary only mentions once can never win a selection slot no matter how much of the source actually discusses it, and a summary-writing model's own tendency to foreground the opening of a source becomes the selection system's tendency too.
+
+1.5 Proposed Solution
+
+VidFusion differs from the tools above in ways grounded in what is actually implemented in the codebase, not in aspiration:
+
+First, concept extraction is a first-class, separate stage from summarisation, not a byproduct of it. The system chunks a long transcript, asks an LLM (or, by default on this project's hardware, a deterministic TF-IDF keyphrase extractor) what each chunk is about, merges near-duplicate concepts across chunks using sentence-embedding similarity, and ranks the result globally by importance, how many chunks support it, and how spread out in time it is. Candidate segments then compete on how well they explain these concepts, not on how similar they are to one fixed summary sentence.
+
+Second, selection is a budgeted, submodular optimisation with an explicit, inspectable scoring formula — concept coverage, semantic relevance discounted by redundancy, temporal coverage of under-represented parts of the timeline, and segment coherence, each with a configurable weight — rather than a sorted-list top-N cut. Coverage of the timeline is rewarded as a concave function (the first second spent in an unrepresented region of the video is worth far more than the sixtieth second in a region already well covered), which is what directly corrects the beginning-heavy selection bias measured during development (documented in Chapter 9) without resorting to a blunt "one clip per decile" quota that would force in genuinely low-value material just to tick a box.
+
+Third, every claim the pipeline makes about a finished job is a number computed from that job's own output, not an assumption: duration accuracy, how many deciles of the source timeline were touched, redundancy measured relative to the video's own baseline similarity (not a fixed, encoder-dependent threshold), and concept recall/precision against the gold standard used in evaluation. This is what let the beginning-heavy selection bias and a silent BART-bypass bug (Chapter 9) be found and fixed from measurement rather than suspicion.
+
+Fourth, reliability and provenance are treated as first-class engineering concerns rather than an afterthought bolted onto a working prototype. Background work is tracked through a durable, lease-based job and task-queue system so a crash mid-render is recoverable rather than catastrophic; and a source-rights model records, per video a user submits, an explicit basis for reusing it, gating what the platform will let a user publish accordingly. Neither of these was handed down as a specification — both emerged from building the system honestly and then asking what would actually go wrong with a multi-user, always-on deployment of it.
+
+1.6 Project Plan
+
+The project was carried out over the seventh and eighth semesters, from January 2026 through September 2026, following the phased plan summarised below. Work proceeded roughly in the order requirement analysis, system design, backend implementation, frontend implementation, testing and evaluation, deployment, and documentation, though later phases overlapped with earlier ones as features were implemented and measured incrementally rather than in a strict waterfall sequence.
+
+1.6.1 Work Breakdown Structure
+
+The work was broken down into six top-level packages, each grouping the related functional requirements described in Chapter 2: account and authentication, video acquisition and transcription, the semantic selection and summarisation pipeline, the rights/publication-gating and acquisition-observability layer, testing and evaluation, and deployment and documentation.
+
+Figure 13: Work Breakdown Structure
+
+1.6.2 Gantt Chart
+
+The timeline below maps each work package onto the months in which it was carried out. Later phases begin before earlier ones fully close because the backend pipeline, the frontend, and testing alongside it proceeded feature-by-feature rather than as strictly separate stages.
+
+Figure 14: Gantt Chart

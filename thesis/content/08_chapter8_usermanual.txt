@@ -1,0 +1,132 @@
+CHAPTER 8: USER MANUAL
+
+This chapter walks through every feature of VidFusion from the point of view of an end user. All screenshots were captured from a running instance of the system (FastAPI backend serving the React build on a single port, MongoDB, local BART and BGE models) on 20 October 2026, using a demonstration account. The fusion example in Sections 8.6 to 8.8 is a real job: two YouTube videos totalling 22 minutes 25 seconds were fused into a 4 minute 53 second highlight video against a 5-minute target, with about 7 minutes of processing on a CPU-only machine.
+
+8.1 Sign Up / Login
+
+1. Open the VidFusion landing page. It introduces the platform and its main actions: Start Summarizing and View Transcripts.
+[Screenshot: 01_landing_page_a.png]
+[Screenshot: 01_landing_page_b.png]
+[Screenshot: 01_landing_page_c.png]
+2. Click Sign Up. Enter your full name (optional), email address and a password, then click Create Account.
+[Screenshot: 02_signup_page.png]
+3. To sign in later, open Log in and enter your email or username and password, then click Sign in.
+[Screenshot: 03_login_page.png]
+4. If you forget your password, click Forgot password?, enter your registered email and click Send Verification Code. Enter the code you receive to set a new password.
+[Screenshot: 04_forgot_password.png]
+
+8.2 Search Videos by Title or Topic
+
+1. After signing in you land on Search & Summarize. Type a topic or video title, or click one of the Popular Searches. You can optionally restrict results to Creative Commons (CC BY) videos with the license filter.
+[Screenshot: 05_search_page.png]
+2. Click Search. VidFusion shows matching YouTube videos as cards. Each card shows the title, channel, a license badge and three actions: Add to Merge, Watch and YouTube.
+[Screenshot: 06_search_results.png]
+
+8.3 Search Inside Transcripts (Deep Search)
+
+1. Click Search inside transcripts (or open it from the navigation). The page explains when to use a keyword search instead of a title search and offers example terms. Enter a technical term such as "gradient descent" and press Enter.
+[Screenshot: 07_transcript_search_page.png]
+2. VidFusion searches YouTube for the topic and then scans the transcripts of the top results. Each result card shows the video, its channel, how many times the term is spoken (for example, "31 matches"), and the exact timestamps with the surrounding sentence.
+[Screenshot: 08_transcript_search_results_a.png]
+3. Scroll down for more matching videos. Each card can be added to a fusion with Add to Merge, played with Watch, or opened on YouTube.
+[Screenshot: 08_transcript_search_results_b.png]
+
+8.4 Discover Videos by Category
+
+1. Open Discover. Pick a category (Technology, Health, Business, Education, Science and so on) or type a custom topic.
+[Screenshot: 09_discover_page.png]
+2. VidFusion fetches relevant videos for that category. Select the ones you want, and they can be summarized in the same way as search results.
+[Screenshot: 10_discover_topic_results_a.png]
+[Screenshot: 10_discover_topic_results_b.png]
+
+8.5 Watch a Video and View its Transcript
+
+1. Click Watch on any card to play the video inside VidFusion. Related videos appear under More on this Topic.
+[Screenshot: 11_video_player_a.png]
+[Screenshot: 11_video_player_b.png]
+2. Open Transcripts, paste a YouTube video ID or URL, and click Fetch Transcript. The timestamped transcript is shown, and you can Copy it or Download it with or without timestamps.
+[Screenshot: 12_transcript_viewer.png]
+
+8.6 Create a Video Fusion (Select Videos and Duration)
+
+1. Click Add to Merge on one or more videos (up to five). A selection tray appears at the bottom of the screen showing the number of selected videos, their combined source length and thumbnails.
+[Screenshot: 13_videos_selected_for_fusion.png]
+2. Open the duration menu in the tray and choose an output length: 5 min Quick Highlights, 10 min Key Concepts, 15 min Balanced Summary, 20 min Detailed Summary, or 30 min Comprehensive Summary. Durations longer than the source are disabled, since a summary must be shorter than the source. The estimated output word count is shown below.
+[Screenshot: 14_output_duration_options.png]
+3. Click Merge N Videos. The job is created and you are taken to the processing page.
+
+8.7 Monitor Processing Progress
+
+The processing page updates automatically. A progress ring shows the percentage and the current stage message. The pipeline steps are Transcribing, Analyzing, Selecting, Video Gen and Video Ready, followed by Summarizing, AI Enriching and Voice Gen for the text summary.
+
+1. Transcribing: VidFusion checks YouTube captions for each source and falls back to Whisper transcription if none are available.
+[Screenshot: 15_processing_transcribing.png]
+2. Analyzing: transcripts are split into semantic segments (complete thoughts) using sentence-embedding similarity.
+[Screenshot: 16_processing_semantic_segments.png]
+3. Video Gen: the source videos are downloaded so the selected clips can be cut.
+[Screenshot: 17_processing_downloading_sources.png]
+4. Selecting: the transcript of the selected segments is reconstructed for summarization.
+[Screenshot: 18_processing_selecting_segments.png]
+5. Summarizing: BART-large-CNN runs hierarchical summarization on the selected content.
+[Screenshot: 19_processing_bart_summarization.png]
+6. When the highlight video is assembled it becomes playable immediately, while the AI summary is still being generated.
+[Screenshot: 20_highlight_video_ready.png]
+
+8.8 View the Fusion Result
+
+1. When processing finishes, the page reads "Your summary is ready". Summary cards show the number of topics found, the percentage of source text retained, the output word count and the number of videos merged. In this run the optional quality check timed out at its 90-second limit and is reported as unavailable rather than hidden.
+[Screenshot: 21_result_summary_ready.png]
+2. Video Highlights plays the fused highlight video, built from clips of both source videos in the original speakers' voices. It is marked "Private Preview Only" because reuse rights for the sources are not verified.
+[Screenshot: 22_fused_highlight_video.png]
+3. Scroll down to read the TL;DR and the full AI Summary.
+[Screenshot: 23_tldr_and_ai_summary.png]
+4. Key Events lists the most important points, and Chapters groups the summary into titled sections.
+[Screenshot: 24_key_events_and_chapters.png]
+5. Key Topics shows the extracted concepts. Use Copy Text, Download TXT or Download PDF to export the summary, or Create Another Summary to start again.
+[Screenshot: 25_key_topics_and_export.png]
+6. Rights & Publication Guidance explains each source's license status and why public publication is restricted. Click Details to see the per-source policy notes.
+[Screenshot: 26_rights_publication_details.png]
+7. The downloaded PDF contains the TL;DR, summary, key events and chapters.
+[Screenshot: 27_exported_pdf_report.png]
+
+8.9 Manage Your Account
+
+1. Open the profile menu and choose Account Info to edit your first name, last name, username and email. The Danger Zone lets you permanently delete your account.
+[Screenshot: 28_account_info_a.png]
+[Screenshot: 28_account_info_b.png]
+2. Security lets you change your password, or reset it by email if you have forgotten it.
+[Screenshot: 29_security_settings_a.png]
+[Screenshot: 29_security_settings_b.png]
+3. History lists your summaries, searches, watched videos and viewed transcripts. Filter by type with the tabs, delete single entries, or use Clear All.
+[Screenshot: 30_activity_history_a.png]
+[Screenshot: 30_activity_history_b.png]
+
+8.10 Use the Help Assistant
+
+1. Click the floating play button in the bottom-right corner on any page to open the VidFusion assistant.
+[Screenshot: 31_assistant_widget_a.png]
+2. Choose a suggested question (for example "What does VidFusion do?") to get an answer with follow-up questions.
+[Screenshot: 31_assistant_widget_b.png]
+
+8.11 About and Contact
+
+1. About describes the platform's features: Smart Search, Deep Transcript Analysis, AI-Powered Summaries, Multi-Video Fusion and Privacy-First history.
+[Screenshot: 32_about_page_a.png]
+[Screenshot: 32_about_page_b.png]
+2. Contact provides a form for questions and feedback.
+[Screenshot: 33_contact_page_a.png]
+[Screenshot: 33_contact_page_b.png]
+
+8.12 Administrator Panel
+
+Administrator accounts have extra pages in the profile sidebar.
+
+1. Platform Stats shows user counts (total, active, inactive, active today, new this week, admins) and platform activity (total actions, searches, videos watched, merges done, transcripts viewed). Individual users' activity is not visible to admins.
+[Screenshot: 34_admin_dashboard_stats_a.png]
+[Screenshot: 34_admin_dashboard_stats_b.png]
+2. Manage Users lets an admin search, edit, deactivate or delete users and add new ones with Add New User.
+[Screenshot: 35_admin_user_management.png]
+3. Admins also have their own History and Account Info pages.
+[Screenshot: 36_admin_activity_history_a.png]
+[Screenshot: 36_admin_activity_history_b.png]
+[Screenshot: 37_admin_account_info.png]

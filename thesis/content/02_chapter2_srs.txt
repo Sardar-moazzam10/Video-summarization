@@ -1,0 +1,191 @@
+CHAPTER 2: SOFTWARE REQUIREMENT SPECIFICATION
+
+2.1 Introduction
+
+2.1.1 Purpose
+
+This chapter specifies the functional and non-functional requirements of VidFusion, following the standard functional/non-functional requirement structure described in the software engineering literature [1]. It is written from the actual implemented system (backend routers, services, models, and workers) rather than as an aspirational document, so every requirement below corresponds to code that exists in the repository at the time of writing.
+
+2.1.2 Scope
+
+The system in scope covers: user registration, authentication, and an administrative role; multi-video merge-job creation with a user-selected duration profile; a semantic selection pipeline producing both a condensed highlight video and a structured written summary; durable background processing of that pipeline through a lease-based task queue with independent video and text output workers; live job-progress reporting over Server-Sent Events; semantic search and conversational question-answering over every transcript the platform has processed, backed by a FAISS vector index; a source-rights and publication-gating layer; and a per-user history and admin panel. Out of scope: payment/billing, native mobile applications, and speaker diarisation (see Chapter 9 for future work).
+
+2.1.3 Definitions, Acronyms, and Abbreviations
+
+- API: Application Programming Interface
+- JWT: JSON Web Token, used here for stateless session authentication
+- SSE: Server-Sent Events, a one-way HTTP streaming mechanism used for live job-progress updates
+- FAISS: Facebook AI Similarity Search, a library for efficient nearest-neighbour search over dense vector embeddings
+- SBERT: Sentence-BERT, a family of transformer models that produce sentence-level embeddings suitable for cosine-similarity comparison
+- LLM: Large Language Model (here, a locally-hosted Ollama model used for optional concept extraction and chat answer synthesis)
+- Concept: a named idea the source material is "about", extracted with an importance score, supporting evidence, and the timestamps it occurs at
+- Segment: a semantically-coherent, timestamp-bounded unit of a transcript — the unit the selection optimizer picks and ffmpeg cuts
+- Evidence Manifest: an immutable record, published once per job, of exactly which segments and sources were selected, handed off to the independent output workers so they never re-derive selection logic
+- Rights Basis: the recorded justification (owned, Creative Commons, explicit permission, public domain, or unknown) for a user's platform-level right to reuse a given source video
+- Job/Task Queue: a persisted unit of background work (highlight-video rendering, text-summary generation) processed by a worker outside the HTTP request cycle
+
+2.2 Overall Description
+
+2.2.1 Product Perspective
+
+VidFusion is a standalone, self-contained web application composed of a React single-page frontend and a FastAPI REST backend, backed by MongoDB.
+
+System interfaces: The backend exposes a versioned REST API under /api/v1 (auth, merge, transcript, search, chat, youtube, rights). Live merge-job progress is delivered to the frontend over Server-Sent Events at /api/v1/merge/{job_id}/stream rather than polling for the primary progress path, though the job status endpoint itself (GET /api/v1/merge/{job_id}) can also be polled.
+
+User interfaces: A React 18 frontend styled with Tailwind CSS, with dedicated pages for search by title and by keyword, a transcript viewer, a merge-preview/selection page, a summarised player for jumping to highlighted moments, a merged-podcast/highlight player, a user account panel (profile, security, history), and an admin panel (user list, platform statistics, account management).
+
+Hardware interfaces: No GPU is required; every model in the pipeline (Whisper, the SBERT embedding model, distilBART, and the optional Ollama model) is sized to run acceptably on CPU, which was itself a deliberate constraint documented in Chapter 6. A server capable of running Python 3.12, Node.js, and ffmpeg is sufficient.
+
+Software interfaces: MongoDB (via Motor, the async driver, and Pymongo) for all persistent data — users, history, merge jobs, transcripts, durable output tasks, source-rights records, and acquisition-observability events; ffmpeg for video trimming, concatenation, and transition rendering; yt-dlp for source video/audio acquisition; the youtube-transcript-api and, as a fallback, OpenAI Whisper for transcript acquisition; HuggingFace transformers and sentence-transformers for the summarisation and embedding models; FAISS for the semantic search vector index; and an optionally-present local Ollama server for LLM-backed concept extraction and chat answer synthesis, with every one of these falling back to a deterministic non-LLM path if Ollama is not reachable.
+
+Communications interfaces: HTTPS REST over JSON for all API calls; JWT bearer tokens in the Authorization header for authenticated requests; a separately-scoped, short-lived media token for protected video/audio/subtitle download endpoints; Server-Sent Events for live merge-job progress.
+
+2.2.2 Product Functions
+
+The following functional requirements are drawn directly from the implemented routers and services.
+
+FR-01
+Name: Register Account
+Description: Create a new user account with an email, password, and optional display name.
+Input: email, password, name (optional)
+Output: user profile and role
+Basic Work Flow: Client submits the signup form -> auth router's /signup endpoint -> AuthService hashes the password with bcrypt, auto-generates a username from the email if one was not supplied, and creates the user document with role "user" (public registration can never create an admin account).
+
+FR-02
+Name: Login
+Description: Authenticate an existing user with a username or email and password, and issue a session.
+Input: login (username or email), password
+Output: access token and user profile
+Basic Work Flow: Client submits credentials to /login -> AuthService looks up the account by username or email and verifies the password against the stored bcrypt hash (or, for an account created before bcrypt was adopted, against a legacy SHA-256 hash, upgrading it to bcrypt transparently on a successful login) -> a JWT access token carrying the user's id and role is issued.
+
+FR-03
+Name: Password Recovery
+Description: Reset a forgotten password via an emailed one-time verification code.
+Input: email (to request a code); email and code (to verify); reset_token and new password (to reset)
+Output: a sent confirmation; a verified reset token; a success confirmation
+Basic Work Flow: /send-verification-code emails a time-limited code -> /verify-code checks it and issues a reset token -> /reset-password accepts the token and the new password, re-hashing it with bcrypt.
+
+FR-04
+Name: Create Merge Job
+Description: Submit one to ten YouTube videos, a target summary duration, and output preferences (highlight video, audio, or both), and have the system produce a condensed summary.
+Input: video_ids (1-10), target_duration_minutes (5-30, or down to 2 via the Express profile), generate_video, generate_audio, style, and an optional scope/query for a keyword-focused rather than overall summary
+Output: a job_id and initial status, or a 422 error if the requested duration is not feasible against the combined source length
+Basic Work Flow: POST /api/v1/merge validates video count and deduplicates ids -> resolves each source's duration and rejects the request up front if any source's duration cannot be verified, or if the requested duration is not strictly shorter than the combined source length -> creates a MergeJob document with status "pending" and hands it to the background pipeline.
+Alternate Flow: A1. If fewer than one or more than ten valid video ids are supplied after deduplication, the request is rejected with HTTP 400 before a job is created. A2. If the requested duration is not achievable, the response carries a structured SOURCE_DURATION_UNAVAILABLE or duration-infeasibility error rather than a generic failure.
+
+FR-05
+Name: Preflight Check Sources
+Description: Check, before committing to a full job, whether a set of candidate videos are reachable and have a usable transcript language.
+Input: video_ids, an optional per-source timeout
+Output: a per-video readiness/eligibility report
+Basic Work Flow: POST or GET /api/v1/merge/preflight resolves each candidate's transcript availability and detected language without starting a full merge job, so the frontend can warn the user before they spend a job attempt on an unusable source.
+
+FR-06
+Name: Monitor Job Progress
+Description: Track a merge job's status, stage, and progress percentage in real time.
+Input: job_id
+Output: current status (one of twelve JobStatus values, e.g. transcribing, analyzing, fusing, summarizing, enriching, generating_video, video_ready, completed, partial_success, error), progress_percent, and a human-readable stage_message
+Basic Work Flow: Frontend opens GET /api/v1/merge/{job_id}/stream (Server-Sent Events) or polls GET /api/v1/merge/{job_id} -> the backend pipeline updates the job document's status/progress/stage fields as it moves through transcription, semantic analysis, fusion, summarisation, enrichment, and rendering.
+
+FR-07
+Name: Retrieve Job Result
+Description: Fetch the completed output of a merge job — the written summary, the selected concepts, selection-quality metrics, and links to the rendered video/audio/subtitles.
+Input: job_id
+Output: summary_text, rich_output (chapters, key takeaways, quotes, TL;DR), concepts[], selection_metrics, and download links
+Basic Work Flow: GET /api/v1/merge/{job_id}/result returns the full job document's output fields once the relevant component (video and/or text) has reached a ready state; GET /{job_id}/video, /audio, and /subtitles stream the corresponding rendered file; GET /{job_id}/export produces a text or PDF export of the summary.
+
+FR-08
+Name: Retry a Failed Output Component
+Description: Re-attempt only the video or only the text half of a job that partially failed, without re-running the whole pipeline.
+Input: job_id, output_type ("video" or "text")
+Output: the component's state reset to queued and re-dispatched to its worker
+Basic Work Flow: POST /api/v1/merge/{job_id}/retry-{output_type} re-queues a durable output task for the named component against the job's existing, already-published evidence manifest, so a text-generation failure does not force the (potentially much slower) video render to be repeated, and vice versa.
+
+FR-09
+Name: Search Transcripts
+Description: Run a natural-language semantic search across every video the platform has processed and indexed.
+Input: a free-text query, optional top_k
+Output: ranked transcript segments with video id/title, score, and timestamp
+Basic Work Flow: GET /api/v1/search embeds the query with the same sentence-embedding model used during indexing and performs a FAISS nearest-neighbour search over the persisted vector index, returning each match's source video and timestamp so the result can be used as a deep link.
+
+FR-10
+Name: Chat with Video Content
+Description: Ask a natural-language question and receive an answer grounded in the platform's indexed transcripts, with source attribution.
+Input: question, optional video_ids to scope the search, top_k
+Output: an answer and a list of the source segments it was grounded in
+Basic Work Flow: POST /api/v1/chat retrieves the top-k relevant segments from FAISS (optionally scoped to specific videos) -> if Ollama is reachable, the retrieved context and question are sent to it for answer synthesis; otherwise the top retrieved segments are stitched together directly as a local, non-generative fallback answer -> the response always includes the literal source segments so a user can verify the answer against the original material.
+
+FR-11
+Name: Record Source Rights
+Description: Record, per source video a user has submitted, the basis under which they are entitled to reuse it.
+Input: source_id, claim_type (ownership, fair_use, or public_domain) for a user attestation; or grantor/evidence details for a recorded third-party permission
+Output: a persisted SourceRightsRecord
+Basic Work Flow: POST /api/v1/rights/attest or /permission records the user's declared basis -> the record is later consulted by evaluate_publication_gate when a job involving that source is evaluated for publication eligibility.
+
+FR-12
+Name: View Job Rights Manifest
+Description: Produce a complete rights-and-attribution report for a completed job: which sources contributed which physical clip intervals, their recorded rights basis, and the resulting publication-gate status.
+Input: job_id
+Output: a combined manifest (source reuse report, rights records, publication gate status, composite attribution text)
+Basic Work Flow: GET /api/v1/rights/job/{job_id}/manifest verifies the requester owns the job (or is an admin) without revealing whether a job exists to anyone else -> builds an objective reuse report from the job's actual selected segments and known source durations -> returns the job's frozen rights_snapshot (captured once, at render time, as a write-once historical record) rather than recomputing rights state live, so the manifest reflects what the rights situation actually was when the content was produced.
+
+FR-13
+Name: View History
+Description: List the current user's past searches, transcript views, and merge jobs.
+Input: username
+Output: a list of history entries with type, timestamp, and type-specific fields (query, videoId, jobId, videoCount)
+Basic Work Flow: GET /api/user-history/{username} returns the user's history entries newest-first; entries are written by the frontend as the corresponding action (a search, a transcript view, a completed merge) occurs.
+
+FR-14
+Name: Manage Users (Admin)
+Description: List all users, view platform statistics, and activate/deactivate or edit a user account.
+Input: (list/stats: none); (toggle/update: username and the fields to change)
+Output: a user list with role but no password hashes; aggregate platform statistics; a success/failure result for a mutation
+Basic Work Flow: An admin-only route group, each guarded by a require_role("admin") dependency that re-derives the caller's role from the token rather than trusting a client-supplied flag, exposes GET /users, GET /admin/stats, PATCH /admin/toggle-user/{username}, PUT /admin/user/{username}, and POST /admin/create-user; an admin cannot deactivate their own account through this route, to avoid an admin locking themselves out.
+
+2.2.3 User Characteristics
+
+The primary user is assumed to be a student, researcher, content consumer, or professional who wants to extract the substance of long-form video without watching it in full, comfortable with a typical web application but not expected to understand transcript alignment, embedding models, or submodular optimisation. A secondary administrative role exists for platform operation (user management, aggregate statistics) and is not exposed to ordinary users.
+
+2.2.4 Constraints
+
+- The requested summary duration must be strictly shorter than the combined duration of the selected source videos; this is enforced server-side at job-creation time, before a job document is even created.
+- ffmpeg must be present and reachable on the host, since the highlight-reel renderer shells out to the real binary rather than a bundled library.
+- The LLM-backed concept-extraction path (ENABLE_CONCEPT_LLM) is disabled by default because it was measured, on this project's CPU-only development hardware, to take roughly 180 seconds per transcript chunk — a 25-minute video would need on the order of 20 minutes just for this stage before timing out and falling back regardless. The deterministic TF-IDF fallback is always available and is what actually runs by default.
+- The in-process rate limiter in the FastAPI middleware is per-process and in-memory, an accepted constraint for the current single-instance deployment target.
+- A transcript whose detected language is not supported by the configured pipeline terminates the job during preflight with an explicit summary_unavailable_reason, rather than silently producing a degraded or garbled summary.
+
+2.2.5 Assumptions and Dependencies
+
+- A MongoDB instance is reachable and its URI is configured; MONGODB_URI defaults to a local instance for development.
+- ffmpeg, yt-dlp, and a Python 3.12 environment with the project's machine-learning dependencies (torch, transformers, sentence-transformers, faiss-cpu, openai-whisper) are installed.
+- Ollama, if the operator wants LLM-backed concept extraction or chat answer synthesis, is a genuinely optional dependency — the system is designed and tested to run with it entirely absent, falling back to TF-IDF keyphrases and raw FAISS-segment answers respectively.
+- A HuggingFace access token (HF_TOKEN) is optional but recommended, since anonymous model downloads share a per-IP rate quota that an authenticated pull does not.
+
+2.2.6 Apportioning of Requirements
+
+FR-01 through FR-03 and FR-13/FR-14 are core account and platform-management requirements delivered in the current release. FR-04 through FR-12 constitute the video-summarisation, search, and rights-governance feature set, also fully delivered in the current release. Deferred to future work (Chapter 9): speaker diarisation as a segmentation signal, re-enabling visual (CLIP-based) scoring by default, and horizontally scaling the durable output workers across multiple machines.
+
+2.3 Specific Requirements
+
+2.3.1 Functional Requirements
+
+The functional requirements are as specified in section 2.2.2 (FR-01 through FR-14) and are elaborated further as use cases in Chapter 3.
+
+2.3.2 Non-Functional Requirements
+
+The non-functional requirements below are organised around the quality characteristics defined in ISO/IEC 25010 [2] (functional suitability, usability, reliability, performance efficiency, portability, and maintainability), grouped under the headings most relevant to what was actually built.
+
+Usability: Duration selection is exposed as six named profiles (Express, Quick Highlights, Key Concepts, Balanced Summary, Detailed Summary, Comprehensive Summary at 2, 5, 10, 15, 20, and 30 minutes respectively) rather than a raw numeric field, so a user chooses an intent ("quick highlights") rather than guessing a number of minutes; long-running jobs surface live stage text over Server-Sent Events (e.g. "Composing segment 3 of 12"-style progress) rather than an opaque spinner.
+
+Reliability: This is the area the design invests in most, because every stage depends on either an external video platform or a locally-hosted model that can be slow, absent, or fail outright. The durable output-task queue (output_task_queue.py) uses atomic, lease-based claiming — a worker claims a task with a renewable lease, and a startup recovery routine (recover_expired_output_tasks, recover_prepared_output_dispatches) re-queues any task whose lease expired without completing, so a crashed worker or a server restart mid-render is recovered exactly once rather than losing the job or risking two workers processing it simultaneously. Every selection-pipeline stage (semantic segmentation, concept extraction, redundancy scoring) has an explicit, documented fallback (Chapter 6) so the absence of Ollama, a failure of SBERT to load, or an untimestamped transcript each degrade the output's quality rather than failing the job outright. Bounded retry (max_retries = 3 on a job) prevents a permanently broken job from being retried forever.
+
+Performance: Per-process rate limiting bounds request volume per client IP, with status-polling and progress-stream traffic explicitly exempted so a frontend polling a slow job cannot itself trip the limiter. A storage-hygiene routine runs at boot and hourly thereafter, enforcing size and age caps on the local highlight-video and source-video caches (10 GB / 14 days and 10 GB / 30 days respectively) so disk usage is self-bounding rather than growing without limit across many jobs. Embedding and summarisation models are pre-loaded once at process startup rather than on first request, eliminating cold-start latency on the first real job.
+
+Design Constraints: All provider-specific and tunable configuration (model names, selection-scoring weights, timeouts, cache limits) lives in one validated Pydantic settings module (backend/core/config.py) read from a single .env file, rather than scattered process.env-style reads, so a misconfiguration is visible in one place; the module additionally refuses to start in a production environment with a weak or default signing key, rather than booting insecurely.
+
+Portability: The backend, a dedicated text-output worker, and a dedicated video-output worker are each built from the same Docker image and declared as separate services in docker-compose.yml, alongside a MongoDB container, with named volumes for the local media cache and the FAISS index so a container rebuild does not discard in-progress work or force a full search-index rebuild.
+
+Maintainability: Business logic is organised into single-purpose service modules (semantic_segmenter, concept_extractor, coverage_selector, summarization_policy, fusion_engine, rights_service, acquisition_service) with pure, side-effect-free core functions specifically so they can be unit tested without a running MongoDB instance, a GPU, or network access — which is also why the project's 548-test suite runs deterministically in CI-style conditions.
+
+License Agreement: The project uses standard open-source dependencies (FastAPI, React, Whisper, sentence-transformers, transformers, FAISS, ffmpeg) under their respective permissive or research-friendly open licenses. No proprietary code was incorporated. The platform acquires source video via YouTube under the terms applicable to end-user access of that platform, and the rights/publication-gating feature (FR-11/FR-12) exists specifically to make the basis for any further reuse an explicit, recorded decision rather than an unexamined assumption.

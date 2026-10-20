@@ -1,0 +1,45 @@
+@startuml
+skinparam backgroundColor white
+skinparam activityFontName Segoe UI
+skinparam activity {
+  BackgroundColor #eafbea
+  BorderColor #1f8a3d
+}
+title Activity Diagram - Create Merge Job
+
+start
+:User selects 1-10 videos and a target duration;
+if (Duration feasible vs combined source length?) then (no)
+  :Return structured infeasibility error;
+  stop
+else (yes)
+endif
+:Create MergeJob document (status=pending);
+:Transcribe each source\n(captions, else Whisper fallback);
+:Build sentences and segment semantically\n(SBERT boundary detection);
+if (SBERT available?) then (no)
+  :Fall back to duration-only boundaries;
+endif
+:Extract concepts from chunks;
+if (Ollama available and enabled?) then (no)
+  :Fall back to TF-IDF keyphrases;
+endif
+:Select segments under budget\n(coverage selector, submodular optimisation);
+:Publish evidence manifest;
+fork
+  :Video Worker claims task;
+  :Render highlight reel with ffmpeg;
+  :Mark video_component ready;
+fork again
+  :Text Worker claims task;
+  :Run summarisation policy\n(compress / rewrite / clean);
+  :Mark text_component ready;
+end fork
+:Emit progress via SSE to the client;
+if (Both components ready?) then (yes)
+  :Mark job completed;
+else (one failed)
+  :Mark job partial_success;
+endif
+stop
+@enduml

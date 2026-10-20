@@ -1,0 +1,193 @@
+CHAPTER 5: TESTING
+
+5.1 Test Case Specifications
+
+The nine test cases below are worked examples of the black-box test design techniques covered in Section 5.2 (equivalence partitioning, boundary value analysis, decision tables, and state transition testing), documented in the university's own test-case format (ID, priority, steps, expected result, status) so the design technique behind each one is traceable on paper. They are a representative sample chosen to cover the highest-risk flows (authentication, merge job creation, duration feasibility, job recovery, and rights gating), not an enumeration of every test performed. The actual scale of automated testing is the 548-test suite described in Section 5.3.1.
+
+TC-01
+Priority: High
+Description: Successful login with correct email and password
+Reference: UC-02 Login
+Users: Registered User
+Pre-requisites: An account exists
+Steps: 1) POST /api/login with the account's login identifier and password. 2) Inspect the response.
+Input: { "login": "user@example.com", "password": "CorrectPass123" }
+Expected result: HTTP 200; response contains a valid JWT access token and the user's profile
+Status: Pass
+
+TC-02
+Priority: High
+Description: Failed login with wrong password
+Reference: UC-02 Login
+Users: Registered User
+Pre-requisites: An account exists
+Steps: 1) POST /api/login with the correct login identifier and an incorrect password. 2) Inspect the response.
+Input: { "login": "user@example.com", "password": "WrongPassword" }
+Expected result: HTTP 401/400; no token issued; an unknown-login attempt returns an equivalent failure so the two cannot be distinguished
+Status: Pass
+
+TC-03
+Priority: High
+Description: Create a merge job with a feasible duration
+Reference: UC-03 Create Merge Job
+Users: Registered User
+Pre-requisites: User authenticated; source video durations resolvable
+Steps: 1) POST the merge request with 1-10 valid video ids and a target_duration_minutes strictly less than the combined source duration. 2) Poll or stream the job until a terminal or video_ready status. 3) Inspect the result.
+Input: { "video_ids": ["<25-minute source>"], "target_duration_minutes": 10, "generate_video": true }
+Expected result: Job progresses pending -> transcribing -> ... -> completed (or video_ready then completed); result.selection_metrics.duration_accuracy is close to 1.0
+Status: Pass
+
+TC-04
+Priority: High
+Description: Reject a merge job whose requested duration is not feasible
+Reference: UC-03 Create Merge Job
+Users: Registered User
+Pre-requisites: User authenticated
+Steps: 1) POST the merge request with a target_duration_minutes greater than or equal to the combined source duration.
+Input: { "video_ids": ["<8-minute source>"], "target_duration_minutes": 10 }
+Expected result: HTTP 422 before any job document is created; the error names the achievable duration range rather than a generic failure
+Status: Pass
+
+TC-05
+Priority: Medium
+Description: Retry only the failed text-output component of a job
+Reference: UC-06 Retry a Failed Output Component
+Users: Registered User
+Pre-requisites: A job exists whose text_component.status is "failed" and whose video_component is already "ready"
+Steps: 1) POST /api/v1/merge/{job_id}/retry-text. 2) Poll the job. 3) Confirm the video output was not re-rendered.
+Input: POST /api/v1/merge/<job_id>/retry-text
+Expected result: text_component resets to queued and eventually reaches ready; video_component's existing ready state and video_path are untouched
+Status: Pass
+
+TC-06
+Priority: High
+Description: Worker crash recovery via lease expiry
+Reference: Reliability NFR (Chapter 2)
+Users: Background Worker (system-level)
+Pre-requisites: An output task has been claimed by a worker whose lease has since expired without completion (simulating a crash)
+Steps: 1) Simulate a worker claiming a task and then stopping without releasing it. 2) Advance time past the lease window. 3) Start a (or another) worker and run its recovery pass.
+Input: An output_tasks document with status "claimed" and lease_expires_at in the past
+Expected result: Recovery re-queues the task exactly once; a second concurrent recovery attempt does not re-queue it a second time
+Status: Pass
+
+TC-07
+Priority: Medium
+Description: Duration-accuracy boundary at the Express profile's minimum
+Reference: FR-04 Create Merge Job
+Users: Registered User
+Pre-requisites: A source long enough to make a 2-minute summary feasible
+Steps: 1) POST a merge request with target_duration_minutes = 2 (the Express profile's floor). 2) Inspect the result's selection_metrics.
+Input: { "target_duration_minutes": 2 }
+Expected result: duration_style resolves to "headline"; the rendered reel's actual duration is within the configured tolerance of the 120-second budget
+Status: Pass
+
+TC-08
+Priority: Medium
+Description: Record a user rights attestation and confirm it affects the publication gate
+Reference: UC-09 Record Source Rights
+Users: Registered User
+Pre-requisites: User authenticated; a source video with no existing rights record
+Steps: 1) POST /api/v1/rights/attest with claim_type "ownership". 2) Create a merge job using that source. 3) Request the job's rights manifest.
+Input: { "source_id": "<video_id>", "claim_type": "ownership" }
+Expected result: The rights record is persisted; the job's rights_snapshot, frozen at render time, reflects the attested basis and a corresponding publication_gate_status
+Status: Pass
+
+TC-09
+Priority: High
+Description: Non-owner cannot read another user's job rights manifest
+Reference: UC-10 View Job Rights Manifest
+Users: Registered User
+Pre-requisites: Two distinct user accounts; a job owned by user A
+Steps: 1) As user B, GET /api/v1/rights/job/{A's job_id}/manifest.
+Input: GET /api/v1/rights/job/<job_id>/manifest (Bearer token for user B)
+Expected result: HTTP 404, identical to the response for a nonexistent job id, so user B cannot distinguish "not yours" from "does not exist"
+Status: Pass
+
+5.2 Black Box Test Cases
+
+5.2.1 Equivalence Partitions
+
+Target duration (minutes), mapped to one of six duration profiles:
+- Partition A (Express): 2 minutes -> headline style, 300-word summary target, 120-second reel budget.
+- Partition B (Quick Highlights): 5 minutes -> brief style, 750-word target, 300-second budget.
+- Partition C (Key Concepts): 10 minutes -> standard style, 1500-word target, 600-second budget.
+- Partition D (Balanced/Detailed): 15-20 minutes -> comprehensive-leaning styles, 2200-2800-word targets.
+- Partition E (Comprehensive): 30 minutes (the maximum) -> 4200-word target, 1800-second budget.
+- Partition F (invalid, infeasible): requested minutes such that requested_seconds >= combined source seconds -> rejected at job-creation time with a structured error, never silently clamped.
+
+Video count per job, valid range 1-10:
+- Partition A (invalid, empty): zero valid ids after deduplication -> HTTP 400, no job created.
+- Partition B (valid, single source): 1 video -> source_scope resolves to "single".
+- Partition C (valid, multi-source): 2-10 videos -> source_scope resolves to "multi"; fusion/deduplication across sources is exercised.
+- Partition D (invalid, over-limit): more than 10 distinct ids -> HTTP 400, no job created.
+
+5.2.2 Boundary Value Analysis (Segment Duration)
+
+- segment length = SEGMENT_MIN_SECONDS (20s) exactly: the minimum legal segment; a boundary below this is not honoured and the segment is folded into its neighbour instead of being kept as an under-length clip.
+- segment length = SEGMENT_MAX_SECONDS (90s) exactly: a boundary is forced here even if no natural topic shift was detected, placed at the weakest similarity gap within the legal window rather than at an arbitrary word count.
+- segment length just under 20s: folded into an adjacent segment rather than discarded, so content is never silently lost at a sub-minimum boundary.
+- budget fill = SELECT_MIN_BUDGET_FILL (0.90) exactly: the optimizer is permitted to stop selecting further segments only once this fraction of the requested duration has been reached, confirmed by a regression test pinned specifically because an earlier version of the optimizer could return a reel at only a small fraction of its budget when the source's remaining material stopped adding marginal value.
+
+5.2.3 Decision Table Testing
+
+The following decision table covers the conditions governing whether a Create Merge Job request proceeds: video ids valid and within 1-10 (Y/N), every source's duration resolvable (Y/N), requested duration feasible against the combined source length (Y/N).
+
+Rule 1: ids=Y, durations=Y, feasible=Y -> Action: job created, HTTP 200/202 with a job_id.
+Rule 2: ids=N, durations=*, feasible=* -> Action: HTTP 400, no job created (checked first, before any duration probing).
+Rule 3: ids=Y, durations=N, feasible=* -> Action: HTTP 422 SOURCE_DURATION_UNAVAILABLE naming the unresolved ids, no job created.
+Rule 4: ids=Y, durations=Y, feasible=N -> Action: HTTP 422 duration-infeasibility error, no job created.
+
+5.2.4 State Transition Testing (Job Lifecycle)
+
+States: pending, transcribing, analyzing, fusing, summarizing, enriching, generating_video, video_ready, completed, partial_success, error, cancelled.
+- pending -> transcribing: triggered when the background task picks up a newly created job; tested by asserting the status field changes within the pipeline's first observable step.
+- generating_video -> video_ready: triggered specifically when the video component finishes while the text component has not yet; tested by asserting this intermediate status is reachable and is treated as non-terminal by the API (polling continues rather than stopping).
+- * -> partial_success: triggered when exactly one of the two output components ends in a failed state while the other reaches ready; tested by forcing one worker's task to fail and asserting the aggregate job status reflects the mixed outcome rather than reporting a flat failure.
+- claimed -> queued (lease-expiry recovery): triggered on worker startup when an output task's lease_expires_at is in the past; tested by asserting recovery only re-queues a task whose lease has actually expired, never one still within its lease window — this is what stops two worker instances from double-processing the same render.
+
+5.2.5 Use Case Testing
+
+Each of the twelve use cases in Chapter 3 was exercised end-to-end against a running instance: registering and logging in; creating a single-source and a multi-source merge job through to a completed result; retrying a deliberately-failed text component without disturbing an already-ready video component; searching previously indexed transcripts and confirming returned timestamps resolve to the correct point in the source video; asking a grounded question through the chat endpoint both with and without Ollama running, confirming the fallback path still returns a source-attributed answer; recording a rights attestation and confirming it is reflected in a subsequently generated job's frozen rights snapshot; and exercising the admin user-management routes with both an admin and a non-admin token to confirm the role check is enforced server-side.
+
+5.3 White Box Test Cases
+
+5.3.1 Automated Test Suite
+
+The backend's automated test suite currently totals 548 passing test functions across 57 test files (50 files under tests/, 7 under backend/tests/), run with pytest. The suite's distribution reflects where the project's own risk assessment placed its effort: the largest files are test_multi_video_production.py (67 tests, covering end-to-end multi-source job production), test_concept_extractor.py (35 tests), test_summarization_service.py (33 tests), test_fusion_sentence_extraction.py (26 tests), and test_summarization_policy.py and test_coverage_selector.py (24 tests each) — together accounting for the large majority of the suite and concentrated almost entirely on the semantic selection pipeline described in Chapter 4, which is both the system's central technical contribution and its highest-complexity surface. Further files cover the durable output-task queue and worker recovery logic (test_output_task_queue.py, test_output_workers.py, test_video_first_pipeline.py), the rights and acquisition-observability services (backend/tests/test_rights_service.py, test_rights_hardening.py, test_rights_api.py, test_acquisition_observability.py), language-capability gating and non-English transcript handling (test_language_capability_gate.py, test_language_state_machine.py, test_whisper_multilingual_recovery.py, test_translation_service.py), and API-level security properties (tests/test_phase1_security.py, test_phase1_source_isolation.py, test_player_auth_contract.py). A separate frontend test suite (Jest/React Testing Library) covers the duration-selector and multi-select UI components and the rights-badge/rights-panel components.
+
+Honestly stated, the semantic selection pipeline and the rights/durability subsystems were prioritised for automated coverage precisely because they are the highest-complexity, highest-consequence surfaces; broader end-to-end UI coverage and a small number of older, pre-FastAPI-migration script files at the repository root (one-off benchmarking and audit scripts, not part of the maintained pytest suite) were not brought under the same discipline and are called out here rather than silently omitted.
+
+5.3.2 Evaluation Methodology — Selection Quality
+
+Unlike a conventional text-summarisation project, the primary evaluation question for this system is not "does the output text read well" but "did the system select the right material from the source." This cannot be answered with standard text-generation metrics such as ROUGE or BLEU, which compare generated text against a reference text and say nothing about which parts of a much longer source a system chose to keep; the project therefore built a dedicated evaluation harness (evaluation/) against a hand-authored gold standard rather than reusing a metric designed for a different problem.
+
+The gold standard (evaluation/gold.json) consists of 103 hand-identified important concepts across seven real YouTube videos spanning five genres (two programming tutorials, a long-form health podcast, an interview, two technical lectures, and one general-audience educational video), each concept tagged as "core" (the video is materially incomplete without it) or "secondary" (worth having), with the literal time windows in the source where it is substantively discussed. This gold set was authored by reading the transcripts directly and is deliberately independent of the system's own TF-IDF/SBERT machinery, specifically so the evaluation cannot simply be re-discovering what the system itself would have picked.
+
+Against this gold standard, the harness computes: concept recall (the tier-weighted share of gold concepts a selection touches, requiring at least 8 seconds of overlap with a gold window to count as a hit); concept precision (the share of selected running time that falls inside some gold window); redundancy (the share of gold-hit time spent re-covering a concept already covered, measured relative to the video's own baseline pairwise-similarity rather than a fixed, encoder-dependent threshold); temporal coverage (how many tenths of the source timeline the selection touches at all); a complete-thought ratio (the share of selected segments that both start and end on a real sentence boundary); and duration accuracy (how closely the rendered output's length matches what was requested, given what was actually reachable within the source).
+
+A subsequent, more rigorous integrity-audited evaluation (documented in evaluation/m2_report.md) explicitly partitioned videos into development data (used while tuning the selection weights) and multiple fully-held-out partitions the weights were never exposed to — including short-form, long-form (49-79 minute university lecture) and query-focused holdouts — and ran a component-ablation study on each, comparing the full pipeline against the same pipeline with the concept signal, the coverage term, the redundancy penalty, the coherence term, or the narrative-ordering step individually disabled. The results were reported honestly rather than selectively: on the held-out long-form partition, removing the coverage term measurably worsened both timeline coverage (7.3 vs 8.3 of 10 deciles touched) and duration accuracy (0.970 vs 0.997), supporting that component's inclusion; but the same audit also reported, without softening the finding, that the redundancy penalty produced no measurable reduction in mean pairwise segment similarity on the held-out data (0.624 with it enabled versus 0.615 with it disabled — in the wrong direction to claim benefit), and that the narrative-ordering component's benefit to perceived summary quality remains "pending human annotation" rather than claimed as proven. Reporting a component that did not demonstrate its intended effect, rather than quietly dropping it from the write-up, was a deliberate choice to keep the evaluation's conclusions trustworthy rather than merely favourable.
+
+5.4 Performance Testing
+
+Performance testing was informal rather than tool-driven: end-to-end job latency was measured directly (Section 5.3.2's fair-latency comparison records real wall-clock timings on held-out videos, e.g. roughly 89 seconds for BGE embedding preparation and roughly 8 seconds for concept extraction on a representative source, against a roughly 63-second shared-preparation cost every method pays regardless of selection strategy), confirming that the semantic selection stages add single-digit-seconds to low-tens-of-seconds of overhead on top of the shared transcript-preparation cost, not a multiplicative blow-up. ffmpeg rendering time scales with the number and length of selected segments rather than with the source video's full length, which was confirmed by comparing render times for the same target duration against sources of substantially different lengths. No dedicated load-testing tool (e.g. k6, Locust) was used within the project timeline; concurrent-job behaviour was exercised only through the automated worker-recovery tests described in 5.3.1, not through a sustained multi-job load test.
+
+5.5 Stress Testing
+
+Stress testing focused on the durable task queue's crash-safety rather than on raw request volume: the automated suite deliberately simulates a worker claiming a task and then disappearing mid-lease, and confirms the recovery sweep re-queues the task exactly once rather than leaving it stuck or double-processing it once a second worker instance also attempts recovery. Stress testing of concurrent ffmpeg renders under heavy simultaneous load was not performed; the project's development and evaluation environment ran one job at a time.
+
+5.6 System Testing
+
+System testing consisted of running the full stack (the FastAPI app, the MongoDB container, and — where SEPARATE_OUTPUT_WORKERS_ENABLED was set — the two independent worker containers) via docker-compose.yml and exercising a complete user journey through the browser: signing up, creating a multi-source merge job, observing live progress over the SSE stream, reaching the video_ready checkpoint before the written summary had finished, retrieving the completed result, and downloading the rendered video and the exported summary, to confirm the containerised, multi-worker topology behaves identically to the inline single-process development mode from the user's perspective.
+
+5.7 Regression Testing
+
+5.7.1 Selecting Regression Tests
+
+Every bug documented in Chapter 9 with a testable, deterministic root cause was converted into a permanent regression test rather than fixed and left unverified. Confirmed examples: the beginning-heavy selection bias (now pinned by assertions on decile coverage in the coverage-selector tests), the silent BART-bypass defect where a narrative under the word-count threshold skipped compression entirely regardless of its actual coherence (now covered by test_summarization_policy.py's branch-selection tests), and the budget-fill early-stop guard (Section 5.2.2). The principle applied: if a bug could recur silently — its symptom not obviously visible without deliberately checking a metric — it earns an automated regression test.
+
+5.7.2 Regression Testing Steps
+
+1. After any change to a pipeline service module, run the full suite (PYTHONPATH=. pytest tests/ backend/tests/ -q) and confirm all 548 tests still pass before considering the change complete.
+2. For changes touching the coverage selector or concept extractor specifically, confirm test_coverage_selector.py and test_concept_extractor.py still pass, since these pin the exact scoring behaviour the evaluation methodology in 5.3.2 depends on.
+3. For changes touching the durable task queue or worker recovery, confirm test_output_task_queue.py and test_output_workers.py still pass, since these pin the lease/claim contract both workers depend on.
+4. Re-run the evaluation harness (evaluation/evaluate.py, evaluation/analyse.py) after any change to the selection scoring weights, and compare against the previously recorded results.json rather than assuming an improvement, since a weight change that looks reasonable in isolation can regress the held-out metrics.
