@@ -57,3 +57,5 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .playwright-mcp
+# FAISS vector store (generated at runtime, too large for GitHub)
+faiss_index/
