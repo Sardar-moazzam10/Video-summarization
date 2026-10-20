@@ -91,6 +91,62 @@ class SelectionWeights:
             min_budget_fill=getattr(settings, "SELECT_MIN_BUDGET_FILL", MIN_BUDGET_FILL),
         )
 
+    def for_keyword_mode(self) -> "SelectionWeights":
+        """Return a query-focused profile without changing automatic mode."""
+        return SelectionWeights(
+            concept=self.concept,
+            semantic=self.semantic + 0.12,
+            coverage=max(0.0, self.coverage - 0.12),
+            coherence=self.coherence,
+            redundancy=self.redundancy,
+            duration_penalty=self.duration_penalty,
+            min_budget_fill=self.min_budget_fill,
+        )
+
+
+@dataclass(frozen=True)
+class SelectionPolicy:
+    """Intent-aware behaviour for the shared selector engine."""
+
+    name: str
+    weights: SelectionWeights
+    keyword_objective: bool = False
+    source_diversity_weight: float = 0.0
+    source_diversity_saturation: float = 0.18
+    min_quality_for_diversity: float = 0.52
+    min_meaningful_gain: float = 0.0
+
+
+def resolve_selection_policy(
+    summary_scope: str,
+    source_scope: str,
+    base_weights: Optional[SelectionWeights] = None,
+) -> SelectionPolicy:
+    """Resolve one of four policies without creating duplicate pipelines."""
+    base = base_weights or SelectionWeights.from_settings()
+    keyword = summary_scope == "keyword"
+    multi = source_scope == "multi"
+    weights = base.for_keyword_mode() if keyword else base
+    if keyword and multi:
+        return SelectionPolicy(
+            name="keyword_multi", weights=weights, keyword_objective=True,
+            source_diversity_weight=0.06,
+            source_diversity_saturation=0.16,
+            min_quality_for_diversity=0.58,
+        )
+    if keyword:
+        return SelectionPolicy(
+            name="keyword_single", weights=weights, keyword_objective=True
+        )
+    if multi:
+        return SelectionPolicy(
+            name="overall_multi", weights=weights,
+            source_diversity_weight=0.07,
+            source_diversity_saturation=0.18,
+            min_quality_for_diversity=0.55,
+        )
+    return SelectionPolicy(name="overall_single", weights=weights)
+
 
 @dataclass
 class SelectionResult:
@@ -122,6 +178,8 @@ class SelectionResult:
     knowledge_units_covered: List[str] = field(default_factory=list)
     useful_fill_ratio: float = 0.0
     early_stop_reason: Optional[str] = None
+    policy_name: str = "overall_single"
+    early_stop_diagnostics: Dict = field(default_factory=dict)
 
     @property
     def selected_duration(self) -> float:
@@ -630,13 +688,47 @@ def _same_underlying_knowledge(seg_a, seg_b) -> bool:
     """
     if getattr(seg_a, "video_id", "") == getattr(seg_b, "video_id", ""):
         return False
-    overlap = set(getattr(seg_a, "knowledge_unit_scores", {}) or {}) & set(getattr(seg_b, "knowledge_unit_scores", {}) or {})
+    units_a = set(getattr(seg_a, "knowledge_unit_scores", {}) or {})
+    units_b = set(getattr(seg_b, "knowledge_unit_scores", {}) or {})
+    overlap = units_a & units_b
+    concepts_a = set(getattr(seg_a, "canonical_concepts", ()) or ()) | set(
+        getattr(seg_a, "concept_scores", {}) or {}
+    )
+    concepts_b = set(getattr(seg_b, "canonical_concepts", ()) or ()) | set(
+        getattr(seg_b, "concept_scores", {}) or {}
+    )
     semantic = _semantic_similarity(seg_a, seg_b)
-    if semantic >= 0.85:
+    lexical = _lexical_overlap(
+        getattr(seg_a, "text", ""), getattr(seg_b, "text", "")
+    )
+    # High semantic relatedness alone is not equivalence.  Require strong
+    # surface repetition, or shared grounded evidence with no material new
+    # unit/concept in the candidate.
+    if lexical >= 0.72 and semantic >= 0.75:
         return True
-    if overlap and semantic >= 0.45:
+    adds_units = bool(units_b - units_a)
+    adds_concepts = bool(concepts_b - concepts_a)
+    if overlap and semantic >= 0.88 and lexical >= 0.35 and not adds_units and not adds_concepts:
+        return True
+    if semantic >= 0.97 and lexical >= 0.45 and not adds_units and not adds_concepts:
         return True
     return False
+
+
+def _cross_source_relation(candidate, selected_segment) -> str:
+    """Classify cross-source evidence as equivalent, complementary, or distinct."""
+    if _same_underlying_knowledge(selected_segment, candidate):
+        return "equivalent"
+    semantic = _semantic_similarity(selected_segment, candidate)
+    shared_units = set(getattr(selected_segment, "knowledge_unit_scores", {}) or {}) & set(
+        getattr(candidate, "knowledge_unit_scores", {}) or {}
+    )
+    shared_concepts = set(getattr(selected_segment, "concept_scores", {}) or {}) & set(
+        getattr(candidate, "concept_scores", {}) or {}
+    )
+    if semantic >= 0.45 or shared_units or shared_concepts:
+        return "complementary"
+    return "distinct"
 
 
 def _relevance_scores(segment_vectors: Optional[np.ndarray], reference: Optional[np.ndarray]) -> np.ndarray:
@@ -679,6 +771,7 @@ def select_segments(
     query_embedding: Optional[np.ndarray] = None,
     stage_timings: Optional[Dict[str, float]] = None,
     knowledge_units: Sequence = (),
+    policy: Optional[SelectionPolicy] = None,
 ) -> SelectionResult:
     """
     Choose the highest-value set of complete segments that fits the budget.
@@ -698,9 +791,13 @@ def select_segments(
         trace of why each was chosen.
     """
     segments = list(segments)
-    weights = weights or SelectionWeights.from_settings()
+    if policy is None:
+        resolved_weights = weights or SelectionWeights.from_settings()
+        policy = SelectionPolicy(name="legacy_explicit", weights=resolved_weights)
+    weights = policy.weights
 
     result = SelectionResult(budget=float(budget_seconds))
+    result.policy_name = policy.name
     timings = stage_timings if stage_timings is not None else {}
     selection_started = perf_counter()
     multi_source = len({getattr(s, "video_id", "") for s in segments}) > 1
@@ -982,10 +1079,49 @@ def select_segments(
     remaining = set(range(len(segments)))
     max_selected_similarity = np.zeros(len(segments), dtype=float)
     duplicate_rejections = set()
+    quality_rejections = set()
+    candidates_considered = 0
+    logged_relations = set()
     # best_affinity[j] = how well the BEST already-selected segment covers concept j.
     best_affinity = np.zeros(len(concepts), dtype=float)
     bin_seconds = np.zeros(n_bins * (len(total_duration) if isinstance(total_duration, dict) else 1), dtype=float)
     total_selected = 0.0
+    selected_seconds_by_source: Dict[str, float] = {
+        str(source): 0.0 for source in (
+            total_duration.keys() if isinstance(total_duration, dict) else []
+        )
+    }
+
+    def source_diversity_bonus(indices, base_gain: float, quality: float) -> float:
+        """Small saturating benefit that is unavailable to weak candidates."""
+        if not multi_source or policy.source_diversity_weight <= 0.0:
+            return 0.0
+        if quality < policy.min_quality_for_diversity or base_gain <= 0.0:
+            return 0.0
+        source_seconds: Dict[str, float] = {}
+        for member in indices:
+            source = str(getattr(segments[member], "video_id", ""))
+            source_seconds[source] = source_seconds.get(source, 0.0) + float(durations[member])
+        if not source_seconds:
+            return 0.0
+        saturation_seconds = max(
+            float(budget_seconds) * policy.source_diversity_saturation, typical
+        )
+        committed_seconds = sum(source_seconds.values())
+        saturation = 0.0
+        for source, seconds in source_seconds.items():
+            represented = selected_seconds_by_source.get(source, 0.0)
+            saturation += (
+                seconds / max(committed_seconds, 1e-6)
+                * max(0.0, 1.0 - represented / saturation_seconds)
+            )
+        quality_gate = np.clip(
+            (quality - policy.min_quality_for_diversity)
+            / max(1.0 - policy.min_quality_for_diversity, 1e-6),
+            0.0,
+            1.0,
+        )
+        return float(policy.source_diversity_weight * saturation * quality_gate)
 
     def bin_gain(indices) -> float:
         """
@@ -1028,6 +1164,7 @@ def select_segments(
         # Same-source overlap is never acceptable in the final reel. This must be
         # rejected before a candidate is considered for a pick, not after the fact.
         for idx in list(remaining):
+            candidates_considered += 1
             seg = segments[idx]
             same_vid_selected = [segments[i] for i in selected if getattr(segments[i], "video_id", "") == getattr(seg, "video_id", "")]
             if any(_overlaps(seg, selected_seg) for selected_seg in same_vid_selected):
@@ -1148,26 +1285,41 @@ def select_segments(
             meaningful_unit = bool(group_unit_coverage) and best_group_unit_score >= 0.55
             candidate_filler = float(max(float(getattr(segments[i], "filler_penalty", 0.0)) for i in members))
             if candidate_filler >= 0.35 and not has_meaningful_concept and not meaningful_unit:
-                duplicate_rejections.update(members)
+                quality_rejections.update(members)
                 continue
 
             # Near-identical cross-source explanations must not be forced in by
             # the minimum-fill rule. Require every member to be redundant so a
             # complete unit containing new evidence can still compete.
             if multi_source and selected and vectors is not None:
-                if any(
-                    other.video_id != segments[best_idx].video_id and _same_underlying_knowledge(other, segments[best_idx])
-                    for other in [segments[i] for i in selected]
-                ):
+                relations = []
+                for member in members:
+                    candidate = segments[member]
+                    for selected_idx in selected:
+                        other = segments[selected_idx]
+                        if other.video_id == candidate.video_id:
+                            continue
+                        relations.append((member, _cross_source_relation(candidate, other)))
+                if any(relation == "equivalent" for _, relation in relations):
                     duplicate_rejections.update(members)
+                    for member, relation in relations:
+                        if relation == "equivalent" and member not in logged_relations:
+                            print(
+                                f"[Selector:{policy.name}] cross-source candidate "
+                                f"{segments[member].video_id}@{segments[member].start_time:.1f}s "
+                                "rejected as equivalent"
+                            )
+                            logged_relations.add(member)
                     continue
                 if np.all(max_selected_similarity[members] >= 0.96):
                     duplicate_rejections.update(members)
                     continue
+            else:
+                relations = []
 
             density = 0.0
             if dur > 0:
-                gain = (
+                base_gain = (
                     weights.concept * (unit_scaled if unit_importance else concept_scaled)
                     + weights.semantic * group_relevance
                     + weights.coverage * temporal_scaled
@@ -1175,6 +1327,11 @@ def select_segments(
                     - weights.redundancy * redundancy
                     - weights.duration_penalty * (dur / longest)
                 )
+                group_quality = float(np.dot(weight_share, explanation_quality[members]))
+                diversity_bonus = source_diversity_bonus(
+                    members, base_gain=base_gain, quality=group_quality
+                )
+                gain = base_gain + diversity_bonus
                 density = gain / dur
 
             if density > best_density:
@@ -1197,6 +1354,16 @@ def select_segments(
                     "coherence_weighted": round(weights.coherence * group_coherence, 4),
                     "redundancy_penalty": round(weights.redundancy * redundancy, 4),
                     "duration_penalty":   round(weights.duration_penalty * (dur / longest), 4),
+                    "base_weighted_gain": round(base_gain, 4),
+                    "source_diversity_bonus": round(diversity_bonus, 4),
+                    "final_gain": round(gain, 4),
+                    "policy_name": policy.name,
+                    "cross_source_relation": (
+                        "complementary"
+                        if any(relation == "complementary" for _, relation in relations)
+                        else "distinct"
+                        if relations else None
+                    ),
                     # Summary
                     "gain": round(gain, 4),
                     "gain_per_second": round(density, 6),
@@ -1205,11 +1372,27 @@ def select_segments(
                 }
 
         if best_idx < 0:
-            if selected and remaining:
-                result.early_stop_reason = "remaining_marginal_knowledge_gain_below_threshold"
+            if selected:
+                if duplicate_rejections or quality_rejections:
+                    result.early_stop_reason = "no_eligible_candidates_after_filtering"
+                else:
+                    result.early_stop_reason = "no_candidate_fits_remaining_budget"
+                result.early_stop_diagnostics = {
+                    "policy_name": policy.name,
+                    "stop_reason": result.early_stop_reason,
+                    "candidates_considered": candidates_considered,
+                    "equivalent_duplicates_rejected": len(duplicate_rejections),
+                    "quality_or_redundancy_rejected": len(quality_rejections),
+                    "best_remaining_candidate_score": None,
+                    "remaining_topic_opportunity": None,
+                    "remaining_temporal_opportunity": None,
+                    "remaining_source_diversity_opportunity": None,
+                }
                 print(
-                    f"[Selector] Useful early stop at {total_selected:.0f}s/"
-                    f"{budget_seconds:.0f}s — remaining clips add no material knowledge unit"
+                    f"[Selector:{policy.name}] stop={result.early_stop_reason} "
+                    f"considered={candidates_considered} "
+                    f"equivalent={len(duplicate_rejections)} "
+                    f"quality={len(quality_rejections)} best_eligible=None"
                 )
             break
 
@@ -1219,11 +1402,19 @@ def select_segments(
             remaining.discard(best_idx)
             continue
 
-        if unit_importance and selected:
+        if policy.keyword_objective and unit_importance and selected:
             if best_parts.get("knowledge_unit", 0.0) <= MIN_MARGINAL_UNIT_GAIN:
                 result.early_stop_reason = "remaining_marginal_knowledge_gain_below_threshold"
+                result.early_stop_diagnostics = {
+                    "policy_name": policy.name,
+                    "stop_reason": result.early_stop_reason,
+                    "best_remaining_candidate_score": best_parts.get("final_gain"),
+                    "remaining_topic_opportunity": best_parts.get("knowledge_unit", 0.0),
+                    "remaining_temporal_opportunity": best_parts.get("coverage", 0.0),
+                    "remaining_source_diversity_opportunity": best_parts.get("source_diversity_bonus", 0.0),
+                }
                 print(
-                    f"[Selector] Useful early stop at {total_selected:.0f}s/"
+                    f"[Selector:{policy.name}] Useful early stop at {total_selected:.0f}s/"
                     f"{budget_seconds:.0f}s — remaining clips add no material knowledge unit"
                 )
                 break
@@ -1243,7 +1434,18 @@ def select_segments(
             fill = total_selected / budget_seconds
             if fill >= weights.min_budget_fill:
                 result.early_stop_reason = "remaining_total_gain_non_positive"
-                print(f"[Selector] Stopping at {total_selected:.0f}s/{budget_seconds:.0f}s "
+                result.early_stop_diagnostics = {
+                    "policy_name": policy.name,
+                    "stop_reason": result.early_stop_reason,
+                    "best_remaining_candidate_score": best_parts.get("final_gain"),
+                    "remaining_topic_opportunity": max(
+                        best_parts.get("knowledge_unit", 0.0),
+                        best_parts.get("concept", 0.0),
+                    ),
+                    "remaining_temporal_opportunity": best_parts.get("coverage", 0.0),
+                    "remaining_source_diversity_opportunity": best_parts.get("source_diversity_bonus", 0.0),
+                }
+                print(f"[Selector:{policy.name}] Stopping at {total_selected:.0f}s/{budget_seconds:.0f}s "
                       f"({fill:.0%}) — no remaining segment adds positive value")
                 break
 
@@ -1263,6 +1465,10 @@ def select_segments(
             remaining.discard(i)
             total_selected += float(durations[i])
             _accumulate_bins(bin_seconds, segments[i], total_duration, n_bins)
+            source = str(getattr(segments[i], "video_id", ""))
+            selected_seconds_by_source[source] = (
+                selected_seconds_by_source.get(source, 0.0) + float(durations[i])
+            )
         if len(concepts):
             best_affinity = np.maximum(best_affinity, affinity[committed].max(axis=0))
             # Record what was represented, and as what. The unit actually taken
@@ -1296,6 +1502,13 @@ def select_segments(
             **best_parts,
         })
 
+        relation = best_parts.get("cross_source_relation")
+        if relation:
+            print(
+                f"[Selector:{policy.name}] cross-source candidate "
+                f"{seg.video_id}@{seg.start_time:.1f}s admitted as {relation}"
+            )
+
         # Per-pick log — one compact line so selection decisions are visible in
         # server logs without scrolling through the full trace dict.
         _seg = segments[best_idx]
@@ -1303,7 +1516,9 @@ def select_segments(
             f"  [Pick #{len(selected):02d}] "
             f"{getattr(_seg, 'video_id', '?')} "
             f"{getattr(_seg, 'start_time', 0):.1f}s–{getattr(_seg, 'end_time', 0):.1f}s "
-            f"| gain={best_parts['gain']:+.4f} ({best_parts['gain_per_second']:+.6f}/s) "
+            f"| policy={policy.name} base={best_parts['base_weighted_gain']:+.4f} "
+            f"div={best_parts['source_diversity_bonus']:+.4f} "
+            f"final={best_parts['final_gain']:+.4f} ({best_parts['gain_per_second']:+.6f}/s) "
             f"| cncpt={best_parts['concept']:.3f}→{best_parts['concept_weighted']:.3f} "
             f"sem={best_parts['semantic']:.3f}→{best_parts['semantic_weighted']:.3f} "
             f"cov={best_parts['coverage']:.3f}→{best_parts['coverage_weighted']:.3f} "

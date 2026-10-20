@@ -93,7 +93,8 @@ def test_useful_budget_stops_before_irrelevant_filler(embedder):
     )
     assert result.total_duration == 120
     assert result.useful_fill_ratio == 0.4
-    assert result.early_stop_reason == "remaining_marginal_knowledge_gain_below_threshold"
+    assert result.early_stop_reason == "no_eligible_candidates_after_filtering"
+    assert result.early_stop_diagnostics["quality_or_redundancy_rejected"] == 4
     assert all(not segment.video_id.startswith("f") for segment in result.segments)
 
 
@@ -128,6 +129,39 @@ def test_keyword_query_and_automatic_mode_share_the_plan(embedder):
     )
     assert result.segments[0].video_id == "a"
     assert result.segments[0].query_relevance is not None
+
+
+def test_query_decomposes_into_multiple_evidence_backed_learning_units(embedder):
+    segments = _segments(embedder, [
+        ("a", 0, 40, "A conductor allows electric charge and electrons to move freely.", 1.0, 1.0),
+        ("b", 0, 40, "A non-conductor resists electron movement and is an insulator.", 1.0, 1.0),
+        ("c", 0, 40, "For example, copper conducts while rubber acts as an insulator.", 1.0, 1.0),
+    ])
+    concept = Concept("Electric materials", importance=0.8)
+    concept.embedding = embedder.encode(["Electric materials"])[0]
+    plan = build_knowledge_plan(
+        segments, [concept], query="conductor and non conductor",
+        query_embedding=embedder.encode(["conductor and non conductor"])[0],
+        budget_seconds=600,
+    )
+    ids = {unit.unit_id for unit in plan.units}
+    assert "query::conductor" in ids
+    assert "query::non_conductor" in ids
+    assert any(unit.role == "mechanism_cause" for unit in plan.units)
+    assert any(unit.role == "example" for unit in plan.units)
+
+
+def test_query_facets_are_not_invented_without_transcript_evidence(embedder):
+    segments = _segments(embedder, [
+        ("a", 0, 40, "A conductor allows electric charge to move freely.", 1.0, 1.0),
+    ])
+    plan = build_knowledge_plan(
+        segments, [], query="conductor and semiconductor",
+        query_embedding=embedder.encode(["conductor and semiconductor"])[0],
+    )
+    ids = {unit.unit_id for unit in plan.units}
+    assert "query::conductor" in ids
+    assert "query::semiconductor" not in ids
 
 
 def test_duration_profiles_unlock_depth_without_removing_essentials(embedder):

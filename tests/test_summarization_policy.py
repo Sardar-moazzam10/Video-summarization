@@ -43,6 +43,16 @@ def fused_narrative(paragraphs: int = 8) -> str:
 
 
 class TestAssessCoherence:
+    def test_narrative_metric_accepts_valid_short_replies(self):
+        text = "Why? No. To work. The manager asks everyone to stay."
+        report = assess_coherence(text, content_type="narrative")
+        assert report.fragment_rate == 0
+
+    def test_narrative_metric_still_detects_incomplete_honorific(self):
+        text = "I would appreciate the job, Mrs. The manager continues speaking."
+        report = assess_coherence(text, content_type="narrative")
+        assert report.fragment_rate > 0
+
     def test_flags_fusion_connectives(self, embedder):
         report = assess_coherence(fused_narrative(), embedder=embedder)
         assert not report.is_coherent

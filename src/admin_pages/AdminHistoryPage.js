@@ -14,18 +14,21 @@ const sidebarLinks = [
 
 const filterTabs = [
   { key: 'all', label: 'All', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg> },
+  { key: 'merge', label: 'Summaries', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> },
   { key: 'search', label: 'Searches', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> },
   { key: 'watch', label: 'Watched', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> },
   { key: 'transcript-view', label: 'Transcripts', icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
 ];
 
 const typeColors = {
+  merge: '#f59e0b',
   search: '#0EA5E9',
   watch: '#a78bfa',
   'transcript-view': '#34d399',
 };
 
 const typeLabels = {
+  merge: 'Summary',
   search: 'Search',
   watch: 'Watch',
   'transcript-view': 'Transcript',
@@ -91,7 +94,8 @@ const AdminHistoryPage = () => {
   };
 
   const handleClick = (item) => {
-    if (item.type === 'search') navigate(`/search/${encodeURIComponent(item.query)}`);
+    if (item.type === 'merge') navigate(`/merged-player/${item.jobId}`);
+    else if (item.type === 'search') navigate(`/search/${encodeURIComponent(item.query)}`, { state: { fromHistory: true } });
     else if (item.type === 'watch') navigate(`/video-player/${encodeURIComponent(item.videoId)}`);
     else if (item.type === 'transcript-view') navigate(`/transcript-viewer/${encodeURIComponent(item.videoId)}`);
   };
@@ -238,7 +242,8 @@ const AdminHistoryPage = () => {
                           transition: 'all 0.15s',
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.background = `rgba(${color === '#0EA5E9' ? '14,165,233' : color === '#a78bfa' ? '167,139,250' : '52,211,153'}, 0.06)`;
+                          const _rgbMap = {'#f59e0b':'245,158,11','#0EA5E9':'14,165,233','#a78bfa':'167,139,250','#34d399':'52,211,153'};
+                          e.currentTarget.style.background = `rgba(${_rgbMap[color]||'14,165,233'}, 0.06)`;
                           e.currentTarget.style.borderColor = `${color}33`;
                         }}
                         onMouseLeave={(e) => {
@@ -251,6 +256,7 @@ const AdminHistoryPage = () => {
                           background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center',
                           color: color,
                         }}>
+                          {item.type === 'merge' && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>}
                           {item.type === 'search' && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>}
                           {item.type === 'watch' && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>}
                           {item.type === 'transcript-view' && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>}

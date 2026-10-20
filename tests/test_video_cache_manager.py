@@ -227,6 +227,7 @@ class TestNoDuplicateDownloads:
             with open(meta_path, "w") as f:
                 json.dump({
                     "video_id": "cachedVid",
+                    "audio_selection_policy": "original-audio-v1",
                     "file_size": 1024,
                     "last_accessed": "2026-01-01T00:00:00",
                     "downloaded_at": "2026-01-01T00:00:00",

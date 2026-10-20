@@ -59,16 +59,6 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.2:3b"      # 2 GB RAM; swap to mistral:7b or ministral:8b for better quality
     OLLAMA_TIMEOUT_SECONDS: float = 100.0  # httpx hard limit — must be < the 120s asyncio wrapper in merge.py so background threads terminate before the asyncio cancel fires
 
-    # Ollama enrichment inside the MERGE pipeline only.
-    # Disabled by default: on CPU, llama3.2:3b consistently exceeds the timeout
-    # and returns nothing, so the job pays ~100s and then falls back to the local
-    # TF-IDF enrichment anyway (see _generate_local_enrichment in api/merge.py).
-    # Turning this off removes that dead time with no change to job output.
-    # This flag does NOT affect the Quality Panel's LLM judge (/merge/{id}/evaluate
-    # → evaluate_summary.ollama_judge), which calls Ollama directly and still works.
-    # Set ENABLE_OLLAMA_ENRICHMENT=true in .env to re-enable (e.g. on a GPU machine).
-    ENABLE_OLLAMA_ENRICHMENT: bool = False
-
     # =====================================================
     # AI/ML SETTINGS
     # =====================================================
@@ -76,12 +66,16 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"              # #1 MTEB 2024, 768-dim, replaces all-MiniLM
     CLIP_MODEL: str = "openai/clip-vit-base-patch16"            # ViT-B/16: 17% better than B/32, same API
 
+    # When enabled, the API/core worker stops at evidence-manifest publication
+    # and durable video/text workers consume that immutable handoff. Disabled
+    # by default for direct local runs that have not started worker processes.
+    SEPARATE_OUTPUT_WORKERS_ENABLED: bool = False
+
     # Whisper size used by the transcript service, including its translate task
     # for non-English videos. Measured on CPU: "base" runs at ~3.4x realtime,
     # so a 25-minute video takes ~7 minutes. "small" is more accurate and about
     # 3x slower; "tiny" is ~2x faster and noticeably worse.
     WHISPER_MODEL: str = "base"
-
     # =====================================================
     # EXTERNAL TOOLS
     # =====================================================
@@ -93,11 +87,14 @@ class Settings(BaseSettings):
     REACT_APP_YOUTUBE_API_KEY: str = ""
 
     # =====================================================
-    # CACHE SETTINGS
+    # CACHE & STORAGE HYGIENE SETTINGS
     # =====================================================
     VIDEO_CACHE_ENABLED: bool = True
     VIDEO_CACHE_MAX_SIZE_GB: float = 10.0
     VIDEO_CACHE_MAX_AGE_DAYS: int = 30
+    HIGHLIGHTS_MAX_SIZE_GB: float = 10.0
+    HIGHLIGHTS_MAX_AGE_DAYS: int = 14
+    TEMP_SCRATCH_MAX_AGE_MINUTES: int = 30
 
     # =====================================================
     # TRANSLATION (non-English caption fast path)
@@ -130,15 +127,12 @@ class Settings(BaseSettings):
     # SECONDS; longer transcripts skip it entirely rather than burning over a
     # minute before giving up anyway.
     NLLB_MAX_SEGMENTS_FOR_FALLBACK: int = 30
-    # Whisper's task="translate" reliably produces correct English from any
-    # source language, but re-transcribes the whole audio track at ~3.4x
-    # realtime on CPU (see WHISPER_MODEL above) — ~15 minutes for a
-    # 51-minute video, a multi-minute stall no retry/timeout policy can
-    # shrink. Only auto-attempt it as a translation fallback for videos up to
-    # this length; longer videos proceed with the best-effort (possibly
-    # still non-English) transcript and a clear job warning instead of
-    # silently running Whisper for a quarter of an hour.
-    WHISPER_TRANSLATE_MAX_VIDEO_SECONDS: float = 480.0  # 8 minutes of source audio
+    # Long multilingual sources are translated by Whisper in bounded on-disk chunks.
+    TRANSCRIPT_SOURCE_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0)
+    WHISPER_CPU_THREADS: int = Field(default=4, ge=1, le=32)
+    WHISPER_CHUNK_SECONDS: float = 60.0
+    WHISPER_CHUNK_OVERLAP_SECONDS: float = 1.0
+    WHISPER_AUDIO_DOWNLOAD_TIMEOUT_SECONDS: float = 180.0
 
     # =====================================================
     # DURATION PROFILES
@@ -159,7 +153,7 @@ class Settings(BaseSettings):
 
     # Use Ollama for concept extraction.
     #
-    # Off by default, for the same measured reason ENABLE_OLLAMA_ENRICHMENT is:
+    # Off by default for the same measured performance reason:
     # llama3.2:3b on CPU cannot finish this stage in a usable time.
     #
     # Benchmarked here, one chunk per row:

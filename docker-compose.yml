@@ -6,6 +6,31 @@ services:
     environment:
       - MONGODB_URI=mongodb://mongo:27017/
       - MONGODB_DATABASE=video-summarizer
+      - SEPARATE_OUTPUT_WORKERS_ENABLED=true
+    depends_on:
+      - mongo
+    volumes:
+      - audio_cache:/app/audio_cache
+      - faiss_index:/app/faiss_index
+
+  text-worker:
+    build: .
+    command: ["python", "-m", "backend.workers.text_worker"]
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/
+      - MONGODB_DATABASE=video-summarizer
+    depends_on:
+      - mongo
+    volumes:
+      - audio_cache:/app/audio_cache
+      - faiss_index:/app/faiss_index
+
+  video-worker:
+    build: .
+    command: ["python", "-m", "backend.workers.video_worker"]
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/
+      - MONGODB_DATABASE=video-summarizer
     depends_on:
       - mongo
     volumes:

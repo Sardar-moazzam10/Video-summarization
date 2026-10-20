@@ -35,18 +35,29 @@ export function nextVisitedStages(visitedStages, status) {
       }
     }
   } else {
-    const idx = PIPELINE_STAGES.indexOf(status);
-    if (idx !== -1) {
-      for (let i = 0; i <= idx; i++) {
-        const stage = PIPELINE_STAGES[i];
-        if (!next.has(stage)) {
-          next.add(stage);
-          changed = true;
-        }
+    const SHARED_STAGES = ['transcribing', 'analyzing', 'fusing'];
+    const VIDEO_STAGES = ['generating_video', 'video_ready'];
+    const TEXT_STAGES = ['summarizing', 'enriching', 'generating_voice'];
+
+    let stagesToMark = [];
+    if (TEXT_STAGES.includes(status)) {
+      const textIdx = TEXT_STAGES.indexOf(status);
+      stagesToMark = [...SHARED_STAGES, ...TEXT_STAGES.slice(0, textIdx + 1)];
+    } else if (VIDEO_STAGES.includes(status)) {
+      const vidIdx = VIDEO_STAGES.indexOf(status);
+      stagesToMark = [...SHARED_STAGES, ...VIDEO_STAGES.slice(0, vidIdx + 1)];
+    } else if (SHARED_STAGES.includes(status)) {
+      const sharedIdx = SHARED_STAGES.indexOf(status);
+      stagesToMark = SHARED_STAGES.slice(0, sharedIdx + 1);
+    } else {
+      stagesToMark = [status];
+    }
+
+    for (const stage of stagesToMark) {
+      if (!next.has(stage)) {
+        next.add(stage);
+        changed = true;
       }
-    } else if (!next.has(status)) {
-      next.add(status);
-      changed = true;
     }
   }
 

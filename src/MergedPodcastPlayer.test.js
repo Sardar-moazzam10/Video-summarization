@@ -142,6 +142,14 @@ describe('MergedPodcastPlayer — completed state', () => {
     },
     video_url: `/api/v1/merge/${JOB_ID}/video`,
     audio_url: null,
+    preview_allowed: true,
+    download_allowed: true,
+    copy_summary_allowed: true,
+    txt_export_allowed: true,
+    pdf_export_allowed: true,
+    public_export_allowed: true,
+    video_download_url: `/api/v1/merge/${JOB_ID}/video?access=download&token=test`,
+    audio_download_url: null,
     video_ids: ['abc123'],
     highlight_segments: [{ video_id: 'abc123', start_time: 0, end_time: 30 }],
     metadata: { topics_found: ['topic'], compression_ratio: 0.2, output_words: 120, video_count: 1 },
@@ -159,6 +167,18 @@ describe('MergedPodcastPlayer — completed state', () => {
     expect(screen.queryByText(/generating ai summary/i)).not.toBeInTheDocument();
     expect(screen.getByText('Copy Text')).toBeInTheDocument();
     expect(screen.getByTestId('quality-panel-stub')).toBeInTheDocument();
+  });
+
+  test('labels narrative highlights as Key Events without changing the API field', async () => {
+    mockEndpoints({
+      status: statusResponse,
+      result: { ...resultResponse, content_type: 'narrative' },
+    });
+    render(<MergedPodcastPlayer />);
+
+    expect(await screen.findByText('Key Events')).toBeInTheDocument();
+    expect(screen.queryByText('Key Takeaways')).not.toBeInTheDocument();
+    expect(screen.getByText('Point one')).toBeInTheDocument();
   });
 });
 
@@ -249,7 +269,34 @@ describe('MergedPodcastPlayer — mid-pipeline processing states', () => {
 });
 
 
-describe('MergedPodcastPlayer  polling lifecycle', () => {
+describe('MergedPodcastPlayer — unsupported-language historical result', () => {
+  test('shows truthful unavailable messaging and neutral metrics without playback claims', async () => {
+    mockEndpoints({
+      status: { status: 'partial_success', progress_percent: 100, stage_message: 'Summary unavailable' },
+      result: {
+        status: 'partial_success', summary_pending: false, summary_text: null,
+        summary_unavailable: true, summary_unavailable_reason: 'UNSUPPORTED_TRANSCRIPT_LANGUAGE',
+        detected_language: 'hi', video_url: null, audio_url: null, video_ids: ['hindi_vid'],
+        highlight_segments: [],
+        metadata: { topics_found: [], compression_ratio: null, output_words: null, video_count: 1 },
+        publication_gate_status: 'restricted_by_product_policy',
+      },
+    });
+    render(<MergedPodcastPlayer />);
+
+    expect(await screen.findByText('Summary unavailable — unsupported transcript language')).toBeInTheDocument();
+    expect(screen.queryByText('Your summary is ready')).not.toBeInTheDocument();
+    expect(screen.getByText(/Hindi transcript detected, but an English transcript could not be generated/i)).toBeInTheDocument();
+    expect(screen.getByText('Sources Processed')).toBeInTheDocument();
+    expect(screen.queryByText('Videos Merged')).not.toBeInTheDocument();
+    expect(screen.getByText('Quality Check Unavailable')).toBeInTheDocument();
+    expect(screen.queryByText(/still playable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Video Highlights')).not.toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('MergedPodcastPlayer — polling lifecycle', () => {
   test('keeps at most one status request in flight and stops after unmount', async () => {
     jest.useFakeTimers();
     let calls = 0;
@@ -318,5 +365,82 @@ describe('MergedPodcastPlayer  polling lifecycle', () => {
     expect(calls).toBe(callsAtUnmount);
 
     jest.useRealTimers();
+  });
+});
+
+describe('MergedPodcastPlayer — tiered rights capabilities', () => {
+  const completedStatus = {
+    status: 'completed', progress_percent: 100, stage_message: 'Your summary is ready!',
+  };
+
+  const baseResult = {
+    status: 'completed', summary_pending: false,
+    summary_text: 'A completed summary.',
+    rich_output: { tldr: 'Short summary.', key_takeaways: [], chapters: [] },
+    video_ids: ['source'],
+    highlight_segments: [{ video_id: 'source', start_time: 0, end_time: 30 }],
+    metadata: { topics_found: ['topic'], compression_ratio: 0.2, output_words: 20, video_count: 1 },
+  };
+
+  test('Standard License keeps study notes but hides source-media export actions', async () => {
+    mockEndpoints({
+      status: completedStatus,
+      result: {
+        ...baseResult,
+        publication_gate_status: 'restricted_by_product_policy',
+        preview_allowed: true,
+        download_allowed: false,
+        public_export_allowed: false,
+        copy_summary_allowed: true,
+        txt_export_allowed: true,
+        pdf_export_allowed: true,
+        video_url: `/api/v1/merge/${JOB_ID}/video?access=preview&token=preview-token`,
+        audio_url: `/api/v1/merge/${JOB_ID}/audio?access=preview&token=audio-preview-token`,
+        video_download_url: null,
+        audio_download_url: null,
+      },
+    });
+    render(<MergedPodcastPlayer />);
+
+    expect(await screen.findByText('Video Highlights')).toBeInTheDocument();
+    expect(screen.getByText('Private Preview Only.')).toBeInTheDocument();
+    expect(screen.getByText(/Do not publish or redistribute without permission/i)).toBeInTheDocument();
+    expect(document.querySelector('video source')).toHaveAttribute(
+      'src', expect.stringContaining('access=preview')
+    );
+    expect(screen.queryByText('Download Video')).not.toBeInTheDocument();
+    expect(screen.queryByText('Download Audio')).not.toBeInTheDocument();
+    expect(screen.getByText('Copy Text')).toBeInTheDocument();
+    expect(screen.getByText('Download TXT')).toBeInTheDocument();
+    expect(screen.getByText('Download PDF')).toBeInTheDocument();
+  });
+
+  test('CC BY keeps preview and download/export actions without preview-only warning', async () => {
+    mockEndpoints({
+      status: completedStatus,
+      result: {
+        ...baseResult,
+        copy_summary_allowed: true,
+        txt_export_allowed: true,
+        pdf_export_allowed: true,
+        publication_gate_status: 'eligible_by_recorded_rights',
+        preview_allowed: true,
+        download_allowed: true,
+        public_export_allowed: true,
+        video_url: `/api/v1/merge/${JOB_ID}/video?access=preview&token=preview-token`,
+        audio_url: `/api/v1/merge/${JOB_ID}/audio?access=preview&token=audio-preview-token`,
+        video_download_url: `/api/v1/merge/${JOB_ID}/video?access=download&token=download-token`,
+        audio_download_url: `/api/v1/merge/${JOB_ID}/audio?access=download&token=audio-download-token`,
+      },
+    });
+    render(<MergedPodcastPlayer />);
+
+    expect(await screen.findByText('Video Highlights')).toBeInTheDocument();
+    expect(screen.getByText('Download TXT')).toBeInTheDocument();
+    expect(screen.queryByText('Private Preview Only.')).not.toBeInTheDocument();
+    expect(screen.getByText('Download Video')).toBeInTheDocument();
+    expect(screen.getByText('Download Audio')).toBeInTheDocument();
+    expect(screen.getByText('Download PDF')).toBeInTheDocument();
+    expect(screen.getByText('Copy Text')).toBeInTheDocument();
   });
 });

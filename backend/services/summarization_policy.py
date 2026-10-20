@@ -170,7 +170,7 @@ def split_sentences(text: str) -> List[str]:
 # COHERENCE ASSESSMENT
 # =====================================================================
 
-def assess_coherence(text: str, embedder=None) -> CoherenceReport:
+def assess_coherence(text: str, embedder=None, content_type: str = "explanatory") -> CoherenceReport:
     """
     Three independent symptoms of raw fused text. Any one of them is enough to
     fail; they detect different failures and a text can have only one.
@@ -197,7 +197,21 @@ def assess_coherence(text: str, embedder=None) -> CoherenceReport:
     report.source_artifacts = len(_SOURCE_ARTIFACT.findall(text or ""))
 
     # --- 2. fragment rate ---
-    fragments = sum(1 for s in sentences if len(s.split()) <= FRAGMENT_WORD_LIMIT)
+    if content_type == "narrative":
+        fragments = sum(
+            1 for s in sentences
+            if len(s.split()) <= max(FRAGMENT_WORD_LIMIT, 12) and (
+                s[-1:] not in ".!?"
+                or bool(re.search(
+                    r"\b(?:and|or|but|because|that|which|who|to|of|for|with)\s*[.!?]?$",
+                    s,
+                    re.I,
+                ))
+                or bool(re.search(r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.\s*$", s))
+            )
+        )
+    else:
+        fragments = sum(1 for s in sentences if len(s.split()) <= FRAGMENT_WORD_LIMIT)
     report.fragment_rate = fragments / len(sentences)
 
     # --- 3. adjacent self-similarity ---
@@ -266,10 +280,15 @@ def _embed(sentences: Sequence[str], embedder=None) -> Optional[np.ndarray]:
 # DECISION
 # =====================================================================
 
-def decide(text: str, target_words: int, embedder=None) -> PolicyDecision:
+def decide(
+    text: str,
+    target_words: int,
+    embedder=None,
+    content_type: str = "explanatory",
+) -> PolicyDecision:
     """Choose what to do with a fused narrative. Never raises."""
     word_count = len((text or "").split())
-    report = assess_coherence(text, embedder=embedder)
+    report = assess_coherence(text, embedder=embedder, content_type=content_type)
 
     if word_count == 0:
         return PolicyDecision("pass", "empty input", report, target_words)

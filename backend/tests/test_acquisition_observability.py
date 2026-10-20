@@ -4,6 +4,7 @@ import logging
 from unittest.mock import AsyncMock, patch, MagicMock
 from backend.services.acquisition_service import (
     create_shadow_job_decisions,
+    ensure_acquisition_indexes,
     set_observation_context,
     reset_observation_context,
     append_event,
@@ -25,6 +26,25 @@ class FakeCursor:
 class FakeCollection:
     def __init__(self):
         self.docs = []
+        self.indexes = {}
+
+    @staticmethod
+    def _value(doc, dotted_key):
+        value = doc
+        for part in dotted_key.split("."):
+            if not isinstance(value, dict):
+                return None
+            value = value.get(part)
+        return value
+
+    def _matches(self, doc, query):
+        return all(self._value(doc, key) == value for key, value in query.items())
+
+    async def create_index(self, keys, **kwargs):
+        normalized = [(keys, 1)] if isinstance(keys, str) else list(keys)
+        name = kwargs.get("name") or "_".join(f"{key}_{order}" for key, order in normalized)
+        self.indexes[name] = {"key": normalized, **kwargs}
+        return name
         
     async def insert_one(self, doc):
         for d in self.docs:
@@ -32,16 +52,24 @@ class FakeCollection:
                 raise DuplicateKeyError("dup")
             if d.get("event_id") == doc.get("event_id"):
                 raise DuplicateKeyError("dup")
+            if d.get("manifest_id") == doc.get("manifest_id") and doc.get("manifest_id"):
+                raise DuplicateKeyError("dup")
         self.docs.append(doc)
         return doc
+
+    async def update_one(self, query, update, upsert=False):
+        existing = await self.find_one(query)
+        if existing:
+            return MagicMock(matched_count=1, upserted_id=None)
+        if not upsert:
+            return MagicMock(matched_count=0, upserted_id=None)
+        payload = dict(update.get("$setOnInsert", {}))
+        await self.insert_one(payload)
+        return MagicMock(matched_count=0, upserted_id=payload.get("decision_id"))
         
     async def find_one(self, query, projection=None):
         for d in self.docs:
-            match = True
-            for k, v in query.items():
-                if d.get(k) != v:
-                    match = False
-            if match:
+            if self._matches(d, query):
                 return d
         return None
         
@@ -57,11 +85,7 @@ class FakeCollection:
     def find(self, query, *args, **kwargs):
         results = []
         for d in self.docs:
-            match = True
-            for k, v in query.items():
-                if d.get(k) != v:
-                    match = False
-            if match:
+            if self._matches(d, query):
                 results.append(d)
         return FakeCursor(results)
 
@@ -92,6 +116,61 @@ async def test_shadow_decision_is_write_once(fake_db):
         res2 = await create_shadow_job_decisions(job_id="j1", user_id="u1", source_ids=["s1"])
         assert len(fake_db["acquisition_decisions"].docs) == 1
         assert res1["s1"] == res2["s1"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_shadow_decision_creation_reuses_one_logical_decision(fake_db):
+    with patch("backend.services.acquisition_service.get_database", return_value=fake_db):
+        results = await asyncio.gather(*[
+            create_shadow_job_decisions(job_id="browser-regression", user_id="u1", source_ids=["s1"])
+            for _ in range(8)
+        ])
+
+    assert len(fake_db["acquisition_decisions"].docs) == 1
+    assert {result["s1"] for result in results} == {
+        fake_db["acquisition_decisions"].docs[0]["decision_id"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_reused_shadow_decision_is_immutable(fake_db):
+    with patch("backend.services.acquisition_service.get_database", return_value=fake_db):
+        await create_shadow_job_decisions(job_id="j1", user_id="original", source_ids=["s1"])
+        original = dict(fake_db["acquisition_decisions"].docs[0])
+        await create_shadow_job_decisions(job_id="j1", user_id="different", source_ids=["s1"])
+
+    assert fake_db["acquisition_decisions"].docs[0] == original
+
+
+@pytest.mark.asyncio
+async def test_acquisition_indexes_are_named_unique_and_idempotent(fake_db):
+    with patch("backend.services.acquisition_service.get_database", return_value=fake_db):
+        await ensure_acquisition_indexes()
+        first = {name: dict(spec) for collection in fake_db.cols.values() for name, spec in collection.indexes.items()}
+        await ensure_acquisition_indexes()
+        second = {name: dict(spec) for collection in fake_db.cols.values() for name, spec in collection.indexes.items()}
+
+    assert first == second
+    assert set(first) == {
+        "acq_decision_id_uq",
+        "acq_decision_job_source_policy_mode_uq",
+        "acq_event_id_uq",
+        "acq_event_decision_sequence_uq",
+        "acq_manifest_id_uq",
+        "acq_manifest_job_policy_mode_uq",
+    }
+    assert all(spec["unique"] is True for spec in first.values())
+
+
+@pytest.mark.asyncio
+async def test_manifest_finalization_is_idempotent(fake_db):
+    with patch("backend.services.acquisition_service.get_database", return_value=fake_db):
+        await create_shadow_job_decisions(job_id="j1", user_id="u1", source_ids=["s1"])
+        first = await finalize_shadow_manifest("j1", "job_completed")
+        second = await finalize_shadow_manifest("j1", "job_completed")
+
+    assert len(fake_db["acquisition_manifests"].docs) == 1
+    assert first["manifest_id"] == second["manifest_id"]
 
 @pytest.mark.asyncio
 async def test_events_append_monotonic(fake_db):

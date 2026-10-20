@@ -86,17 +86,19 @@ def test_order_uses_topics_and_retains_local_chronology():
     assert sort_segments([a, c, b]) == [b, c, a]
 
 
-def test_fusion_selected_evidence_preserves_interleaved_manifest_order():
+def test_fusion_selected_evidence_preserves_interleaved_manifest_order(embedder):
     selected = [
         {"video_id": "A", "start_time": 10, "end_time": 20, "text": "A first statement."},
         {"video_id": "B", "start_time": 20, "end_time": 30, "text": "B first statement."},
         {"video_id": "A", "start_time": 40, "end_time": 50, "text": "A second statement."},
         {"video_id": "B", "start_time": 60, "end_time": 70, "text": "B second statement."},
     ]
-    result = FusionEngine().fuse_transcripts(
+    engine = FusionEngine()
+    engine.embedder = embedder
+    result = engine.fuse_transcripts(
         {},
         target_words=200,
-        include_sources=False,
+        include_sources=True,
         include_transitions=False,
         selected_evidence=selected,
     )
@@ -106,6 +108,8 @@ def test_fusion_selected_evidence_preserves_interleaved_manifest_order():
         ("A", 40, 50),
         ("B", 60, 70),
     ]
+    assert "(from " not in result.narrative
+    assert all(item[0] in {"A", "B"} for item in result.metadata["selected_evidence_order"])
 
 
 def test_fusion_selected_evidence_ignores_source_local_timestamp_reordering():
@@ -965,6 +969,10 @@ def test_all_occurrence_evidence_survives_serialization():
 async def test_global_pipeline_keyword_manifest_and_timings(monkeypatch, embedder):
     from backend.api.merge import run_semantic_selection
     from backend.models.job import MergeJob
+    async def immediate_to_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("backend.api.merge.asyncio.to_thread", immediate_to_thread)
     texts = {"A": "Cooking vegetables with oil.", "B": "Overfitting model training explanation.",
              "C": "Overfitting model training explanation."}
     candidates = {vid: SemanticSegment(vid, 1.123456, 31.123456, text,
@@ -986,6 +994,12 @@ async def test_global_pipeline_keyword_manifest_and_timings(monkeypatch, embedde
     assert clip["order"] == 0
     assert result["metrics"]["candidate_count"] == 3
     assert result["metrics"]["selection_mode"] == "keyword"
+    for video_id, usage in result["metrics"]["per_video"].items():
+        final_clips = [clip for clip in result["highlights"] if clip["video_id"] == video_id]
+        assert usage["selected"] == len(final_clips)
+        assert usage["seconds"] == round(sum(
+            clip["end_time"] - clip["start_time"] for clip in final_clips
+        ), 1)
     assert all(result["metrics"]["stage_timings_seconds"][name] >= 0 for name in
                ["segmentation", "concept_extraction", "embedding", "selection", "ordering"])
 

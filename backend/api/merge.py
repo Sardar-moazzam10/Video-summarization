@@ -15,7 +15,7 @@ Endpoints:
 from ..services.acquisition_service import create_shadow_job_decisions, set_observation_context, reset_observation_context, finalize_shadow_manifest, append_event, load_job_decision_ids
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from typing import Dict, List, Optional, Callable, Awaitable
+from typing import Any, Dict, List, Literal, Optional, Callable, Awaitable
 import asyncio
 import json
 import logging
@@ -32,6 +32,11 @@ from ..models.job import (
     FusionMetadata,
     RichOutput,
     get_duration_style,
+)
+from ..models.output_contracts import (
+    ComponentStatus,
+    OutputComponentState,
+    derive_output_status,
 )
 from ..services.duration_profiles import (
     DURATION_PROFILES, get_all_profiles, get_profile,
@@ -54,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================
-# LOCAL ENRICHMENT FALLBACK (used when Ollama is unavailable)
+# LOCAL TF-IDF ENRICHMENT
 # =====================================================
 
 def _extract_top_sentences(sentences: list, n: int = 5) -> list:
@@ -75,55 +80,23 @@ def _extract_top_sentences(sentences: list, n: int = 5) -> list:
         return sentences[:n]
 
 
-def _generate_local_enrichment(summary_text: str, style: str) -> RichOutput:
+def _generate_local_enrichment(summary_text: str, style: str, content_plan=None, embedder=None) -> RichOutput:
     """
-    Generate basic structured output (TLDR, key takeaways, chapters)
-    from the BART summary text when Ollama is unavailable.
-
-    Uses: first-2-sentences for TLDR, TF-IDF for takeaways,
-    even splits for chapters. No new models required.
+    Backward-compatible wrapper for deterministic content-aware enrichment.
     """
-    import re
-
-    sentences = [
-        s.strip()
-        for s in re.split(r'(?<=[.!?])\s+', summary_text.strip())
-        if len(s.split()) >= 6
-    ]
-
-    if not sentences:
-        return RichOutput(summary=summary_text, style_applied=style)
-
-    # TLDR: first 2 sentences
-    tldr = ' '.join(sentences[:2])
-
-    # Key Takeaways: top-5 TF-IDF sentences
-    takeaways = _extract_top_sentences(sentences, n=5)
-
-    # Chapters: divide sentences into 3 equal sections
-    n = len(sentences)
-    third = max(1, n // 3)
-    chapter_groups = [
-        sentences[:third],
-        sentences[third:2 * third],
-        sentences[2 * third:],
-    ]
-    chapters = []
-    chapter_titles = ["Introduction & Overview", "Core Discussion", "Conclusions & Key Points"]
-    for title, group in zip(chapter_titles, chapter_groups):
-        if group:
-            chapters.append({"title": title, "text": ' '.join(group)})
-
-    print(f"[LocalEnrich] Generated TLDR ({len(tldr.split())}w), "
-          f"{len(takeaways)} takeaways, {len(chapters)} chapters")
-
-    return RichOutput(
-        summary=summary_text,
-        tldr=tldr,
-        key_takeaways=takeaways,
-        chapters=chapters,
-        style_applied=style,
-    )
+    from ..services.content_intelligence import enrich_summary
+    if content_plan is None:
+        from ..services.content_intelligence import build_content_plan
+        import re
+        fallback_evidence = [
+            {"video_id": "summary", "start_time": index, "end_time": index + 1,
+             "order": index, "text": sentence}
+            for index, sentence in enumerate(re.split(r"(?<=[.!?])\s+", summary_text.strip()))
+            if sentence.strip()
+        ]
+        content_plan = build_content_plan(fallback_evidence, "explanatory", 0.0)
+    output, _topics = enrich_summary(summary_text, content_plan, style, embedder=embedder)
+    return output
 
 
 # =====================================================
@@ -131,6 +104,121 @@ def _generate_local_enrichment(summary_text: str, style: str) -> RichOutput:
 # Jobs are also persisted to MongoDB
 # =====================================================
 _active_jobs: Dict[str, MergeJob] = {}
+
+
+def _component_state(value, *, default_status=ComponentStatus.QUEUED) -> OutputComponentState:
+    """Read new component state while remaining compatible with old job rows."""
+    if isinstance(value, OutputComponentState):
+        return value
+    if isinstance(value, dict):
+        return OutputComponentState.model_validate(value)
+    return OutputComponentState(status=default_status)
+
+
+def _output_state_payload(value) -> Dict[str, Any]:
+    """Return component states plus their independently derived presentation state."""
+    generate_video = (
+        value.get("generate_video", False)
+        if isinstance(value, dict)
+        else getattr(value, "generate_video", False)
+    )
+    video_default = (
+        ComponentStatus.QUEUED if bool(generate_video)
+        else ComponentStatus.NOT_REQUESTED
+    )
+    video = _component_state(
+        value.get("video_component") if isinstance(value, dict) else getattr(value, "video_component", None),
+        default_status=video_default,
+    )
+    text = _component_state(
+        value.get("text_component") if isinstance(value, dict) else getattr(value, "text_component", None),
+    )
+    return {
+        "output_status": derive_output_status(video, text),
+        "video_component": video,
+        "text_component": text,
+    }
+
+
+def _resolve_intent_contract(value, source_count: Optional[int] = None) -> Dict[str, Any]:
+    """Resolve canonical intent while keeping legacy API/jobs readable.
+
+    Explicit ``summary_scope`` is authoritative. Only callers/jobs that do not
+    provide it use the old ``query``/``selected_keywords`` keyword inference.
+    Source scope is derived from the canonical source list, never trusted from
+    a potentially stale client payload.
+    """
+    explicit_scope = getattr(value, "summary_scope", None)
+    selected_keywords = [
+        str(item).strip()
+        for item in (getattr(value, "selected_keywords", None) or [])
+        if str(item).strip()
+    ]
+    legacy_query = str(getattr(value, "query", None) or "").strip() or None
+    summary_query = str(getattr(value, "summary_query", None) or "").strip() or None
+    discovery_query = str(getattr(value, "discovery_query", None) or "").strip() or None
+
+    if explicit_scope in {"overall", "keyword"}:
+        summary_scope = explicit_scope
+    else:
+        summary_scope = "keyword" if (summary_query or selected_keywords or legacy_query) else "overall"
+
+    if summary_scope == "keyword":
+        summary_query = summary_query or (" ".join(selected_keywords) if selected_keywords else legacy_query)
+    else:
+        summary_query = None
+
+    if source_count is None:
+        source_count = len(getattr(value, "video_ids", None) or [])
+
+    return {
+        "summary_scope": summary_scope,
+        "source_scope": "single" if source_count == 1 else "multi",
+        "discovery_query": discovery_query,
+        "summary_query": summary_query,
+        "selected_keywords": selected_keywords,
+    }
+
+
+def _semantic_intent_terms(job) -> List[str]:
+    """Return semantic constraints only for resolved keyword jobs."""
+    intent = _resolve_intent_contract(job)
+    if intent["summary_scope"] != "keyword":
+        return []
+    terms = intent["selected_keywords"]
+    if not terms and intent["summary_query"]:
+        terms = [intent["summary_query"]]
+    return list(dict.fromkeys(terms))
+
+
+def _final_per_video_metrics(
+    manifest,
+    global_segments,
+    raw_segments,
+    concepts,
+    selection_result,
+) -> Dict[str, Dict[str, Any]]:
+    """Describe source usage from the frozen final manifest only."""
+    result = {}
+    for vid in raw_segments:
+        vid_candidates = [
+            segment for segment in global_segments
+            if getattr(segment, "video_id", "") == vid
+        ]
+        vid_clips = [clip for clip in manifest if clip.video_id == vid]
+        result[vid] = {
+            "candidates": len(vid_candidates),
+            "selected": len(vid_clips),
+            "seconds": round(sum(clip.end_time - clip.start_time for clip in vid_clips), 1),
+            "budget": 0.0,
+            "concepts_found": len(concepts),
+            "concepts_covered": list(dict.fromkeys(
+                concept for clip in vid_clips for concept in clip.covered_concepts
+            )),
+            "concept_signal": selection_result.concept_signal,
+            "concepts_omitted_for_budget": selection_result.concepts_omitted_for_budget,
+        }
+    return result
 
 
 async def get_jobs_collection():
@@ -179,20 +267,65 @@ async def _get_media_job(
     raise HTTPException(401, "Authentication required")
 
 
-def _media_delivery_allowed(job_data: dict) -> bool:
-    """Only an original, frozen eligible snapshot can authorize source media."""
+def _media_capabilities(job_data: dict) -> dict:
+    """Derive preview/export capabilities without changing the frozen snapshot."""
     snapshot = job_data.get("rights_snapshot")
     if not snapshot or snapshot.get("snapshot_origin") != "job_evaluation":
-        return False
+        return {
+            "generated_summary_visible": False,
+            "copy_summary_allowed": False,
+            "txt_export_allowed": False,
+            "pdf_export_allowed": False,
+            "preview_allowed": False,
+            "download_allowed": False,
+            "public_export_allowed": False,
+        }
     aggregate = snapshot.get("aggregate") or {}
-    return aggregate.get("publication_gate_status") == "eligible_by_recorded_rights"
+    status = aggregate.get("publication_gate_status")
+    if status == "eligible_by_recorded_rights":
+        return {
+            "generated_summary_visible": True,
+            "copy_summary_allowed": True,
+            "txt_export_allowed": True,
+            "pdf_export_allowed": True,
+            "preview_allowed": True,
+            "download_allowed": True,
+            "public_export_allowed": True,
+        }
+
+    sources = snapshot.get("sources") or []
+    standard_preview = bool(sources) and all(
+        source.get("publication_gate_status") == "eligible_by_recorded_rights"
+        or (
+            source.get("publication_gate_status") == "restricted_by_product_policy"
+            and source.get("verification_status") == "verified_metadata"
+            and ((source.get("evidence") or {}).get("platform") or {}).get("status_license") == "youtube"
+        )
+        for source in sources
+    )
+    return {
+        "generated_summary_visible": standard_preview,
+        "copy_summary_allowed": standard_preview,
+        "txt_export_allowed": standard_preview,
+        "pdf_export_allowed": standard_preview,
+        "preview_allowed": bool(
+            status == "restricted_by_product_policy" and standard_preview
+        ),
+        "download_allowed": False,
+        "public_export_allowed": False,
+    }
 
 
-def _assert_media_delivery_allowed(job_data: dict) -> None:
-    if not _media_delivery_allowed(job_data):
+def _media_delivery_allowed(job_data: dict) -> bool:
+    """Backward-compatible name for unrestricted media delivery only."""
+    return _media_capabilities(job_data)["download_allowed"]
+
+
+def _assert_media_capability(job_data: dict, capability: str) -> None:
+    if not _media_capabilities(job_data).get(capability, False):
         raise HTTPException(
             403,
-            "Source-footage media delivery is blocked by the recorded rights policy.",
+            "This media action is blocked by the recorded rights policy.",
         )
 
 
@@ -376,6 +509,11 @@ async def create_merge_job(
     if len(clean_ids) > 10:
         raise HTTPException(400, "Maximum 10 videos allowed")
 
+    # Do not hard-reject a non-English caption transcript at create-time.
+    # The implementation may still normalize it to canonical English via the
+    # existing text-translation / Whisper translate flow before the terminal
+    # unsupported-language decision is made.
+
     # Duration feasibility — checked BEFORE the job exists.
     # Fail closed: ALL unique videos must have their duration resolved.
     
@@ -431,6 +569,8 @@ async def create_merge_job(
     canonical_video_ids = [extract_video_id(v) for v in request.video_ids]
     source_durations_map = {extract_video_id(vid): round(float(d), 1) for vid, d in known.items()}
 
+    intent = _resolve_intent_contract(request, source_count=len(canonical_video_ids))
+
     # Create job
     job = MergeJob(
         job_id=job_id,
@@ -444,10 +584,18 @@ async def create_merge_job(
         generate_video=request.generate_video,
         highlight_duration_seconds=reel_seconds,
         style=request.style,
+        summary_scope=intent["summary_scope"],
+        source_scope=intent["source_scope"],
+        discovery_query=intent["discovery_query"],
+        summary_query=intent["summary_query"],
         query=getattr(request, "query", None),
-        selected_keywords=getattr(request, "selected_keywords", []),
+        selected_keywords=intent["selected_keywords"],
         source_durations=source_durations_map,
         allow_partial_sources=getattr(request, "allow_partial_sources", False),
+        video_component=OutputComponentState(
+            status=(ComponentStatus.QUEUED if request.generate_video else ComponentStatus.NOT_REQUESTED)
+        ),
+        text_component=OutputComponentState(status=ComponentStatus.QUEUED),
     )
 
     # Store in memory and database
@@ -462,18 +610,24 @@ async def create_merge_job(
     # Estimate time (rough: 30s per video + 60s for fusion)
     estimated_seconds = len(request.video_ids) * 30 + 60
 
+    output_state = _output_state_payload(job)
     return MergeJobResponse(
         job_id=job.job_id,
         status=job.status,
         progress_percent=job.progress_percent,
         stage_message=job.stage_message,
         estimated_seconds=estimated_seconds,
+        summary_scope=job.summary_scope,
+        source_scope=job.source_scope,
+        discovery_query=job.discovery_query,
+        summary_query=job.summary_query,
         query=job.query,
         selected_keywords=job.selected_keywords,
         stage_timings_seconds=job.stage_timings_seconds,
         active_source=job.active_source,
         elapsed_seconds=job.elapsed_seconds,
         transcript_preflight=job.transcript_preflight,
+        **output_state,
     )
 
 
@@ -496,11 +650,13 @@ async def preflight_merge_sources_post(
     results = await service.preflight_sources(request.video_ids, per_source_timeout=request.per_source_timeout)
     ready_ids = [vid for vid, r in results.items() if r.get("ready")]
     unavailable_ids = [vid for vid, r in results.items() if not r.get("ready")]
+    unsupported_ids = [vid for vid, r in results.items() if r.get("error_code") == "UNSUPPORTED_TRANSCRIPT_LANGUAGE"]
     return {
         "can_merge": len(unavailable_ids) == 0,
         "requested_video_ids": request.video_ids,
         "ready_video_ids": ready_ids,
         "unavailable_video_ids": unavailable_ids,
+        "unsupported_video_ids": unsupported_ids,
         "sources": results,
         "ready_count": len(ready_ids),
         "total_count": len(request.video_ids),
@@ -519,11 +675,13 @@ async def preflight_merge_sources_get(
     results = await service.preflight_sources(video_ids, per_source_timeout=per_source_timeout)
     ready_ids = [vid for vid, r in results.items() if r.get("ready")]
     unavailable_ids = [vid for vid, r in results.items() if not r.get("ready")]
+    unsupported_ids = [vid for vid, r in results.items() if r.get("error_code") == "UNSUPPORTED_TRANSCRIPT_LANGUAGE"]
     return {
         "can_merge": len(unavailable_ids) == 0,
         "requested_video_ids": video_ids,
         "ready_video_ids": ready_ids,
         "unavailable_video_ids": unavailable_ids,
+        "unsupported_video_ids": unsupported_ids,
         "sources": results,
         "ready_count": len(ready_ids),
         "total_count": len(video_ids),
@@ -545,6 +703,7 @@ async def get_job_status(
     # Check memory first after database-backed ownership validation.
     if job_id in _active_jobs:
         job = _active_jobs[job_id]
+        output_state = _output_state_payload(job)
         return MergeJobResponse(
             job_id=job.job_id,
             status=job.status,
@@ -552,14 +711,22 @@ async def get_job_status(
             stage_message=job.stage_message,
             error=job.error,
             warning=job.warning,
+            summary_scope=job.summary_scope,
+            source_scope=job.source_scope,
+            discovery_query=job.discovery_query,
+            summary_query=job.summary_query,
             query=job.query,
             selected_keywords=job.selected_keywords,
             stage_timings_seconds=job.stage_timings_seconds,
             active_source=job.active_source,
             elapsed_seconds=job.elapsed_seconds,
             transcript_preflight=job.transcript_preflight,
+            has_video_ready=bool(getattr(job, "video_path", None)),
+            manifest_version=(job.evidence_manifest or {}).get("manifest_version"),
+            **output_state,
         )
 
+    output_state = _output_state_payload(job_data)
     return MergeJobResponse(
         job_id=job_data["job_id"],
         status=job_data["status"],
@@ -567,13 +734,75 @@ async def get_job_status(
         stage_message=job_data["stage_message"],
         error=_job_error(job_data),
         warning=job_data.get("warning"),
+        summary_scope=job_data.get("summary_scope"),
+        source_scope=job_data.get("source_scope"),
+        discovery_query=job_data.get("discovery_query"),
+        summary_query=job_data.get("summary_query"),
         query=job_data.get("query"),
         selected_keywords=job_data.get("selected_keywords", []),
         stage_timings_seconds=job_data.get("stage_timings_seconds", {}),
         active_source=job_data.get("active_source"),
         elapsed_seconds=job_data.get("elapsed_seconds"),
         transcript_preflight=job_data.get("transcript_preflight"),
+        has_video_ready=bool(job_data.get("video_path")),
+        manifest_version=(job_data.get("evidence_manifest") or {}).get("manifest_version"),
+        **output_state,
     )
+
+
+@router.post("/{job_id}/retry-{output_type}")
+async def retry_output_component(
+    job_id: str,
+    output_type: Literal["video", "text"],
+    current_user: dict = Depends(get_current_user),
+):
+    """Requeue one failed output without repeating acquisition or selection."""
+    job_data = await _get_owned_job(job_id, current_user)
+    manifest = job_data.get("evidence_manifest") or {}
+    manifest_version = manifest.get("manifest_version")
+    if not manifest_version:
+        raise HTTPException(409, "This job has no reusable evidence manifest.")
+    if output_type == "video" and not job_data.get("generate_video"):
+        raise HTTPException(409, "Video output was not requested for this job.")
+    if output_type == "text" and job_data.get("summary_unavailable_reason") in {
+        "UNSUPPORTED_LANGUAGE", "UNSUPPORTED_TRANSCRIPT_LANGUAGE",
+    }:
+        raise HTTPException(409, "Written output is unavailable for this transcript language.")
+
+    component = _component_state(job_data.get(f"{output_type}_component"))
+    if component.status in {ComponentStatus.QUEUED, ComponentStatus.RUNNING}:
+        raise HTTPException(409, f"{output_type.title()} output is already in progress.")
+
+    from ..services.output_task_queue import requeue_output_task
+    database = await get_database()
+    task = await requeue_output_task(
+        database,
+        job_id=job_id,
+        manifest_version=int(manifest_version),
+        output_type=output_type,
+    )
+    if task is None:
+        raise HTTPException(409, f"{output_type.title()} output could not be requeued.")
+
+    state = OutputComponentState(
+        status=ComponentStatus.QUEUED,
+        stage="queued",
+        progress_percent=0,
+        attempts=0,
+    )
+    jobs_collection = await get_jobs_collection()
+    await jobs_collection.update_one(
+        {"job_id": job_id},
+        {"$set": {f"{output_type}_component": state.model_dump()}},
+    )
+    if job_id in _active_jobs:
+        setattr(_active_jobs[job_id], f"{output_type}_component", state)
+    return {
+        "job_id": job_id,
+        "output_type": output_type,
+        "task_id": task["task_id"],
+        "component": state.model_dump(),
+    }
 
 
 @router.get("/{job_id}/result")
@@ -595,6 +824,7 @@ async def get_job_result(
 
     video_ready_statuses = {
         JobStatus.VIDEO_READY.value,
+        JobStatus.GENERATING_VIDEO.value,
         JobStatus.FUSING.value,
         JobStatus.SUMMARIZING.value,
         JobStatus.ENRICHING.value,
@@ -606,13 +836,32 @@ async def get_job_result(
         JobStatus.PARTIAL_SUCCESS.value,
     } | video_ready_statuses
     
-    if job_data["status"] not in allowed_statuses:
+    has_video = bool(job_data.get("video_path"))
+    if job_data["status"] in {JobStatus.ERROR.value, JobStatus.CANCELLED.value}:
+        raise HTTPException(
+            400,
+            f"Job {job_data['status']}: {_job_error(job_data) or 'Job was not completed successfully'}"
+        )
+
+    if job_data["status"] not in allowed_statuses and not has_video:
         raise HTTPException(
             400,
             f"Job not completed. Current status: {job_data['status']}"
         )
 
-    summary_pending = job_data["status"] in video_ready_statuses
+    text_component_status = (job_data.get("text_component") or {}).get("status")
+    if text_component_status:
+        summary_pending = text_component_status in {
+            ComponentStatus.QUEUED.value,
+            ComponentStatus.RUNNING.value,
+        }
+    else:
+        summary_pending = (
+            job_data["status"] in video_ready_statuses
+            or job_data["status"] not in {
+                JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value
+            }
+        )
 
     highlight_segments = job_data.get("highlight_segments", [])
     video_duration_seconds = sum(
@@ -620,14 +869,56 @@ async def get_job_result(
     )
 
     media_subject = current_user["sub"]
-    media_allowed = _media_delivery_allowed(job_data)
-    audio_token = create_media_token(job_id, "audio", media_subject) if media_allowed else None
-    video_token = create_media_token(job_id, "video", media_subject) if media_allowed else None
-    subtitle_token = create_media_token(job_id, "subtitles", media_subject) if media_allowed else None
+    capabilities = _media_capabilities(job_data)
+    preview_allowed = capabilities["preview_allowed"]
+    download_allowed = capabilities["download_allowed"]
+    audio_preview_token = create_media_token(job_id, "audio_preview", media_subject) if preview_allowed else None
+    video_preview_token = create_media_token(job_id, "video_preview", media_subject) if preview_allowed else None
+    audio_download_token = create_media_token(job_id, "audio_download", media_subject) if download_allowed else None
+    video_download_token = create_media_token(job_id, "video_download", media_subject) if download_allowed else None
+    subtitle_token = create_media_token(job_id, "subtitles_download", media_subject) if download_allowed else None
+
+    raw_meta = {} if summary_pending else (job_data.get("fusion_metadata") or {})
+    cleaned_metadata = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+    if cleaned_metadata:
+        if not cleaned_metadata.get("topics_found") and job_data.get("concepts"):
+            concepts_topics = [
+                c["name"].strip() if isinstance(c, dict) and c.get("name") else (str(c).strip() if isinstance(c, str) else "")
+                for c in job_data.get("concepts", [])
+            ]
+            cleaned_metadata["topics_found"] = list(dict.fromkeys(t for t in concepts_topics if t))[:10]
+        if cleaned_metadata.get("compression_ratio") is not None:
+            raw_ratio = float(cleaned_metadata.get("compression_ratio", 0.0))
+            if raw_ratio > 1.0:
+                tot = cleaned_metadata.get("total_source_words", 0)
+                out = cleaned_metadata.get("output_words", 0)
+                if tot > 0 and out > 0:
+                    cleaned_metadata["compression_ratio"] = round(min(max(out / tot, 0.0), 1.0), 4)
+                else:
+                    cleaned_metadata["compression_ratio"] = min(max(raw_ratio, 0.0), 1.0)
+            else:
+                cleaned_metadata["compression_ratio"] = min(max(raw_ratio, 0.0), 1.0)
+
+    detected_language = job_data.get("detected_language")
+    unavailable_reason = job_data.get("summary_unavailable_reason")
+    summary_unavailable = bool(
+        job_data.get("summary_unavailable")
+        or unavailable_reason in {"UNSUPPORTED_LANGUAGE", "UNSUPPORTED_TRANSCRIPT_LANGUAGE"}
+        or (detected_language and detected_language != "en" and not (job_data.get("summary_text") or "").strip())
+    )
+    if summary_unavailable:
+        cleaned_metadata = {
+            **cleaned_metadata,
+            "topics_found": [],
+            "compression_ratio": None,
+            "output_words": None,
+        }
 
     return {
         "job_id": job_data["job_id"],
         "status": job_data["status"],
+        **_output_state_payload(job_data),
+        "manifest_version": (job_data.get("evidence_manifest") or {}).get("manifest_version"),
         # True only while video_ready — the AI summary (text/TL;DR/
         # takeaways/chapters) has not finished yet.
         "summary_pending": summary_pending,
@@ -636,16 +927,34 @@ async def get_job_result(
         # never mistaken for a finished, empty one.
         "summary_text": None if summary_pending else job_data.get("summary_text", ""),
         "rich_output": None if summary_pending else job_data.get("rich_output"),
-        "media_delivery_allowed": media_allowed,
-        "audio_url": f"/api/v1/merge/{job_id}/audio?token={audio_token}" if media_allowed and job_data.get("audio_path") else None,
-        "video_url": f"/api/v1/merge/{job_id}/video?token={video_token}" if media_allowed and job_data.get("video_path") else None,
-        "subtitle_url": f"/api/v1/merge/{job_id}/subtitles?token={subtitle_token}" if media_allowed and job_data.get("subtitle_path") else None,
+        "structured_text_output": (
+            None if summary_pending else job_data.get("structured_text_output")
+        ),
+        "generated_summary_visible": capabilities["generated_summary_visible"],
+        "copy_summary_allowed": capabilities["copy_summary_allowed"],
+        "txt_export_allowed": capabilities["txt_export_allowed"],
+        "pdf_export_allowed": capabilities["pdf_export_allowed"],
+        "preview_allowed": preview_allowed,
+        "download_allowed": download_allowed,
+        "public_export_allowed": capabilities["public_export_allowed"],
+        "media_delivery_allowed": download_allowed,
+        "audio_url": f"/api/v1/merge/{job_id}/audio?access=preview&token={audio_preview_token}" if preview_allowed and job_data.get("audio_path") else None,
+        "video_url": f"/api/v1/merge/{job_id}/video?access=preview&token={video_preview_token}" if preview_allowed and job_data.get("video_path") else None,
+        "audio_download_url": f"/api/v1/merge/{job_id}/audio?access=download&token={audio_download_token}" if download_allowed and job_data.get("audio_path") else None,
+        "video_download_url": f"/api/v1/merge/{job_id}/video?access=download&token={video_download_token}" if download_allowed and job_data.get("video_path") else None,
+        "subtitle_url": f"/api/v1/merge/{job_id}/subtitles?access=download&token={subtitle_token}" if download_allowed and job_data.get("subtitle_path") else None,
         "video_ids": job_data.get("used_video_ids") or job_data.get("video_ids", []),
         "requested_video_ids": job_data.get("requested_video_ids") or job_data.get("video_ids", []),
         "used_video_ids": job_data.get("used_video_ids") or job_data.get("video_ids", []),
         # Echoed back so a follow-up job (e.g. the highlight re-compile on the
         # player page) can reuse this job's settings instead of hardcoding them.
         "target_duration_minutes": job_data.get("target_duration_minutes"),
+        "summary_scope": job_data.get("summary_scope"),
+        "source_scope": job_data.get("source_scope"),
+        "content_type": job_data.get("content_type", "explanatory"),
+        "content_type_confidence": job_data.get("content_type_confidence", 0.0),
+        "discovery_query": job_data.get("discovery_query"),
+        "summary_query": job_data.get("summary_query"),
         "query": job_data.get("query"),
         "selected_keywords": job_data.get("selected_keywords", []),
         # Actual selected/rendered reel length — available as soon as the
@@ -662,13 +971,17 @@ async def get_job_result(
         "selection_mode": job_data.get("selection_mode", "legacy"),
         "warning": job_data.get("warning"),
         "error": _job_error(job_data),
-        "metadata": {} if summary_pending else job_data.get("fusion_metadata", {}),
+        "metadata": cleaned_metadata,
         # Language-abort fields — present on language-abort jobs so the frontend
         # can skip QualityPanel and show the correct unavailable-summary state
         # without hitting /evaluate (which would previously 500).
-        "summary_unavailable": job_data.get("summary_unavailable", False),
-        "summary_unavailable_reason": job_data.get("summary_unavailable_reason"),
-        "detected_language": job_data.get("detected_language"),
+        "summary_unavailable": summary_unavailable,
+        "summary_unavailable_reason": (
+            "UNSUPPORTED_TRANSCRIPT_LANGUAGE" if summary_unavailable else unavailable_reason
+        ),
+        "detected_language": detected_language,
+        "supported_languages": job_data.get("supported_languages") or ["en"],
+        "preflight_failure": job_data.get("preflight_failure"),
         # Rights & Publication Guidance (private study export remains unrestricted)
         "publication_gate_status": job_data.get("publication_gate_status") or "manual_review_required",
         "gate_warnings": (job_data.get("rights_summary") or {}).get("warnings", []),
@@ -732,9 +1045,46 @@ async def evaluate_job_quality(
     if cached:
         return cached
 
-    report = await _build_quality_report(job_data, use_llm=bool(llm))
-    await jobs_collection.update_one({"job_id": job_id}, {"$set": {cache_field: report}})
-    return report
+    now = datetime.utcnow()
+    await jobs_collection.update_one({"job_id": job_id}, {"$set": {
+        "evaluation_state": "running",
+        "evaluation_error": None,
+        "evaluation_updated_at": now,
+    }})
+    timeout_seconds = 180.0 if llm else 90.0
+    try:
+        report = await asyncio.wait_for(
+            _build_quality_report(job_data, use_llm=bool(llm)),
+            timeout=timeout_seconds,
+        )
+        report["evaluation_state"] = "completed"
+        await jobs_collection.update_one({"job_id": job_id}, {"$set": {
+            cache_field: report,
+            "evaluation_state": "completed",
+            "evaluation_error": None,
+            "evaluation_updated_at": datetime.utcnow(),
+        }})
+        return report
+    except asyncio.TimeoutError:
+        reason = f"Quality evaluation exceeded the {int(timeout_seconds)} second limit."
+        report = {"unavailable": True, "reason": reason,
+                  "summary_score": None, "video_score": None,
+                  "check_a": {}, "check_b": {}, "evaluation_state": "unavailable"}
+        await jobs_collection.update_one({"job_id": job_id}, {"$set": {
+            cache_field: report, "evaluation_state": "unavailable",
+            "evaluation_error": reason, "evaluation_updated_at": datetime.utcnow(),
+        }})
+        return report
+    except Exception as exc:
+        reason = f"Quality evaluation failed: {type(exc).__name__}"
+        report = {"unavailable": True, "reason": reason,
+                  "summary_score": None, "video_score": None,
+                  "check_a": {}, "check_b": {}, "evaluation_state": "failed"}
+        await jobs_collection.update_one({"job_id": job_id}, {"$set": {
+            cache_field: report, "evaluation_state": "failed",
+            "evaluation_error": str(exc), "evaluation_updated_at": datetime.utcnow(),
+        }})
+        return report
 
 
 # Where a computed scorecard is parked on the job document. A completed job is
@@ -826,12 +1176,13 @@ async def get_job_audio(
     job_id: str,
     token: Optional[str] = Query(None),
     current_user: Optional[dict] = Depends(get_current_user_optional),
+    access: str = Query("preview", pattern="^(preview|download)$"),
 ):
     """
-    Get the generated audio file for a completed job.
+    Preview or download generated audio according to the frozen rights policy.
     """
-    job_data = await _get_media_job(job_id, "audio", token, current_user)
-    _assert_media_delivery_allowed(job_data)
+    job_data = await _get_media_job(job_id, f"audio_{access}", token, current_user)
+    _assert_media_capability(job_data, "preview_allowed" if access == "preview" else "download_allowed")
 
     audio_path = job_data.get("audio_path")
     if not audio_path or not os.path.exists(audio_path):
@@ -858,7 +1209,8 @@ async def get_job_audio(
     return FileResponse(
         audio_path,
         media_type="audio/mpeg",
-        filename=f"summary_{job_id}.mp3"
+        filename=f"summary_{job_id}.mp3" if access == "download" else None,
+        content_disposition_type="attachment" if access == "download" else "inline",
     )
 
 
@@ -866,13 +1218,14 @@ async def get_job_audio(
 async def get_job_video(
     job_id: str,
     token: Optional[str] = Query(None),
+    access: str = Query("preview", pattern="^(preview|download)$"),
     current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     """
-    Download the generated highlight reel video.
+    Preview or download the reel according to the frozen rights policy.
     """
-    job_data = await _get_media_job(job_id, "video", token, current_user)
-    _assert_media_delivery_allowed(job_data)
+    job_data = await _get_media_job(job_id, f"video_{access}", token, current_user)
+    _assert_media_capability(job_data, "preview_allowed" if access == "preview" else "download_allowed")
 
     video_path = job_data.get("video_path")
     if not video_path or not os.path.exists(video_path):
@@ -899,19 +1252,21 @@ async def get_job_video(
     return FileResponse(
         video_path,
         media_type="video/mp4",
-        filename=f"highlights_{job_id}.mp4"
+        filename=f"highlights_{job_id}.mp4" if access == "download" else None,
+        content_disposition_type="attachment" if access == "download" else "inline",
     )
 
 
 @router.get("/{job_id}/subtitles")
 async def get_job_subtitles(
     job_id: str,
+    access: str = Query("download", pattern="^download$"),
     token: Optional[str] = Query(None),
     current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     """Download SRT subtitle file for a completed job."""
-    job_data = await _get_media_job(job_id, "subtitles", token, current_user)
-    _assert_media_delivery_allowed(job_data)
+    job_data = await _get_media_job(job_id, "subtitles_download", token, current_user)
+    _assert_media_capability(job_data, "download_allowed")
 
     subtitle_path = job_data.get("subtitle_path")
     if not subtitle_path or not os.path.exists(subtitle_path):
@@ -937,6 +1292,9 @@ async def export_job(
         format: "text" or "pdf"
     """
     job_data = await _get_owned_job(job_id, current_user)
+    note_capability = "pdf_export_allowed" if format == "pdf" else "txt_export_allowed"
+    if not _media_capabilities(job_data).get(note_capability, False):
+        raise HTTPException(403, "Generated-note export is blocked by policy.")
 
     if job_data["status"] != JobStatus.COMPLETED.value:
         raise HTTPException(400, "Job not completed")
@@ -947,14 +1305,14 @@ async def export_job(
     from ..services.export_service import format_as_text, generate_pdf
 
     if format == "pdf":
-        pdf_bytes = bytes(generate_pdf(summary_text, rich_output))
+        pdf_bytes = bytes(generate_pdf(summary_text, rich_output, job_data.get("content_type", "explanatory")))
         return StreamingResponse(
             iter([pdf_bytes]),
             media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename=summary_{job_id}.pdf"}
         )
     else:
-        text = format_as_text(summary_text, rich_output)
+        text = format_as_text(summary_text, rich_output, job_data.get("content_type", "explanatory"))
         return StreamingResponse(
             iter([text.encode("utf-8")]),
             media_type="text/plain",
@@ -1328,7 +1686,12 @@ async def run_semantic_selection(
     """
     from ..services.semantic_segmenter import build_semantic_segments
     from ..services.concept_extractor import extract_concepts
-    from ..services.coverage_selector import SelectionWeights, select_segments, DEFAULT_BINS
+    from ..services.coverage_selector import (
+        SelectionWeights,
+        resolve_selection_policy,
+        select_segments,
+        DEFAULT_BINS,
+    )
     from ..services.knowledge_plan import build_knowledge_plan
     from ..services.summary_metrics import compute_selection_metrics, format_metrics_report
 
@@ -1342,7 +1705,12 @@ async def run_semantic_selection(
 
     budget = float(job.highlight_duration_seconds)
     timings = {name: 0.0 for name in ("segmentation", "concept_extraction", "embedding", "selection", "ordering")}
-    weights = SelectionWeights.from_settings(settings)
+    base_weights = SelectionWeights.from_settings(settings)
+    intent = _resolve_intent_contract(job, source_count=len(raw_segments))
+    policy = resolve_selection_policy(
+        intent["summary_scope"], intent["source_scope"], base_weights
+    )
+    weights = policy.weights
 
     durations = {vid: _source_duration(segs) for vid, segs in raw_segments.items() if segs}
     if not durations:
@@ -1356,20 +1724,22 @@ async def run_semantic_selection(
     summary_embedding = None
     query_embedding = None
     embedder = None
-    keywords = list(dict.fromkeys(k.strip() for k in getattr(job, "selected_keywords", []) if k.strip()))
-    if not keywords and getattr(job, "query", None):
-        keywords = [str(job.query).strip()]
+    keywords = _semantic_intent_terms(job)
     embedding_started = perf_counter()
     try:
         from ..services.fusion_engine import get_sentence_transformer
         from ..services.cache_identity import MeasuredEmbedder
-        embedder = MeasuredEmbedder(get_sentence_transformer())
+        embedder = MeasuredEmbedder(await asyncio.to_thread(get_sentence_transformer))
         if semantic_bias_text.strip():
-            summary_embedding = embedder.encode(
-                [semantic_bias_text[:4000]], show_progress_bar=False
-            )[0]
+            summary_embedding = (await asyncio.to_thread(
+                embedder.encode,
+                [semantic_bias_text[:4000]],
+                show_progress_bar=False,
+            ))[0]
         if keywords:
-            query_embedding = embedder.encode(keywords, show_progress_bar=False)
+            query_embedding = await asyncio.to_thread(
+                embedder.encode, keywords, show_progress_bar=False
+            )
     except Exception as exc:
         print(f"[Semantic] Embedder unavailable ({exc}) — continuing without a relevance reference")
     timings["embedding"] += perf_counter() - embedding_started
@@ -1408,6 +1778,36 @@ async def run_semantic_selection(
               f"(avg {sum(s.duration for s in segments) / len(segments):.0f}s)")
         global_segments.extend(segments)
 
+    from ..services.content_intelligence import detect_content_type
+    content_type_started = perf_counter()
+    structural_segments = []
+    for video_id, caption_segments in raw_segments.items():
+        for caption in caption_segments:
+            if isinstance(caption, dict):
+                start = caption.get("start_time", caption.get("start", 0.0)) or 0.0
+                end = caption.get("end_time", start + (caption.get("duration", 0.0) or 0.0)) or start
+                text = caption.get("text", "")
+            else:
+                start = getattr(caption, "start_time", getattr(caption, "start", 0.0)) or 0.0
+                end = getattr(caption, "end_time", start + (getattr(caption, "duration", 0.0) or 0.0)) or start
+                text = getattr(caption, "text", "")
+            structural_segments.append({
+                "video_id": video_id,
+                "start_time": start,
+                "end_time": end,
+                "text": text,
+            })
+    content_type_result = await asyncio.to_thread(
+        detect_content_type,
+        global_segments,
+        structural_segments=structural_segments,
+    )
+    timings["content_type_detection"] = perf_counter() - content_type_started
+    print(
+        f"[ContentType] {content_type_result.content_type} "
+        f"(confidence={content_type_result.confidence:.2f})"
+    )
+
     # --- 2. concept extraction (Global) ---
     await say(f"Extracting key concepts globally across {len(raw_segments)} videos...")
     total_len = sum(durations.values())
@@ -1438,7 +1838,8 @@ async def run_semantic_selection(
     # and Deep Search (`query` + `selected_keywords`). TF-IDF remains the
     # candidate generator; this stage filters/canonicalises and adds unit labels.
     intent_text = " ".join(keywords).strip()
-    knowledge_plan = build_knowledge_plan(
+    knowledge_plan = await asyncio.to_thread(
+        build_knowledge_plan,
         global_segments,
         concepts,
         query=intent_text,
@@ -1446,6 +1847,7 @@ async def run_semantic_selection(
             query_embedding.mean(axis=0) if query_embedding is not None else None
         ),
         budget_seconds=budget,
+        content_type=content_type_result.content_type,
     )
     concepts = knowledge_plan.concepts
     print(
@@ -1468,6 +1870,7 @@ async def run_semantic_selection(
         query_embedding,
         timings,
         knowledge_plan.units,
+        policy,
     )
     if query_embedding is not None:
         import numpy as np
@@ -1476,6 +1879,9 @@ async def run_semantic_selection(
         for seg in result.segments:
             vec = getattr(seg, "embedding", None)
             scores = q @ (vec / max(np.linalg.norm(vec), 1e-9)) if vec is not None else np.zeros(len(keywords))
+            seg.keyword_scores = {
+                keyword: float(score) for keyword, score in zip(keywords, scores)
+            }
             # BGE cosine values are not calibrated probabilities.  A 0.50
             # cutoff falsely labelled unrelated clips as evidence in the real
             # no-evidence E2E flow (for example, ML clips "covered" quantum
@@ -1505,6 +1911,26 @@ async def run_semantic_selection(
                 "concept_signal": result.concept_signal,
                 "concepts_omitted_for_budget": result.concepts_omitted_for_budget,
             }
+
+    selector_per_video = {}
+    for vid in raw_segments:
+        selected_now = [
+            segment for segment in result.segments
+            if getattr(segment, "video_id", "") == vid
+        ]
+        selector_per_video[vid] = {
+            "candidates": sum(
+                getattr(segment, "video_id", "") == vid
+                for segment in global_segments
+            ),
+            "selected": len(selected_now),
+            "seconds": round(sum(segment.duration for segment in selected_now), 1),
+            "source_diversity_bonus": round(sum(
+                float(item.get("source_diversity_bonus", 0.0))
+                for item in result.trace
+                if item.get("video_id") == vid
+            ), 4),
+        }
 
     if not all_selected:
         return None
@@ -1569,6 +1995,9 @@ async def run_semantic_selection(
             vector = getattr(segment, "embedding", None)
             scores = (q @ (vector / max(np.linalg.norm(vector), 1e-9))
                       if vector is not None else np.zeros(len(keywords)))
+            segment.keyword_scores = {
+                keyword: float(score) for keyword, score in zip(keywords, scores)
+            }
             segment.keyword_matches = list(dict.fromkeys(
                 list(before) + _keyword_evidence_matches(keywords, scores, segment.text)
             ))
@@ -1576,6 +2005,15 @@ async def run_semantic_selection(
     all_selected, final_boundary_stats = repair_physical_boundaries(all_selected)
     if not all_selected:
         return None
+
+    # Freeze the canonical output before reporting source usage. Earlier
+    # selector-level counts become stale after organization, boundary merging,
+    # rejection, and underfill reconciliation.
+    from ..services.clip_manifest import freeze_manifest
+    manifest = freeze_manifest(all_selected)
+    per_video = _final_per_video_metrics(
+        manifest, global_segments, raw_segments, concepts, result
+    )
 
     # --- 4. metrics over a virtual concatenated timeline ---
     # Offsetting each video by the cumulative length of the ones before it lets a
@@ -1622,6 +2060,9 @@ async def run_semantic_selection(
     )
     metrics["per_video"] = per_video
     metrics["weights"] = weights.__dict__.copy()
+    metrics["policy_name"] = policy.name
+    metrics["selector_per_video"] = selector_per_video
+    metrics["early_stop_diagnostics"] = result.early_stop_diagnostics
     metrics["stage_timings_seconds"] = timings
     metrics["candidate_count"] = len(global_segments)
     metrics["duplicates_rejected"] = getattr(result, "duplicates_rejected", 0)
@@ -1692,11 +2133,12 @@ async def run_semantic_selection(
     metrics["early_stop_reason"] = result.early_stop_reason
     metrics["knowledge_units_covered"] = result.knowledge_units_covered
     metrics["knowledge_plan"] = knowledge_plan.to_dict()
+    metrics["content_type"] = content_type_result.content_type
+    metrics["content_type_confidence"] = content_type_result.confidence
+    metrics["content_type_signals"] = content_type_result.signals
     print(format_metrics_report(metrics, "Semantic selection"))
 
-    # --- 5. hand back segments in the shape the reel builder expects ---
-    from ..services.clip_manifest import freeze_manifest
-    manifest = freeze_manifest(all_selected)
+    # --- 5. hand back the already-frozen canonical manifest ---
     highlights = [clip.to_dict() for clip in manifest]
 
     return {
@@ -1704,6 +2146,8 @@ async def run_semantic_selection(
         "concepts": [c.to_dict() for c in all_concepts],
         "metrics": metrics,
         "trace": all_trace,
+        "content_type": content_type_result.content_type,
+        "content_type_confidence": content_type_result.confidence,
     }
 
 
@@ -1726,10 +2170,13 @@ async def process_merge_job(job_id: str):
 
     acq_token = None
     was_cancelled = False
+    delegated_outputs = False
     try:
         job = _active_jobs.get(job_id)
         if not job:
             return
+        content_type = "explanatory"
+        content_type_confidence = 0.0
         if not getattr(job, "job_started_at", None):
             job.job_started_at = datetime.utcnow()
 
@@ -1778,13 +2225,19 @@ async def process_merge_job(job_id: str):
                 elapsed = round((datetime.utcnow() - job.job_started_at).total_seconds(), 2)
                 job.elapsed_seconds = elapsed
 
+            status_value = status.value if hasattr(status, "value") else status
+            job.checkpoint = str(stage_name or status_value)
+            job.worker_heartbeat_at = job.updated_at
             set_payload = {
-                "status": status.value if hasattr(status, "value") else status,
+                "status": status_value,
                 "progress_percent": progress,
                 "stage_message": message,
                 "updated_at": job.updated_at,
+                "worker_heartbeat_at": job.updated_at,
+                "checkpoint": job.checkpoint,
                 "stage_timings_seconds": job.stage_timings_seconds,
                 "elapsed_seconds": elapsed,
+                "transcript_preflight": job.transcript_preflight,
             }
             if active_source is not None:
                 set_payload["active_source"] = active_source
@@ -1794,15 +2247,35 @@ async def process_merge_job(job_id: str):
                 {"$set": set_payload}
             )
 
-        # ── MULTI-VIDEO WHISPER POLICY ────────────────────────────────────
-        # For interactive multi-video jobs (>1 source), Whisper audio
-        # download is DISABLED by default. Fast path (YouTube API + yt-dlp
-        # subtitles) completes quickly. Sources without fast captions are
-        # reported through TRANSCRIPT_UNAVAILABLE_FOR_SOURCES so the user can
-        # decide whether to proceed with remaining sources or remove them.
+        async def update_component(
+            name: str,
+            status: ComponentStatus,
+            stage: str,
+            progress: int,
+            error: Optional[str] = None,
+        ):
+            """Persist an output lifecycle without changing the legacy job status."""
+            state = OutputComponentState(
+                status=status,
+                stage=stage,
+                progress_percent=progress,
+                attempts=1,
+                error=error,
+                updated_at=datetime.utcnow(),
+            )
+            setattr(job, f"{name}_component", state)
+            await jobs_collection.update_one(
+                {"job_id": job_id},
+                {"$set": {f"{name}_component": state.model_dump()}},
+            )
+
+        # Multilingual recovery is part of transcript acquisition for both
+        # single- and multi-source jobs. Whisper serializes model inference.
         _is_multi_video = len(job.video_ids) > 1
-        _allow_whisper = not _is_multi_video  # True only for single-video jobs
-        _per_source_timeout: Optional[float] = 45.0 if _is_multi_video else None
+        _allow_whisper = True
+        _per_source_timeout: Optional[float] = float(
+            getattr(settings, "TRANSCRIPT_SOURCE_TIMEOUT_SECONDS", 900)
+        ) * len(job.video_ids) + settings.TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS + 90
 
         # STAGE 1: Transcribing (0-15%)
         await update_status(
@@ -1812,9 +2285,9 @@ async def process_merge_job(job_id: str):
         )
 
         async def _transcript_progress(message: str):
-            if job.progress_percent < 14:
-                new_pct = min(job.progress_percent + 2, 14)
-                await update_status(JobStatus.TRANSCRIBING, new_pct, message)
+            # Keep heartbeats/messages live even at the stage ceiling. Only
+            # completed sources advance the percentage, not callback count.
+            await update_status(JobStatus.TRANSCRIBING, job.progress_percent, message)
 
         preflight_record: dict = {}
         _completed_sources = 0
@@ -1854,7 +2327,7 @@ async def process_merge_job(job_id: str):
             if not getattr(job, "allow_partial_sources", False):
                 err_detail = {
                     "error_code": "TRANSCRIPT_UNAVAILABLE_FOR_SOURCES",
-                    "message": f"{len(unavailable_ids)} of {len(requested_ids)} selected videos do not have a fast transcript available.",
+                    "message": f"Transcript recovery failed for {len(unavailable_ids)} of {len(requested_ids)} selected videos.",
                     "requested_video_ids": requested_ids,
                     "ready_video_ids": ready_ids,
                     "unavailable_video_ids": unavailable_ids,
@@ -1862,7 +2335,7 @@ async def process_merge_job(job_id: str):
                 }
                 job.status = JobStatus.ERROR
                 job.error = json.dumps(err_detail)
-                job.stage_message = f"Error: {len(unavailable_ids)} video(s) do not have fast transcripts available."
+                job.stage_message = f"Error: transcript recovery failed for {len(unavailable_ids)} video(s)."
                 job.completed_at = datetime.utcnow()
                 await jobs_collection.update_one(
                     {"job_id": job_id},
@@ -1951,6 +2424,77 @@ async def process_merge_job(job_id: str):
             print("[WARN] langdetect not installed — skipping language check")
         except Exception as e:
             print(f"[WARN] Language detection skipped: {e}")
+
+        # English-only capability gate. This is terminal: no vector indexing,
+        # semantic segmentation, concept extraction, BGE selection, or media
+        # rendering may run after rejection.
+        if untranslated_langs:
+            detected_languages = sorted(set(untranslated_langs.values()))
+            langs = ", ".join(detected_languages)
+            rejected_sources = [
+                {
+                    "source_id": source_id,
+                    "detected_language": language,
+                    "supported_languages": ["en"],
+                }
+                for source_id, language in untranslated_langs.items()
+            ]
+            preflight_failure = {
+                "reason": "UNSUPPORTED_TRANSCRIPT_LANGUAGE",
+                "error_code": "UNSUPPORTED_TRANSCRIPT_LANGUAGE",
+                "detected_language": langs,
+                "supported_languages": ["en"],
+                "source_id": rejected_sources[0]["source_id"] if len(rejected_sources) == 1 else None,
+                "sources": rejected_sources,
+            }
+            message = (
+                f"Summary unavailable — we couldn't convert this video's transcript into supported English text. "
+                "Try another video."
+            )
+            print(
+                f"[WARN] LANGUAGE CAPABILITY ABORT: {preflight_failure}; "
+                "stopping before semantic and video stages"
+            )
+            job.status = JobStatus.PARTIAL_SUCCESS
+            job.progress_percent = 100
+            job.stage_message = "Summary unavailable — unsupported transcript language"
+            job.warning = message
+            job.summary_unavailable = True
+            job.summary_unavailable_reason = "UNSUPPORTED_TRANSCRIPT_LANGUAGE"
+            job.detected_language = langs
+            job.supported_languages = ["en"]
+            job.preflight_failure = preflight_failure
+            job.summary_text = None
+            job.rich_output = None
+            job.fusion_metadata = None
+            job.highlight_segments = []
+            job.video_path = None
+            job.audio_path = None
+            job.completed_at = datetime.utcnow()
+            await jobs_collection.update_one(
+                {"job_id": job_id},
+                {"$set": {
+                    "status": JobStatus.PARTIAL_SUCCESS.value,
+                    "progress_percent": 100,
+                    "stage_message": job.stage_message,
+                    "warning": message,
+                    "summary_unavailable": True,
+                    "summary_unavailable_reason": "UNSUPPORTED_TRANSCRIPT_LANGUAGE",
+                    "detected_language": langs,
+                    "supported_languages": ["en"],
+                    "preflight_failure": preflight_failure,
+                    "summary_text": None,
+                    "rich_output": None,
+                    "fusion_metadata": None,
+                    "highlight_segments": [],
+                    "video_path": None,
+                    "audio_path": None,
+                    "transcript_preflight": preflight_record,
+                    "stage_timings_seconds": job.stage_timings_seconds,
+                    "completed_at": job.completed_at,
+                }}
+            )
+            return
 
         # Index transcripts in FAISS for semantic search (best-effort).
         # Skip videos whose transcript is non-English and untranslated: their
@@ -2099,17 +2643,34 @@ async def process_merge_job(job_id: str):
                 f"Fusing transcripts (Target: {target_words} words, {profile.style.value} style)..."
             )
 
-            # Run fusion engine
-            fusion_engine = get_fusion_engine()
-            t_fus_start = perf_counter()
-            selection_bias_fusion = fusion_engine.fuse_transcripts(
-                transcripts=transcripts,
-                target_words=fusion_budget,
-                include_sources=profile.include_sources,
-                include_transitions=profile.include_transitions,
-                raw_segments=raw_segments,
+            # Run the expensive full-transcript bias fusion only for an
+            # explicit keyword summary. Overall highlight selection already
+            # optimizes concept coverage and temporal diversity directly; a
+            # second representation of the same transcript adds substantial
+            # latency without adding a user-supplied relevance target.
+            fusion_engine = await asyncio.to_thread(get_fusion_engine)
+            needs_selection_bias = (
+                getattr(job, "summary_scope", None) == "keyword"
+                and bool(
+                    getattr(job, "summary_query", None)
+                    or getattr(job, "query", None)
+                    or getattr(job, "selected_keywords", None)
+                )
             )
-            t_fus_dur = round(perf_counter() - t_fus_start, 3)
+            if needs_selection_bias:
+                t_fus_start = perf_counter()
+                selection_bias_fusion = await asyncio.to_thread(
+                    fusion_engine.fuse_transcripts,
+                    transcripts=transcripts,
+                    target_words=fusion_budget,
+                    include_sources=profile.include_sources,
+                    include_transitions=profile.include_transitions,
+                    raw_segments=raw_segments,
+                )
+                t_fus_dur = round(perf_counter() - t_fus_start, 3)
+            else:
+                t_fus_dur = 0.0
+                print("[Fusion 1/2] Skipped for overall video-first selection")
             job.stage_timings_seconds["fusion_analysis"] = t_fus_dur
             pipeline_timings["fusion_analysis"] = t_fus_dur
 
@@ -2117,7 +2678,11 @@ async def process_merge_job(job_id: str):
             await update_status(
                 JobStatus.FUSING,
                 25,
-                f"Fusion analysis complete ({topics_count} topics identified)",
+                (
+                    f"Fusion analysis complete ({topics_count} topics identified)"
+                    if needs_selection_bias
+                    else "Video-first selection ready"
+                ),
                 stage_name="fusion_analysis",
                 stage_duration=t_fus_dur,
             )
@@ -2136,6 +2701,8 @@ async def process_merge_job(job_id: str):
             selection_metrics = None
             selection_trace = []
             selection_mode = "legacy"
+            content_type = "explanatory"
+            content_type_confidence = 0.0
 
             video_paths = {}
 
@@ -2144,7 +2711,11 @@ async def process_merge_job(job_id: str):
             await update_status(
                 JobStatus.GENERATING_VIDEO,
                 50,
-                "Downloading source videos and selecting highlights..."
+                (
+                    "Selecting evidence for independent output workers..."
+                    if settings.SEPARATE_OUTPUT_WORKERS_ENABLED
+                    else "Downloading source videos and selecting highlights..."
+                )
             )
 
             try:
@@ -2156,27 +2727,35 @@ async def process_merge_job(job_id: str):
 
                 await update_status(
                     JobStatus.GENERATING_VIDEO, 55,
-                    "Downloading source videos for highlight extraction..."
+                    (
+                        "Selecting complete evidence segments..."
+                        if settings.SEPARATE_OUTPUT_WORKERS_ENABLED
+                        else "Downloading source videos for highlight extraction..."
+                    )
                 )
                 unique_video_ids = list(raw_segments.keys())
 
                 async def video_progress(msg):
-                    await update_status(JobStatus.GENERATING_VIDEO, 60, msg)
+                    # Once the concurrent text branch has started, FFmpeg
+                    # progress must not move the shared job status backwards.
+                    if job.progress_percent < 84:
+                        await update_status(JobStatus.GENERATING_VIDEO, 60, msg)
 
                 _total_source_seconds = sum(
                     _source_duration(raw_segments.get(v, []))
                     for v in unique_video_ids
                 )
 
-                # Start tasks concurrently
-                download_task = asyncio.create_task(
-                    timed_stage("download_cache", video_svc.download_videos(
-                        unique_video_ids,
-                        job_id=job_id,
-                        progress_callback=video_progress,
-                        source_duration_seconds=_total_source_seconds,
-                    ))
-                )
+                download_task = None
+                if not settings.SEPARATE_OUTPUT_WORKERS_ENABLED:
+                    download_task = asyncio.create_task(
+                        timed_stage("download_cache", video_svc.download_videos(
+                            unique_video_ids,
+                            job_id=job_id,
+                            progress_callback=video_progress,
+                            source_duration_seconds=_total_source_seconds,
+                        ))
+                    )
 
                 semantic_task = None
                 if settings.ENABLE_SEMANTIC_SELECTION:
@@ -2189,9 +2768,16 @@ async def process_merge_job(job_id: str):
                         )
                     )
 
-                if semantic_task:
+                if semantic_task and download_task:
                     dl_result, sem_result = await asyncio.gather(download_task, semantic_task, return_exceptions=True)
+                elif semantic_task:
+                    dl_result = {}
+                    sem_result = await semantic_task
                 else:
+                    if download_task is None:
+                        raise RuntimeError(
+                            "Separate output workers require semantic selection to publish a manifest."
+                        )
                     dl_result = await download_task
                     sem_result = None
 
@@ -2199,7 +2785,7 @@ async def process_merge_job(job_id: str):
                     raise dl_result
                 video_paths = dl_result
                 
-                if not video_paths:
+                if not video_paths and not settings.SEPARATE_OUTPUT_WORKERS_ENABLED:
                     raise Exception("Could not download any source videos")
 
                 semantic = None
@@ -2222,7 +2808,10 @@ async def process_merge_job(job_id: str):
                         semantic = sem_result
                         if semantic and semantic.get("highlights"):
                             from ..services.clip_manifest import validate_manifest
-                            validate_manifest(semantic["highlights"], video_paths)
+                            validate_manifest(
+                                semantic["highlights"],
+                                video_paths or None,
+                            )
 
                 if semantic and semantic["highlights"]:
                     highlight_segments_result = semantic["highlights"]
@@ -2232,6 +2821,8 @@ async def process_merge_job(job_id: str):
                     selection_metrics["stage_timings_seconds"] = pipeline_timings
                     selection_trace = semantic["trace"]
                     selection_mode = "semantic"
+                    content_type = semantic.get("content_type", "explanatory")
+                    content_type_confidence = float(semantic.get("content_type_confidence", 0.0))
                     all_highlights = list(highlight_segments_result)
                 else:
                     if settings.ENABLE_SEMANTIC_SELECTION and len(unique_video_ids) > 1:
@@ -2282,16 +2873,24 @@ async def process_merge_job(job_id: str):
                 import traceback
                 traceback.print_exc()
 
-        if job.generate_video and highlight_segments_result and not video_error:
+        async def _run_video_output_branch():
+            nonlocal video_path, audio_path, job_warning
+            if not (job.generate_video and highlight_segments_result and not video_error):
+                if job.generate_video:
+                    await update_component(
+                        "video", ComponentStatus.FAILED, "selection_failed", 100,
+                        job_warning or "No valid highlight evidence was selected.",
+                    )
+                return
             try:
-                # Generate the highlight reel now, right after selection —
-                # ahead of BART/enrichment — so the video is playable while
-                # the text pipeline is still running. Video has no data
-                # dependency on the summary (see selection block above).
-                await update_status(
-                    JobStatus.GENERATING_VIDEO, 68,
-                    f"Cutting and stitching {len(highlight_segments_result)} highlight clips..."
-                )
+                await update_component("video", ComponentStatus.RUNNING, "rendering", 10)
+                # Video output has no dependency on BART/enrichment. This
+                # branch runs concurrently with the text branch below.
+                if job.progress_percent < 84:
+                    await update_status(
+                        JobStatus.GENERATING_VIDEO, 68,
+                        f"Cutting and stitching {len(highlight_segments_result)} highlight clips..."
+                    )
 
                 t_render_start = perf_counter()
                 rendered_sources = set(h.get("video_id") for h in highlight_segments_result if h.get("video_id"))
@@ -2342,9 +2941,9 @@ async def process_merge_job(job_id: str):
                 job.stage_timings_seconds["rights_snapshot"] = round(
                     perf_counter() - t_rights_start, 3
                 )
-                # Persist immediately so /video and /result can serve the
-                # video right away — the text summary (BART + enrichment)
-                # has not started yet at this point.
+                # Persist the media immediately. The text branch may already
+                # be running, so the checkpoint below never moves its shared
+                # status/progress backwards.
                 job.video_path = video_path
                 job.highlight_segments = highlight_segments_result
                 job.keyframes_extracted = keyframes_extracted
@@ -2352,45 +2951,54 @@ async def process_merge_job(job_id: str):
                 job.selection_metrics = selection_metrics
                 job.selection_trace = selection_trace
                 job.selection_mode = selection_mode
-                job.status = JobStatus.VIDEO_READY
-                job.progress_percent = 82
-                # Language-abort jobs surface a different message so the user
-                # knows the video is ready but summary won't follow.
-                job.stage_message = (
-                    "Highlight video ready — written summary unavailable for this language."
-                    if _language_abort
-                    else "Highlight video ready — generating AI summary..."
-                )
+                job.content_type = content_type
+                job.content_type_confidence = content_type_confidence
+                # Publish VIDEO_READY only if the text branch has not already
+                # advanced farther. Otherwise persist the media fields without
+                # regressing SUMMARIZING (86/90%) back to 82%.
+                publish_video_ready = job.progress_percent < 84
+                if publish_video_ready:
+                    job.status = JobStatus.VIDEO_READY
+                    job.progress_percent = 82
+                    job.stage_message = (
+                        "Highlight video ready — written summary unavailable for this language."
+                        if _language_abort
+                        else "Highlight video ready — generating AI summary..."
+                    )
                 job.updated_at = datetime.utcnow()
                 if getattr(job, "job_started_at", None):
                     job.elapsed_seconds = round((datetime.utcnow() - job.job_started_at).total_seconds(), 2)
 
-                await jobs_collection.update_one(
-                    {"job_id": job_id},
-                    {"$set": {
-                        "status": JobStatus.VIDEO_READY.value,
-                        "progress_percent": 82,
-                        "stage_message": job.stage_message,
+                video_checkpoint = {
                         "updated_at": job.updated_at,
                         "video_path": video_path,
+                        "has_video_ready": True,
                         "highlight_segments": highlight_segments_result,
                         "keyframes_extracted": keyframes_extracted,
                         "concepts": job_concepts,
                         "selection_metrics": selection_metrics,
                         "selection_trace": selection_trace,
                         "selection_mode": selection_mode,
+                        "content_type": content_type,
+                        "content_type_confidence": content_type_confidence,
                         "warning": job_warning,
                         "stage_timings_seconds": job.stage_timings_seconds,
                         "elapsed_seconds": job.elapsed_seconds,
                         "active_source": job.active_source,
                         "transcript_preflight": getattr(job, "transcript_preflight", None),
-                        # Carry language-abort metadata into the VIDEO_READY
-                        # checkpoint so /result can serve summary_unavailable
-                        # as soon as the video is playable.
                         "summary_unavailable": job.summary_unavailable,
                         "summary_unavailable_reason": job.summary_unavailable_reason,
                         "detected_language": job.detected_language,
-                    }}
+                }
+                if publish_video_ready:
+                    video_checkpoint.update({
+                        "status": JobStatus.VIDEO_READY.value,
+                        "progress_percent": 82,
+                        "stage_message": job.stage_message,
+                    })
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": video_checkpoint}
                 )
 
                 # MP3 extraction is a separate downloadable artifact, not a
@@ -2401,6 +3009,7 @@ async def process_merge_job(job_id: str):
                     audio_path = await asyncio.to_thread(
                         _extract_audio_from_reel, video_path, job.job_id
                     )
+                await update_component("video", ComponentStatus.READY, "ready", 100)
 
             except Exception as e:
                 job_warning = f"Video stitching failed: {e}"
@@ -2408,12 +3017,150 @@ async def process_merge_job(job_id: str):
                 import traceback
                 traceback.print_exc()
                 video_path = None
+                await update_component(
+                    "video", ComponentStatus.FAILED, "render_failed", 100, str(e)
+                )
             finally:
                 import shutil as _shutil
                 _dl_dir = os.path.join("audio_cache", "video_downloads", job_id)
                 if os.path.isdir(_dl_dir):
                     _shutil.rmtree(_dl_dir, ignore_errors=True)
                     print(f"[Video] Cleaned up download dir: {_dl_dir}")
+
+        # Persist the immutable shared handoff before either output branch
+        # consumes it. This is additive during the migration: existing branch
+        # inputs remain untouched until the dedicated workers are introduced.
+        if highlight_segments_result:
+            from ..services.evidence_manifest import build_evidence_manifest
+            try:
+                evidence_manifest = build_evidence_manifest(job, highlight_segments_result)
+                job.evidence_manifest = evidence_manifest.model_dump()
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": {"evidence_manifest": job.evidence_manifest}},
+                )
+            except (TypeError, ValueError) as exc:
+                # Additive migration safety: legacy clips can lack transcript
+                # text. Do not turn a contract rollout into a media regression.
+                logger.warning("Evidence manifest not published for job %s: %s", job_id, exc)
+
+        # Production manifest-first path. Dispatch is all-or-nothing: if queue
+        # publication fails, this process continues through the proven inline
+        # branches rather than leaving a job with no output owner.
+        if (
+            settings.SEPARATE_OUTPUT_WORKERS_ENABLED
+            and job.evidence_manifest
+            and job.generate_video
+        ):
+            try:
+                from ..services.output_task_queue import (
+                    activate_output_tasks,
+                    cancel_held_output_tasks,
+                    enqueue_output_task,
+                )
+                database = await get_database()
+                manifest_version = int(job.evidence_manifest["manifest_version"])
+                await enqueue_output_task(
+                    database, job_id=job_id, manifest_version=manifest_version,
+                    output_type="video", initial_status="held",
+                )
+                expected_tasks = 1
+                if not _language_abort:
+                    await enqueue_output_task(
+                        database, job_id=job_id, manifest_version=manifest_version,
+                        output_type="text", initial_status="held",
+                    )
+                    expected_tasks = 2
+
+                # Record durable ownership before releasing either task. If
+                # the API dies after this write, startup recovery preserves
+                # the job and the held tasks can safely remain unclaimed until
+                # dispatch is retried. Once activation succeeds, ownership is
+                # irrevocably with the output workers and inline generation
+                # must not run as a fallback.
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": {
+                        "output_execution_mode": "durable_workers",
+                        "output_dispatch_state": "prepared",
+                        "output_manifest_version": manifest_version,
+                        "output_expected_tasks": expected_tasks,
+                        "updated_at": datetime.utcnow(),
+                    }},
+                )
+                activated = await activate_output_tasks(
+                    database, job_id=job_id, manifest_version=manifest_version
+                )
+                if activated != expected_tasks:
+                    await cancel_held_output_tasks(
+                        database, job_id=job_id, manifest_version=manifest_version
+                    )
+                    await jobs_collection.update_one(
+                        {"job_id": job_id},
+                        {"$unset": {
+                            "output_execution_mode": "",
+                            "output_dispatch_state": "",
+                            "output_manifest_version": "",
+                            "output_expected_tasks": "",
+                        }},
+                    )
+                    raise RuntimeError(
+                        f"Expected {expected_tasks} held output tasks, activated {activated}."
+                    )
+                job.video_component = OutputComponentState(
+                    status=ComponentStatus.QUEUED, stage="queued", progress_percent=0
+                )
+                job.text_component = OutputComponentState(
+                    status=(ComponentStatus.FAILED if _language_abort else ComponentStatus.QUEUED),
+                    stage=("unsupported_language" if _language_abort else "queued"),
+                    progress_percent=(100 if _language_abort else 0),
+                    error=(job.summary_unavailable_reason if _language_abort else None),
+                )
+                job.status = JobStatus.GENERATING_VIDEO
+                job.progress_percent = 65
+                job.stage_message = "Evidence ready — video and text outputs queued independently."
+                await jobs_collection.update_one(
+                    {"job_id": job_id},
+                    {"$set": {
+                        "status": JobStatus.GENERATING_VIDEO.value,
+                        "progress_percent": 65,
+                        "stage_message": job.stage_message,
+                        "video_component": job.video_component.model_dump(),
+                        "text_component": job.text_component.model_dump(),
+                        "highlight_segments": highlight_segments_result,
+                        "concepts": job_concepts,
+                        "selection_metrics": selection_metrics,
+                        "selection_trace": selection_trace,
+                        "selection_mode": selection_mode,
+                        "content_type": content_type,
+                        "content_type_confidence": content_type_confidence,
+                        "stage_timings_seconds": job.stage_timings_seconds,
+                        "output_execution_mode": "durable_workers",
+                        "output_dispatch_state": "active",
+                        "output_manifest_version": manifest_version,
+                        "output_expected_tasks": expected_tasks,
+                    }},
+                )
+                delegated_outputs = True
+                return
+            except Exception as exc:
+                logger.exception(
+                    "Output dispatch failed for job %s; continuing inline: %s",
+                    job_id, exc,
+                )
+
+        if _language_abort:
+            await update_component(
+                "text", ComponentStatus.FAILED, "unsupported_language", 100,
+                job.summary_unavailable_reason or "Written summary unavailable.",
+            )
+        else:
+            await update_component("text", ComponentStatus.RUNNING, "planning", 5)
+
+        # Start rendering immediately, then continue into transcript
+        # reconstruction/BART without waiting for FFmpeg. Both branches are
+        # joined before the terminal job status is persisted.
+        video_output_task = asyncio.create_task(_run_video_output_branch())
 
         summary_failed = False
         summary_error_msg = None
@@ -2430,12 +3177,15 @@ async def process_merge_job(job_id: str):
                 if job.generate_video and highlight_segments_result and not video_error:
                     selected_evidence = [
                         {
+                            "order": index,
                             "video_id": h.get("video_id"),
                             "start_time": h.get("start_time", 0.0),
                             "end_time": h.get("end_time", 0.0),
                             "text": h.get("text", ""),
+                            "start_boundary_evidence": h.get("start_boundary_evidence"),
+                            "repair_lineage": h.get("repair_lineage"),
                         }
-                        for h in highlight_segments_result
+                        for index, h in enumerate(highlight_segments_result)
                     ]
                     for h in highlight_segments_result:
                         vid = h.get("video_id")
@@ -2452,14 +3202,65 @@ async def process_merge_job(job_id: str):
                     selected_transcripts_map = transcripts
                     selected_raw_segments = raw_segments
 
+                from ..services.content_intelligence import (
+                    build_content_plan,
+                    detect_content_type,
+                    enrich_summary,
+                )
+                if not content_type_confidence:
+                    flattened = [segment for segments in selected_raw_segments.values() for segment in segments]
+                    detected = detect_content_type(flattened)
+                    content_type = detected.content_type
+                    content_type_confidence = detected.confidence
+
+                plan_evidence = selected_evidence
+                if plan_evidence is None:
+                    plan_evidence = []
+                    for video_id, segments in selected_raw_segments.items():
+                        for order, segment in enumerate(segments):
+                            start = float(segment.get("start", segment.get("start_time", 0.0)) or 0.0)
+                            duration = float(segment.get("duration", 0.0) or 0.0)
+                            end = float(segment.get("end", segment.get("end_time", start + duration)) or start + duration)
+                            plan_evidence.append({
+                                "order": order,
+                                "video_id": video_id,
+                                "start_time": start,
+                                "end_time": end,
+                                "text": segment.get("text", ""),
+                            })
+                phase3_timings = {}
+                content_plan_started = perf_counter()
+                content_plan = build_content_plan(
+                    plan_evidence, content_type, content_type_confidence
+                )
+                phase3_timings["content_plan_construction"] = round(
+                    perf_counter() - content_plan_started, 4
+                )
+
+                clean_selected_evidence = [
+                    {
+                        "video_id": block.video_id,
+                        "start_time": block.start_time,
+                        "end_time": block.end_time,
+                        "text": block.clean_text,
+                    }
+                    for block in content_plan.blocks
+                ]
+
                 # SECOND PASS — fuse ONLY the selected segments → this is the BART input.
-                fusion_result = fusion_engine.fuse_transcripts(
+                fusion_result = await asyncio.to_thread(
+                    fusion_engine.fuse_transcripts,
                     transcripts=selected_transcripts_map,
                     target_words=fusion_budget,
-                    include_sources=profile.include_sources,
-                    include_transitions=profile.include_transitions,
+                    # Provenance remains on selected_evidence and fusion
+                    # metadata. Never serialize source IDs into BART prose.
+                    include_sources=False,
+                    # ContentPlan paragraphs are already organized. Synthetic
+                    # connective scaffolding wastes BART context and can leak
+                    # into short-path summaries.
+                    include_transitions=False,
                     raw_segments=selected_raw_segments,
-                    selected_evidence=selected_evidence,
+                    selected_evidence=clean_selected_evidence,
                 )
                 print(
                     f"[Fusion 2/2] Selected-segments pass: "
@@ -2485,16 +3286,31 @@ async def process_merge_job(job_id: str):
                     fusion_result.narrative,
                     target_words,
                     profile,
+                    None,
+                    content_type,
                 )
                 t_bart_dur = round(perf_counter() - t_bart_start, 3)
                 job.stage_timings_seconds["bart_summarization"] = t_bart_dur
 
                 # Store metadata
+                total_src_words = sum(len(t.split()) for t in transcripts.values()) if transcripts else fusion_result.metadata.get("total_source_words", 0)
+                out_words = len(summary_text.split())
+                comp_ratio = round(min(max(out_words / max(total_src_words, 1), 0.0), 1.0), 4) if total_src_words > 0 else 0.0
+
+                from ..services.text_normalization import sanitize_asr_items
+                clean_topics = sanitize_asr_items(fusion_result.topics, min_words=2, limit=10)
+                if not clean_topics and job_concepts:
+                    clean_topics = [
+                        c["name"].strip() if isinstance(c, dict) and c.get("name") else (str(c).strip() if isinstance(c, str) else "")
+                        for c in job_concepts
+                    ]
+                    clean_topics = list(dict.fromkeys(t for t in clean_topics if t))[:10]
+
                 fusion_metadata = FusionMetadata(
-                    total_source_words=fusion_result.metadata.get("total_source_words", 0),
-                    output_words=len(summary_text.split()),
-                    compression_ratio=len(summary_text.split()) / max(fusion_result.metadata.get("total_source_words", 1), 1),
-                    topics_found=fusion_result.topics,
+                    total_source_words=total_src_words,
+                    output_words=out_words,
+                    compression_ratio=comp_ratio,
+                    topics_found=clean_topics,
                     clusters_created=fusion_result.metadata.get("clusters_created", 0),
                     dedup_ratio=fusion_result.metadata.get("dedup_ratio", 0),
                     processing_time_seconds=fusion_result.metadata.get("processing_time_seconds", 0),
@@ -2509,65 +3325,46 @@ async def process_merge_job(job_id: str):
                     stage_duration=t_bart_dur,
                 )
 
-                # STAGE 4.5: Ollama AI Enrichment (90-95%)
-                rich_output = None
-                _OLLAMA_WALL_TIMEOUT = 120  # hard cap so job never blocks >2 min on this stage
+                # STAGE 4.5: deterministic content-aware enrichment (90-95%)
                 t_enr_start = perf_counter()
+                print("[LocalEnrich] Generating global TLDR, highlights and chapters...")
+                enrichment_embedder = None
                 try:
-                    from ..services.ollama_service import get_ollama_service
-                    ollama = get_ollama_service()
-
-                    if not settings.ENABLE_OLLAMA_ENRICHMENT:
-                        print("[Ollama] Merge-path enrichment disabled "
-                              "(ENABLE_OLLAMA_ENRICHMENT=false) — using local TF-IDF enrichment")
-                    elif ollama.is_available():
-                        await update_status(
-                            JobStatus.ENRICHING,
-                            92,
-                            f"AI enriching with Ollama/{settings.OLLAMA_MODEL} (chapters, takeaways, quotes)..."
-                        )
-
-                        video_titles = ", ".join(job.video_ids)
-                        rich_output = await asyncio.wait_for(
-                            ollama.generate_rich_summary(
-                                narrative=fusion_result.narrative,
-                                target_words=target_words,
-                                style=job.style,
-                                video_titles=video_titles,
-                            ),
-                            timeout=_OLLAMA_WALL_TIMEOUT,
-                        )
-
-                        if rich_output:
-                            if not rich_output.summary or len(rich_output.summary.split()) < 50:
-                                rich_output.summary = summary_text
-                            else:
-                                summary_text = rich_output.summary
-                            await update_status(
-                                JobStatus.ENRICHING,
-                                95,
-                                f"AI enrichment done: {len(rich_output.chapters)} chapters, "
-                                f"{len(rich_output.key_takeaways)} takeaways"
-                            )
-                        else:
-                            print("[Ollama] returned None — using local fallback")
-                    else:
-                        print(f"[Ollama] Not available. Run: ollama pull {settings.OLLAMA_MODEL}")
-
-                except asyncio.TimeoutError:
-                    print(f"[Ollama] Hard timeout ({_OLLAMA_WALL_TIMEOUT}s) — using local TF-IDF fallback")
-                    rich_output = None
-                except Exception as e:
-                    print(f"[WARN] Ollama enrichment failed: {e}")
-
-                # Always fall back to local TF-IDF if Ollama produced no structured output
-                if not rich_output or not rich_output.tldr or not rich_output.key_takeaways:
-                    print("[LocalEnrich] Generating TLDR+takeaways locally (TF-IDF)...")
-                    rich_output = _generate_local_enrichment(summary_text, job.style)
+                    enrichment_embedder = fusion_engine.embedder
+                except Exception:
+                    pass
+                rich_output, enriched_topics = await asyncio.to_thread(
+                    enrich_summary,
+                    summary_text,
+                    content_plan,
+                    job.style,
+                    embedder=enrichment_embedder,
+                    timings=phase3_timings,
+                )
+                if content_type == "narrative" and rich_output.summary:
+                    summary_text = rich_output.summary
+                if enriched_topics:
+                    # Preserve the selected-evidence BGE clusters.  Content-plan
+                    # labels only fill gaps after the cluster labels have been
+                    # cleaned; they never replace clustering.
+                    existing_topics = list(fusion_metadata.topics_found or [])
+                    seen_topics = {topic.casefold() for topic in existing_topics}
+                    existing_topics.extend(
+                        topic for topic in enriched_topics
+                        if topic.casefold() not in seen_topics
+                    )
+                    fusion_metadata.topics_found = existing_topics[:10]
 
                 t_enr_dur = round(perf_counter() - t_enr_start, 3)
                 job.stage_timings_seconds["enrichment"] = t_enr_dur
+                phase3_timings["total_enrichment"] = t_enr_dur
+                job.stage_timings_seconds.update(phase3_timings)
+                await update_component("text", ComponentStatus.READY, "ready", 100)
             except Exception as e:
+                # The error classification depends on whether the independent
+                # video branch succeeded, so join it before choosing between a
+                # partial result and a terminal job failure.
+                await video_output_task
                 if video_path:
                     summary_failed = True
                     summary_error_msg = str(e)
@@ -2585,10 +3382,18 @@ async def process_merge_job(job_id: str):
                         video_count=len(transcripts),
                     )
                     print(f"[ERROR] Summary generation failed after video was ready: {summary_error_msg}")
+                    await update_component(
+                        "text", ComponentStatus.FAILED, "generation_failed", 100,
+                        summary_error_msg,
+                    )
                     import traceback
                     traceback.print_exc()
                 else:
                     raise
+
+        # Both independent output branches must settle before the final result
+        # is classified and exposed as complete.
+        await video_output_task
 
         # COMPLETED
         if _language_abort:
@@ -2623,6 +3428,8 @@ async def process_merge_job(job_id: str):
         job.selection_trace = selection_trace
         job.summarization_decision = summarization_decision
         job.selection_mode = selection_mode
+        job.content_type = content_type
+        job.content_type_confidence = content_type_confidence
         job.warning = job_warning
         job.completed_at = datetime.utcnow()
         if getattr(job, "job_started_at", None):
@@ -2669,6 +3476,8 @@ async def process_merge_job(job_id: str):
                 "selection_trace": selection_trace,
                 "summarization_decision": summarization_decision,
                 "selection_mode": selection_mode,
+                "content_type": content_type,
+                "content_type_confidence": content_type_confidence,
                 "warning": job_warning,
                 "publication_gate_status": getattr(job, "publication_gate_status", "manual_review_required"),
                 "rights_summary": getattr(job, "rights_summary", {}),
@@ -2756,7 +3565,7 @@ async def process_merge_job(job_id: str):
             # Preserve the existing five-minute in-memory retention for normal
             # completion/error paths. Cancellation performs minimal cleanup and
             # must propagate immediately.
-            if not was_cancelled:
+            if not was_cancelled and not delegated_outputs:
                 try:
                     loop = asyncio.get_running_loop()
                     if not loop.is_closed():
@@ -2787,9 +3596,7 @@ async def fetch_transcripts_with_segments(
     Fetch transcripts for multiple videos truly concurrently.
 
     Bounded latency guarantees:
-    * allow_whisper=False (the default for interactive multi-video jobs):
-      pipeline uses only YouTube caption API + yt-dlp subtitle extraction.
-      Audio download + Whisper is skipped so no single source silently blocks.
+    * allow_whisper explicitly controls local audio recovery.
     * per_source_timeout: hard wall-clock cap per video.
     * on_source_completed: called as each source finishes so the caller
       can persist live progress (e.g. Transcripts ready: 1 / 3) immediately.

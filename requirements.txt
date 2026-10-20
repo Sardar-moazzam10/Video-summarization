@@ -26,6 +26,7 @@ faiss-cpu>=1.7.4
 # --- Transcript Fetching ---
 youtube-transcript-api>=1.0.0
 yt-dlp>=2024.1.0
+yt-dlp-ejs>=0.8.0
 deep-translator>=1.11.0
 
 # --- Visual Keyframe Extraction (Phase 1: visual analysis stage) ---

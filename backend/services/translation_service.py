@@ -506,16 +506,15 @@ def translate_transcript_to_english(
     src_lang: str = "auto",
 ) -> list:
     """
-    Translate a list of transcript segment dicts to English in-place.
-
-    This replaces TranscriptService._translate_transcript_to_english().
+    Translate a list of transcript segment dicts to English while preserving
+    the one-to-one segment and timestamp mapping.
 
     Args:
         transcript: List of {text, start, duration} dicts.
         src_lang:   Detected source language (ISO 639-1) or "auto".
 
     Returns:
-        Same list with text fields translated.
+        List of segment dicts with text translated to English, or original transcript on failure.
     """
     if not transcript:
         return transcript
@@ -529,7 +528,7 @@ def translate_transcript_to_english(
         except Exception:
             src_lang = "en"
 
-    if src_lang == "en":
+    if src_lang in ("en", "en-us", "en-gb"):
         return transcript
 
     all_texts = [seg.get("text", "") for seg in transcript]

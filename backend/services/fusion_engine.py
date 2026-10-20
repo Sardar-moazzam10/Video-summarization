@@ -577,8 +577,8 @@ class FusionEngine:
             # Get unique source videos
             source_videos = list(set(s.video_id for s in sents))
 
-            # Generate topic label (first few words of representative)
-            topic_label = " ".join(representative.split()[:5]) + "..."
+            from .text_normalization import topic_keyphrase
+            topic_label = topic_keyphrase([s.text for s in sents])
 
             # Calculate importance (more sources + more sentences = more important)
             importance = len(sents) * len(source_videos)
@@ -667,13 +667,14 @@ class FusionEngine:
             text = sentence.text.strip()
             if not text:
                 continue
-            if include_sources and sentence.video_id:
-                text = f"{text} (from {sentence.video_id})"
+            # Source identity remains in selected_evidence and
+            # selected_evidence_order metadata. It must never be serialized
+            # into natural-language input consumed by the summarizer.
             if idx > 0 and include_transitions:
                 text = f"{transition_phrases[(idx - 1) % len(transition_phrases)]} {text}"
             parts.append(text)
 
-        narrative = " ".join(parts)
+        narrative = "\n\n".join(parts)
         last_index = -1
         for sentence in ordered_sentences:
             marker = sentence.text.strip()

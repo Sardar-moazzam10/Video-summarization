@@ -181,6 +181,12 @@ def _get_pipeline():
                     warnings.simplefilter("ignore")
                     _tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
                     _model = AutoModelForSeq2SeqLM.from_pretrained(model_name, token=hf_token)
+                import torch
+                import os
+                try:
+                    torch.set_num_threads(min(4, os.cpu_count() or 4))
+                except Exception:
+                    pass
                 _model.eval()
                 # Fix BART generation config warning: forced_bos_token_id must be 0 for BART
                 if hasattr(_model, "generation_config"):
@@ -250,7 +256,7 @@ class SummarizationService:
     """
 
     def __init__(self):
-        self.max_chunk_words = 800  # Safe limit for BART's 1024 tokens
+        self.max_chunk_words = 400  # Smaller sections retain more topic coverage.
         self.max_recursion = 3      # Prevent infinite recursion
 
     def hierarchical_summarize(
@@ -291,6 +297,7 @@ class SummarizationService:
         target_words: int,
         profile: DurationProfile,
         embedder=None,
+        content_type: str = "explanatory",
     ):
         """
         Same as hierarchical_summarize() but also returns the decision.
@@ -310,14 +317,16 @@ class SummarizationService:
             return "", {"action": "pass", "reason": "empty input"}
 
         text = self._clean_text(text)
-        decision = _policy_decide(text, target_words, embedder=embedder)
+        decision = _policy_decide(
+            text, target_words, embedder=embedder, content_type=content_type
+        )
         print(f"[Summarizer] Policy: {decision.action.upper()} — {decision.reason}")
 
         config = get_summarization_config(profile)
 
         # Scaffolding is removed on every path: it is never wanted in the output,
         # and feeding it to BART only spends input tokens on filler.
-        text = _policy_clean(text)
+        text = "\n\n".join(_policy_clean(p) for p in text.split("\n\n") if p.strip())
 
         if decision.action == "compress":
             result = self._recursive_summarize(text, target_words, config, depth=0)
@@ -419,11 +428,35 @@ class SummarizationService:
         merged = " ".join(summaries)
         merged_words = len(merged.split())
 
-        # If merged is still too long, recurse
+        # A second global model pass can discard entire later sections. Keep
+        # complete sentences from every chunk before spending the remaining
+        # budget on detail. The word target is soft when the first sentences
+        # alone exceed it; preserving coverage beats silently dropping topics.
         if merged_words > target_words * 1.15:
-            return self._recursive_summarize(merged, target_words, config, depth + 1)
+            return self._balance_chunk_summaries(summaries, target_words)
 
         return merged
+
+    @staticmethod
+    def _balance_chunk_summaries(summaries, target_words):
+        sections = [_split_sentences(s) for s in summaries if s and s.strip()]
+        sections = [s for s in sections if s]
+        selected = [[s[0]] for s in sections]
+        used = sum(len(s[0].split()) for s in sections)
+        # Coverage sentences are protected even when they exceed the target,
+        # but optional detail must fit the requested budget.  Spending the
+        # 15% soft overrun on an early section biases the result before later
+        # sections have any opportunity to contribute detail.
+        budget = int(target_words)
+        for index in range(1, max((len(s) for s in sections), default=0)):
+            for section, kept in zip(sections, selected):
+                if index < len(section):
+                    sentence = section[index]
+                    size = len(sentence.split())
+                    if used + size <= budget:
+                        kept.append(sentence)
+                        used += size
+        return " ".join(sentence for section in selected for sentence in section)
 
     def _summarize_chunk(self, text: str, target_words: int, config, mode: str = "compress") -> str:
         """
@@ -438,6 +471,18 @@ class SummarizationService:
                   input length, so near-copy is not a defect there)
         """
         pipe = _get_pipeline()
+
+        # Word counts are not tokenizer counts. An unpunctuated caption or
+        # technical vocabulary can exceed BART's context even below 800 words.
+        # Split before generation so truncation never silently drops the tail.
+        if _count_tokens(text) > 1024:
+            words = text.split()
+            midpoint = len(words) // 2
+            if midpoint:
+                left = " ".join(words[:midpoint])
+                right = " ".join(words[midpoint:])
+                return " ".join(self._summarize_chunk(part, max(25, target_words // 2), config, mode)
+                                for part in (left, right))
 
         # Convert word targets to token estimates (1 word ≈ 1.3 tokens)
         # Give ample headroom (2.0x) so model emits EOS naturally instead of hitting a hard ceiling.
@@ -559,8 +604,15 @@ class SummarizationService:
                         chunks.append(" ".join(current_chunk))
                         current_chunk = []
                         current_words = 0
-                    current_chunk.append(sent)
-                    current_words += sent_words
+                    # Auto captions often contain no punctuation at all.
+                    # Enforce the bound even when one "sentence" is huge.
+                    if sent_words > max_words:
+                        words = sent.split()
+                        for start in range(0, len(words), max_words):
+                            chunks.append(" ".join(words[start:start + max_words]))
+                    else:
+                        current_chunk.append(sent)
+                        current_words += sent_words
                 continue
 
             # Normal paragraph: add to current chunk
@@ -583,11 +635,8 @@ class SummarizationService:
         """Clean text for summarization."""
         import re
         # Remove excessive whitespace
-        text = re.sub(r'\s+', ' ', text)
-        # Remove very short lines (often artifacts)
-        lines = text.split('\n')
-        lines = [l.strip() for l in lines if len(l.strip()) > 10]
-        return ' '.join(lines).strip()
+        paragraphs = [re.sub(r'\s+', ' ', p).strip() for p in text.split('\n\n')]
+        return '\n\n'.join(p for p in paragraphs if p).strip()
 
     @staticmethod
     def _ensure_complete_sentences(text: str) -> str:

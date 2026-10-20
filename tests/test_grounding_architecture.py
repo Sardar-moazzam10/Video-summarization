@@ -60,13 +60,13 @@ def _make_job(job_id="test_grounding"):
     return job
 
 
-def _make_db_mock(job_id="test_grounding"):
+def _make_db_mock(job_id="test_grounding", video_ids=None):
     db_mock = MagicMock()
 
     async def mock_find_one(*args, **kwargs):
         return {
             "job_id": job_id,
-            "video_ids": ["vid1"],
+            "video_ids": video_ids or ["vid1"],
             "target_duration_minutes": 1,
             "highlight_duration_seconds": 10,
             "style": "analytical",
@@ -127,7 +127,7 @@ def integration_mocks():
 
     mock_summarizer = MagicMock()
     mock_summarizer.summarize_with_policy.side_effect = (
-        lambda narrative, target, profile: (narrative, "TEST_POLICY")
+        lambda narrative, target, profile, *args, **kwargs: (narrative, "TEST_POLICY")
     )
 
     mock_rich = MagicMock()
@@ -140,6 +140,9 @@ def integration_mocks():
     video_svc.download_videos = AsyncMock(return_value={"vid1": "/tmp/vid1.mp4"})
     video_svc.generate_highlight_reel = AsyncMock(return_value="/tmp/out.mp4")
 
+    async def immediate_to_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
     with (
         patch("backend.api.merge.fetch_transcripts_with_segments",
               return_value=({"vid1": FULL_TEXT}, RAW_SEGMENTS)),
@@ -151,9 +154,16 @@ def integration_mocks():
         patch("backend.services.video_service.get_video_service",
               return_value=video_svc),
         patch("backend.api.merge.settings.ENABLE_SEMANTIC_SELECTION", True),
-        patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
+        patch("backend.api.merge.create_shadow_job_decisions", new_callable=AsyncMock, return_value=[]),
+        patch("backend.api.merge.append_event", new_callable=AsyncMock),
+        patch("backend.api.merge.finalize_shadow_manifest", new_callable=AsyncMock),
+        patch("backend.api.merge._freeze_job_rights", new_callable=AsyncMock, return_value={}),
+        patch("backend.services.vector_store.get_vector_store") as vector_store,
+        patch("backend.services.manifest_boundary_repair.probe_rendered_duration", return_value=None),
+        patch("backend.api.merge.asyncio.to_thread", side_effect=immediate_to_thread),
         patch("backend.api.merge.asyncio.sleep", new_callable=AsyncMock),
     ):
+        vector_store.return_value.is_video_indexed.return_value = True
         yield {
             "selection": mock_selection,
             "fusion": mock_fusion,
@@ -163,13 +173,17 @@ def integration_mocks():
         }
 
 
-async def _run_job(job_id="test_grounding"):
+async def _run_job(job_id="test_grounding", video_ids=None):
     from backend.api.merge import _active_jobs
-    _active_jobs[job_id] = _make_job(job_id)
+    job = _make_job(job_id)
+    if video_ids:
+        job.video_ids = list(video_ids)
+    _active_jobs[job_id] = job
     with patch("backend.api.merge.get_jobs_collection",
-               return_value=_make_db_mock(job_id)):
+               return_value=_make_db_mock(job_id, video_ids)):
         with patch("asyncio.sleep", new_callable=AsyncMock):
             await process_merge_job(job_id)
+    return job
 
 
 # ─── Test 2 ── process_merge_job can call run_semantic_selection successfully ─
@@ -186,6 +200,28 @@ async def test_process_merge_job_calls_semantic_selection_successfully(integrati
         "run_semantic_selection was never called — ENABLE_SEMANTIC_SELECTION "
         "may be False or the code path was not reached."
     )
+
+
+@pytest.mark.parametrize("video_ids", [("vid1",), ("vid1", "vid2")])
+@pytest.mark.asyncio
+async def test_single_and_multi_video_merge_complete_without_ollama(video_ids, integration_mocks):
+    text_map = {video_id: FULL_TEXT for video_id in video_ids}
+    segment_map = {
+        video_id: [dict(segment, video_id=video_id) for segment in RAW_SEGMENTS["vid1"]]
+        for video_id in video_ids
+    }
+    job_id = f"test_no_ollama_{len(video_ids)}"
+
+    with (
+        patch("backend.api.merge.fetch_transcripts_with_segments",
+              return_value=(text_map, segment_map)),
+        patch("backend.api.merge.create_shadow_job_decisions", new_callable=AsyncMock, return_value=[]),
+        patch("backend.api.merge._freeze_job_rights", new_callable=AsyncMock, return_value={}),
+        patch.dict("sys.modules", {"backend.services.ollama_service": None}),
+    ):
+        job = await _run_job(job_id, video_ids)
+
+    assert job.status.value == "completed"
 
 
 # ─── Test 3 ── semantic selection is actually executed ───────────────────────
@@ -216,7 +252,7 @@ async def test_semantic_selection_is_executed(integration_mocks):
 # ─── Test 4 ── integration errors MUST NOT silently fall back ─────────────────
 
 @pytest.mark.asyncio
-async def test_integration_error_does_not_silently_fall_back_to_legacy():
+async def test_integration_error_does_not_silently_fall_back_to_legacy(integration_mocks):
     """
     REQUIREMENT 4: If run_semantic_selection raises TypeError or AttributeError
     (programmer/integration bugs), process_merge_job MUST NOT silently route to
@@ -247,7 +283,6 @@ async def test_integration_error_does_not_silently_fall_back_to_legacy():
         patch("backend.services.video_service.get_video_service",
               return_value=video_svc),
         patch("backend.api.merge.settings.ENABLE_SEMANTIC_SELECTION", True),
-        patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
         patch("backend.api.merge.asyncio.sleep", new_callable=AsyncMock),
     ):
         from backend.api.merge import _active_jobs

@@ -91,17 +91,14 @@ class TestBuildQualityReportNullSafety:
 
 
 # ---------------------------------------------------------------------------
-# Bug 1: PARTIAL_SUCCESS must NOT be written before video generation
+# Unsupported language: terminal preflight before video generation
 # ---------------------------------------------------------------------------
 
 class TestNoPrematurePartialSuccess:
 
     @pytest.mark.asyncio
-    async def test_metadata_written_without_status_change_at_language_detect(self):
-        """
-        The intermediate DB write at language-detection time must NOT include
-        status=partial_success. Only language metadata fields should be stored.
-        """
+    async def test_language_rejection_is_terminal_at_preflight(self):
+        """Unsupported language is a truthful terminal result before video work."""
         text_map = {"dummyHindiVid": "हिंदी पाठ " * 200}
         seg_map = {"dummyHindiVid": _make_hindi_segments(50)}
         all_writes = []
@@ -128,11 +125,12 @@ class TestNoPrematurePartialSuccess:
         lang_abort_writes = [w for w in all_writes if w.get("summary_unavailable") is True]
         assert lang_abort_writes, "Expected at least one DB write with summary_unavailable=True at language detection"
 
-        # The *first* language-abort write (the intermediate one) must NOT include status=partial_success
-        first_abort_write = lang_abort_writes[0]
-        assert "status" not in first_abort_write or first_abort_write.get("status") != "partial_success", (
-            f"Language-abort intermediate write must NOT set status=partial_success: {first_abort_write}"
-        )
+        terminal_write = lang_abort_writes[0]
+        assert terminal_write.get("status") == "partial_success"
+        assert terminal_write.get("summary_text") is None
+        assert terminal_write.get("highlight_segments") == []
+        assert terminal_write.get("video_path") is None
+        assert terminal_write.get("preflight_failure", {}).get("reason") == "UNSUPPORTED_TRANSCRIPT_LANGUAGE"
 
     @pytest.mark.asyncio
     async def test_summary_unavailable_fields_present_in_final_write(self):
@@ -169,7 +167,7 @@ class TestNoPrematurePartialSuccess:
         )
         assert final_ps_write is not None, "No final partial_success write found"
         assert final_ps_write.get("summary_unavailable") is True
-        assert final_ps_write.get("summary_unavailable_reason") == "UNSUPPORTED_LANGUAGE"
+        assert final_ps_write.get("summary_unavailable_reason") == "UNSUPPORTED_TRANSCRIPT_LANGUAGE"
         assert final_ps_write.get("detected_language") is not None
 
     @pytest.mark.asyncio
@@ -337,7 +335,6 @@ class TestEnglishPipelineUnchanged:
             patch("backend.api.merge._active_jobs", {"test-en-unchanged-001": job}),
             patch("asyncio.sleep", new_callable=AsyncMock),
             patch("backend.services.summarization_service.get_summarization_service") as fake_ss,
-            patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
         ):
             fe = MagicMock()
             fe.fuse_transcripts = MagicMock(return_value=fake_fusion_result)
@@ -392,7 +389,6 @@ class TestEnglishPipelineUnchanged:
             patch("backend.api.merge._active_jobs", {"test-en-no-unavailable-001": job}),
             patch("asyncio.sleep", new_callable=AsyncMock),
             patch("backend.services.summarization_service.get_summarization_service") as fake_ss,
-            patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
         ):
             fe = MagicMock()
             fe.fuse_transcripts = MagicMock(return_value=fake_fusion_result)

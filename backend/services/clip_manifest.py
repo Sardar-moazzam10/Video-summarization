@@ -13,6 +13,7 @@ class Clip:
     text: str
     covered_concepts: tuple
     keyword_matches: tuple
+    keyword_scores: tuple = ()
     canonical_concepts: tuple = ()
     concept_block: str | None = None
     concept_block_role: str | None = None
@@ -34,6 +35,7 @@ class Clip:
         result = asdict(self)
         result["covered_concepts"] = list(self.covered_concepts)
         result["keyword_matches"] = list(self.keyword_matches)
+        result["keyword_scores"] = dict(self.keyword_scores)
         result["canonical_concepts"] = list(self.canonical_concepts)
         result["knowledge_units"] = list(self.knowledge_units)
         result["unit_evidence"] = dict(self.unit_evidence)
@@ -51,6 +53,7 @@ def freeze_manifest(segments):
         end_time=float(s.end_time), segment_id=s.segment_id, text=s.text,
         covered_concepts=tuple(getattr(s, "concept_scores", {})),
         keyword_matches=tuple(getattr(s, "keyword_matches", ())),
+        keyword_scores=tuple((getattr(s, "keyword_scores", {}) or {}).items()),
         canonical_concepts=tuple(getattr(s, "canonical_concepts", ())),
         concept_block=getattr(s, "concept_block", None),
         concept_block_role=getattr(s, "concept_block_role", None),

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from contextvars import ContextVar, Token
 from datetime import datetime, timezone
@@ -29,6 +30,14 @@ from ..models.acquisition import (
 
 SCHEMA_VERSION = "1.0"
 POLICY_VERSION = "acquisition-v1a-shadow"
+logger = logging.getLogger(__name__)
+
+DECISION_ID_INDEX = "acq_decision_id_uq"
+DECISION_SCOPE_INDEX = "acq_decision_job_source_policy_mode_uq"
+EVENT_ID_INDEX = "acq_event_id_uq"
+EVENT_SEQUENCE_INDEX = "acq_event_decision_sequence_uq"
+MANIFEST_ID_INDEX = "acq_manifest_id_uq"
+MANIFEST_SCOPE_INDEX = "acq_manifest_job_policy_mode_uq"
 
 
 def _json_default(value):
@@ -78,16 +87,41 @@ def _decision_id(job_id: str, source_id: str) -> str:
 
 
 async def ensure_acquisition_indexes() -> None:
+    """Create the minimal M1A uniqueness indexes once during application startup."""
     db = await get_database()
-    await db["acquisition_decisions"].create_index("decision_id", unique=True)
     await db["acquisition_decisions"].create_index(
-        [("job_id", ASCENDING), ("source_ref.source_id", ASCENDING)], unique=True
+        [("decision_id", ASCENDING)], unique=True, name=DECISION_ID_INDEX
+    )
+    await db["acquisition_decisions"].create_index(
+        [
+            ("job_id", ASCENDING),
+            ("source_ref.source_id", ASCENDING),
+            ("policy_version", ASCENDING),
+            ("evaluation_mode", ASCENDING),
+        ],
+        unique=True,
+        name=DECISION_SCOPE_INDEX,
     )
     await db["acquisition_events"].create_index(
-        [("decision_id", ASCENDING), ("sequence", ASCENDING)], unique=True
+        [("decision_id", ASCENDING), ("sequence", ASCENDING)],
+        unique=True,
+        name=EVENT_SEQUENCE_INDEX,
     )
-    await db["acquisition_events"].create_index("event_id", unique=True)
-    await db["acquisition_manifests"].create_index("job_id", unique=True)
+    await db["acquisition_events"].create_index(
+        [("event_id", ASCENDING)], unique=True, name=EVENT_ID_INDEX
+    )
+    await db["acquisition_manifests"].create_index(
+        [("manifest_id", ASCENDING)], unique=True, name=MANIFEST_ID_INDEX
+    )
+    await db["acquisition_manifests"].create_index(
+        [
+            ("job_id", ASCENDING),
+            ("policy_version", ASCENDING),
+            ("evaluation_mode", ASCENDING),
+        ],
+        unique=True,
+        name=MANIFEST_SCOPE_INDEX,
+    )
 
 
 async def create_shadow_job_decisions(
@@ -125,13 +159,34 @@ async def create_shadow_job_decisions(
             payload = decision.model_dump(mode="json")
             payload["decision_hash"] = _digest(payload, {"decision_hash", "event_sequence"})
             try:
-                await collection.insert_one(payload)
+                await collection.update_one(
+                    {
+                        "job_id": job_id,
+                        "source_ref.source_id": source_id,
+                        "policy_version": POLICY_VERSION,
+                        "evaluation_mode": "shadow",
+                    },
+                    {"$setOnInsert": payload},
+                    upsert=True,
+                )
             except DuplicateKeyError:
-                pass
+                # A concurrent upsert may lose the race to either unique index.
+                # The deterministic identity is reused; the frozen winner is untouched.
+                existing = await collection.find_one({"decision_id": decision_id})
+                if not existing:
+                    raise
             except Exception as e:
-                print(f"[Acquisition][shadow] failed to insert decision for {source_id}: {e}")
+                logger.warning(
+                    "[Acquisition][shadow] failed to create/reuse decision for %s: %s",
+                    source_id,
+                    e,
+                )
     except Exception as e:
-        print(f"[Acquisition][shadow] failed to init decision creation for {job_id}: {e}")
+        logger.warning(
+            "[Acquisition][shadow] failed to init decision creation for %s: %s",
+            job_id,
+            e,
+        )
         for source_id in dict.fromkeys(source_ids):
             result[str(source_id)] = _decision_id(str(job_id), str(source_id))
     return result
@@ -281,4 +336,3 @@ async def finalize_shadow_manifest(job_id: str, reason: str) -> Optional[dict]:
     except Exception as exc:
         print(f"[Acquisition][shadow] manifest finalization failed: {exc}")
         return None
-

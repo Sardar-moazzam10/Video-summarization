@@ -207,6 +207,61 @@ class TestCoverage:
 
 
 class TestDiversity:
+    def test_cross_source_duplicate_check_uses_current_candidate(self, monkeypatch):
+        """Regression: candidate checks must never reuse best_idx/segments[-1]."""
+        segments = [
+            SemanticSegment("a", 0, 30, "first", embedding=np.asarray([1.0, 0.0])),
+            SemanticSegment("b", 0, 30, "second", embedding=np.asarray([0.8, 0.6])),
+            SemanticSegment("c", 0, 30, "third", embedding=np.asarray([0.0, 1.0])),
+        ]
+        def only_third_is_duplicate(selected, candidate):
+            return candidate.text == "third"
+
+        monkeypatch.setattr(
+            "backend.services.coverage_selector._same_underlying_knowledge",
+            only_third_is_duplicate,
+        )
+        result = select_segments(
+            segments, 60, embedder=None,
+            weights=SelectionWeights(
+                concept=0, semantic=1, coverage=0, coherence=0,
+                redundancy=0, duration_penalty=0, min_budget_fill=0,
+            ),
+            summary_embedding=np.asarray([1.0, 0.0]),
+            total_duration={"a": 30, "b": 30, "c": 30},
+        )
+        assert [segment.text for segment in result.segments] == ["first", "second"]
+
+    def test_keyword_profile_preserves_non_query_terms(self):
+        base = SelectionWeights(
+            concept=0.32, semantic=0.20, coverage=0.28, coherence=0.10,
+            redundancy=0.25, duration_penalty=0.05, min_budget_fill=0.90,
+        )
+        keyword = base.for_keyword_mode()
+        assert keyword.semantic == pytest.approx(0.32)
+        assert keyword.coverage == pytest.approx(0.16)
+        assert keyword.concept == base.concept
+        assert keyword.coherence == base.coherence
+        assert keyword.redundancy == base.redundancy
+        assert keyword.duration_penalty == base.duration_penalty
+        assert keyword.min_budget_fill == base.min_budget_fill
+
+    def test_keyword_profile_prefers_relevance_over_temporal_novelty(self):
+        segments = [
+            SemanticSegment("v", 0, 30, "query evidence", embedding=np.asarray([1.0, 0.0])),
+            SemanticSegment("v", 300, 330, "irrelevant novelty", embedding=np.asarray([0.0, 1.0])),
+        ]
+        base = SelectionWeights(
+            concept=0, semantic=0.20, coverage=0.28, coherence=0,
+            redundancy=0, duration_penalty=0, min_budget_fill=0,
+        )
+        result = select_segments(
+            segments, 30, weights=base.for_keyword_mode(), embedder=None,
+            summary_embedding=np.asarray([0.0, 1.0]),
+            query_embedding=np.asarray([[1.0, 0.0]]), total_duration=330,
+        )
+        assert [segment.text for segment in result.segments] == ["query evidence"]
+
     def test_near_duplicates_do_not_dominate(self, embedder):
         """
         Ten identical "overfitting" explanations INTERLEAVED with ten distinct

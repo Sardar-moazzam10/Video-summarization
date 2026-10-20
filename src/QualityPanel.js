@@ -11,9 +11,9 @@ import { extractErrorMessage } from './utils/apiError.js';
  *   Video score (Check B): do the generated highlight clips represent the
  *       summary?  (clip transcripts vs summary) — expected to be high.
  *
- * Fast scores (keyword + SBERT) load automatically (llm=false, <1s).
- * The "Run detailed analysis" button re-runs WITH the Ollama judge
- * (llm=true, 30-90s) and replaces the scores with the richer, judged ones.
+ * Standard scores (keyword + semantic similarity) load automatically.
+ * An optional detailed-analysis action can replace the standard scores with
+ * richer findings when that capability is enabled.
  */
 
 function scoreColor(score) {
@@ -70,17 +70,28 @@ function DetailList({ title, items }) {
 export default function QualityPanel({ mergeId, delay = 0.18 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [judging, setJudging] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
 
-  const fetchScores = useCallback(async (withLlm) => {
-    const url = `${API_BASE_URL}/api/v1/merge/${mergeId}/evaluate?llm=${withLlm ? 'true' : 'false'}`;
-    const res = await authenticatedFetch(url);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(extractErrorMessage(body, `Evaluation failed (${res.status})`));
+  const fetchScores = useCallback(async (withDetailedAnalysis) => {
+    const url = `${API_BASE_URL}/api/v1/merge/${mergeId}/evaluate?llm=${withDetailedAnalysis ? 'true' : 'false'}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), withDetailedAnalysis ? 195000 : 100000);
+    try {
+      const res = await authenticatedFetch(url, { signal: controller.signal });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(extractErrorMessage(body, `Evaluation failed (${res.status})`));
+      }
+      return res.json();
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error('Quality evaluation timed out and is unavailable.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    return res.json();
   }, [mergeId]);
 
   // Fast scores on mount
@@ -94,9 +105,9 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
     return () => { alive = false; };
   }, [fetchScores]);
 
-  // Full scores on button click (with Ollama judge)
+  // Optional detailed scores on button click
   const runDetailed = async () => {
-    setJudging(true);
+    setAnalyzing(true);
     setError('');
     try {
       const d = await fetchScores(true);
@@ -104,7 +115,7 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
     } catch (e) {
       setError(e.message);
     } finally {
-      setJudging(false);
+      setAnalyzing(false);
     }
   };
 
@@ -157,23 +168,23 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
         </svg>
         <span style={panelStyles.title}>Quality Check</span>
-        <span style={panelStyles.badgeMode}>{data.llm_used ? 'Detailed (LLM judged)' : 'Fast'}</span>
+        <span style={panelStyles.badgeMode}>{data.llm_used ? 'Detailed' : 'Standard'}</span>
       </div>
 
       <p style={panelStyles.intro}>
-        Verifies that the summary captures the real video — and that the generated video matches the summary.
-        No guessing: scores compare against the original transcript.
+        Estimates text coverage against the source transcript and support for summary points in the selected clips.
+        These scores do not verify rendered audio, language, or visual quality.
       </p>
 
       <div style={panelStyles.dials}>
         <ScoreDial
           label="AI Summary"
-          sublabel="matches the original video"
+          sublabel="source transcript coverage"
           score={data.summary_score}
         />
         <ScoreDial
-          label="Video"
-          sublabel="matches the summary"
+          label="Clip Evidence"
+          sublabel="supports summary points"
           score={data.video_score}
         />
       </div>
@@ -184,7 +195,7 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
         {b.verdict && <p style={panelStyles.verdict}><b style={{ color: scoreColor(data.video_score) }}>Video:</b> {b.verdict}</p>}
       </div>
 
-      {/* Detailed findings only appear after the LLM judge runs */}
+      {/* Detailed findings only appear when detailed analysis is available */}
       {data.llm_used && (
         <div style={panelStyles.details}>
           <DetailList title="Possibly guessed / unsupported in summary" items={aLlm.hallucinations} />
@@ -193,14 +204,14 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
         </div>
       )}
 
-      {/* Temporarily disabled LLM judge button for future use */}
+      {/* Temporarily disabled detailed-analysis action */}
       {false && !data.llm_used && (
         <button
-          style={{ ...panelStyles.button, opacity: judging ? 0.6 : 1, cursor: judging ? 'wait' : 'pointer' }}
+          style={{ ...panelStyles.button, opacity: analyzing ? 0.6 : 1, cursor: analyzing ? 'wait' : 'pointer' }}
           onClick={runDetailed}
-          disabled={judging}
+          disabled={analyzing}
         >
-          {judging ? 'Analyzing with local AI… (~30–90s)' : 'Run detailed analysis (LLM judge)'}
+          {analyzing ? 'Analyzing…' : 'Run detailed analysis'}
         </button>
       )}
       {error && data && <p style={{ ...panelStyles.muted, color: '#f59e0b', marginTop: 8 }}>{error}</p>}

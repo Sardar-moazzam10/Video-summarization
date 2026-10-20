@@ -21,6 +21,7 @@ Why original audio?
     a synthetic voice says something different.
 """
 
+from .source_media_policy import SOURCE_VIDEO_FORMAT, SOURCE_AUDIO_OPTIONS
 from .acquisition_service import append_event
 import os
 import sys
@@ -61,28 +62,45 @@ def _resolve_ytdlp_cmd() -> List[str]:
     return [shutil.which("yt-dlp") or "yt-dlp"]
 
 
-FFMPEG_BIN = _resolve_binary("FFMPEG_PATH", "ffmpeg")
-YTDLP_CMD  = _resolve_ytdlp_cmd()
+FFMPEG_BIN  = _resolve_binary("FFMPEG_PATH", "ffmpeg")
+FFPROBE_BIN = _resolve_binary("FFPROBE_PATH", "ffprobe")
+YTDLP_CMD   = _resolve_ytdlp_cmd()
 YTDLP_BIN  = YTDLP_CMD[0]  # retained for logging / back-compat
 NODE_BIN   = _resolve_binary("NODE_PATH",   "node")
 
 # Bounded concurrency for per-clip trim/normalize (each is one ffmpeg
-# subprocess: decode+scale/pad+encode). The clip loop used to run strictly
-# sequentially — one ffmpeg process at a time — which measurably dominated
-# highlight-reel latency (a real 33-clip job spent 155.8s here, the single
-# largest contributor to total job time).
-#
-# Chosen from a real benchmark (33 real clips, same source video) measuring
-# wall time / CPU / memory at 1, 2, 4, 6, 8 concurrent workers on this class
-# of hardware (4-core/8-thread, memory-constrained):
-#   1: 114.5s   2: 122.2s (slower — noise/contention)   4: 111.9s (~flat)
-#   6: 96.8s (-15% vs N=1)   8: 74.5s (-35%, but +32% more memory than N=6)
-# CPU is already ~94-97% saturated by N=4, so 4/6/8 don't meaningfully differ
-# in CPU headroom — the real differentiator is memory, which scales ~linearly
-# with worker count (184MB at N=1 -> 1273MB peak at N=8). No correctness
-# issues (duration, A/V sync, black frames) at any tested N. 6 was chosen as
-# the best speed/memory balance for this machine, not the outright fastest.
-MAX_CONCURRENT_CLIP_ENCODES = 6
+# subprocess: decode+scale/pad+encode). Bounded to 4 workers for optimal CPU utilization.
+MAX_CONCURRENT_CLIP_ENCODES = 4
+
+
+def _detect_target_resolution(video_paths: Dict[str, str]) -> tuple:
+    """Detect appropriate target resolution from source videos.
+    Prevents wasting CPU upscaling 360p sources to 720p.
+    """
+    max_h = 0
+    for path in video_paths.values():
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            cmd = [
+                FFPROBE_BIN, "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=height",
+                "-of", "csv=p=0",
+                path,
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+            if res.returncode == 0 and res.stdout.strip().isdigit():
+                h = int(res.stdout.strip())
+                if h > max_h:
+                    max_h = h
+        except Exception:
+            pass
+    if max_h > 0 and max_h <= 360:
+        return (640, 360)
+    elif max_h > 0 and max_h <= 480:
+        return (854, 480)
+    return (1280, 720)
 
 
 class VideoService:
@@ -145,8 +163,9 @@ class VideoService:
                 await progress_callback(
                     f"Cutting {len(highlight_segments)} clips..."
                 )
+            target_res = _detect_target_resolution(video_paths)
             clips = await self._trim_segments_bounded(
-                highlight_segments, video_paths, work_dir
+                highlight_segments, video_paths, work_dir, target_resolution=target_res
             )
 
             if not clips:
@@ -164,6 +183,13 @@ class VideoService:
             # Step 3: Copy to permanent output location (original audio, no TTS overlay)
             final_path = str(self.output_dir / f"highlight_{job_id}.mp4")
             shutil.copy2(concat_path, final_path)
+
+            # Trigger storage hygiene check for highlights cache in background
+            try:
+                from .storage_hygiene import prune_highlights_cache
+                asyncio.create_task(asyncio.to_thread(prune_highlights_cache))
+            except Exception:
+                pass
 
             print(f"[Video] Highlight reel ready (original audio): {final_path}")
             return final_path
@@ -315,8 +341,10 @@ class VideoService:
             # video (~700 MB) takes ~2 hours; better to fail fast and surface
             # the authentication problem.
             "--throttled-rate", "100K",
-            "-f", "bestvideo[height<=360][ext=mp4]+bestaudio[abr<=64]"
-                  "/best[height<=360][ext=mp4]/worst[ext=mp4]/worst",
+            "--concurrent-fragments", "4",
+            "--buffer-size", "16M",
+            *SOURCE_AUDIO_OPTIONS,
+            "-f", SOURCE_VIDEO_FORMAT,
             "--merge-output-format", "mp4",
             "-o", output_template,
             url,
@@ -389,23 +417,30 @@ class VideoService:
         highlight_segments: List[Dict],
         video_paths: Dict[str, str],
         work_dir: str,
+        target_resolution: Optional[tuple] = None,
     ) -> List[str]:
         """
         Trim + normalize every segment with at most MAX_CONCURRENT_CLIP_ENCODES
-        ffmpeg processes in flight at once — see that constant's comment for
-        why 6 and not "as many as possible".
-
-        Segment order is preserved in the returned list regardless of which
-        clip's ffmpeg process happens to finish first (concat depends on
-        this order matching highlight_segments' order). A failed clip
-        (_trim_and_normalize_segment returning None) is dropped, same as the
-        prior sequential loop.
+        ffmpeg processes in flight at once.
         """
+        if target_resolution is None:
+            target_resolution = _detect_target_resolution(video_paths)
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLIP_ENCODES)
+
+        import inspect
+        sig = inspect.signature(self._trim_and_normalize_segment)
+        supports_res = len(sig.parameters) >= 5 or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
         async def _bounded(i: int, seg: Dict) -> Optional[str]:
             async with semaphore:
-                return await self._trim_and_normalize_segment(seg, video_paths, work_dir, i)
+                if supports_res:
+                    return await self._trim_and_normalize_segment(
+                        seg, video_paths, work_dir, i, target_resolution=target_resolution
+                    )
+                else:
+                    return await self._trim_and_normalize_segment(
+                        seg, video_paths, work_dir, i
+                    )
 
         results = await asyncio.gather(
             *[_bounded(i, seg) for i, seg in enumerate(highlight_segments)]
@@ -418,21 +453,18 @@ class VideoService:
         video_paths: Dict[str, str],
         work_dir: str,
         idx: int,
+        target_resolution: tuple = (1280, 720),
     ) -> Optional[str]:
         """
         Trim + normalize in ONE FFmpeg pass with exact timestamp precision.
 
         Seeking:
-          A single input-side `-ss {start}` before `-i`.  Since FFmpeg 2.1 this
-          is frame-accurate when re-encoding: FFmpeg seeks to the preceding
-          keyframe, then decodes and discards up to `start` internally.
-
-          It also resets the stream PTS to 0 at `start`, so the filtergraph
-          clock and the output clock are the same clock.  That is what makes
-          the fade timings below correct — see the fade comment.
+          A single input-side `-ss {start}` before `-i`. Frame-accurate when re-encoding:
+          FFmpeg seeks to preceding keyframe, then decodes and discards up to `start`.
+          PTS is reset to 0 at `start`.
 
         Also applies:
-          - Scale/pad to 1280x720 (uniform format for concat)
+          - Scale/pad to target_resolution (uniform format for concat, avoiding wasteful upscaling)
           - Audio fade-in + fade-out of 0.04s (click suppression only)
           - 30 fps output
         """
@@ -450,32 +482,13 @@ class VideoService:
         if duration < 0.5:
             return None
 
-        # VIDEO: hard cut, no fade.
-        #
-        # The video used to fade in and out over 0.15s at every clip boundary.
-        # Measured on a rendered 5-minute reel, blackdetect found a black run at
-        # 7 of the 8 joins — 28.85s, 109.89s, 171.65s, 191.89s, 232.99s,
-        # 254.19s, 276.92s, against joins at 28.84, 109.85, 171.57, 191.79,
-        # 232.87, 254.01, 276.75 — each 0.07-0.10s, which is 2-3 frames of black
-        # flashing between every pair of clips. A fade "to black" is a fade to
-        # black however short it is; on a highlight reel it reads as a glitch,
-        # and a hard cut is what the format normally uses anyway.
-        #
-        # AUDIO: a short fade is kept and shortened to 0.04s. Splicing raw PCM
-        # at an arbitrary sample produces an audible click; 0.04s (~2 frames)
-        # removes it without being perceptible as a fade, and is short enough
-        # that it cannot clip the start or end of a word. Segments already begin
-        # and end on sentence boundaries, so it lands in a natural pause.
-        #
-        # `st=` is measured on the FILTERGRAPH clock, which is zero-based at
-        # `start` only because the seek above is a single input-side -ss. Keep
-        # the seek single-stage or these offsets stop lining up.
         fade_d         = min(0.04, duration * 0.05)
         fade_out_start = max(0.0, duration - fade_d)
 
+        target_w, target_h = target_resolution
         vf = (
-            f"scale=1280:720:force_original_aspect_ratio=decrease,"
-            f"pad=1280:720:-1:-1:color=black,"
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"pad={target_w}:{target_h}:-1:-1:color=black,"
             f"tpad=stop_mode=clone:stop_duration=2"
         )
         af = (
@@ -488,7 +501,9 @@ class VideoService:
             self.ffmpeg, "-y",
             "-ss", f"{start:.3f}",            # accurate input seek; resets PTS to 0
             "-i", src,
+            "-map", "0:v:0", "-map", "0:a:0",
             "-t",  f"{duration:.3f}",
+            "-threads", "2",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             "-r", "30",

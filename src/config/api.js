@@ -66,6 +66,7 @@ export const API = {
   MERGE_STREAM: (jobId) => `${API_BASE_URL}/api/v1/merge/${jobId}/stream`,
   MERGE_EXPORT: (jobId, format) => `${API_BASE_URL}/api/v1/merge/${jobId}/export?format=${format}`,
   MERGE_PROFILES: `${API_BASE_URL}/api/v1/merge/profiles`,
+  MERGE_PREFLIGHT: `${API_BASE_URL}/api/v1/merge/preflight`,
   // Real media duration per video, plus which summary lengths it allows.
   MERGE_VIDEO_DURATIONS: (videoIds) =>
     `${API_BASE_URL}/api/v1/merge/video-durations?video_ids=${encodeURIComponent(videoIds.join(','))}`,

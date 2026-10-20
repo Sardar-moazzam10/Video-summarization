@@ -44,10 +44,8 @@ JOB_ID = "video_first_validation_1"
 async def run():
     print(f"Starting video-first validation job: {JOB_ID} (video={VIDEO_ID}, target=10min)")
 
-    vid_cache = os.path.join("audio_cache", "video_cache", VIDEO_ID)
-    if os.path.exists(vid_cache):
-        print(f"Clearing cache dir: {vid_cache}")
-        shutil.rmtree(vid_cache)
+    # Cache preserved per project rules
+    print(f"Running validation with cache preservation for {VIDEO_ID}")
 
     job = MergeJob(
         job_id=JOB_ID,

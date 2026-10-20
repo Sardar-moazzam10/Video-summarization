@@ -120,5 +120,11 @@ def format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
+def prime_duration_cache(video_id: str, duration_seconds: Optional[float]) -> None:
+    """Trust and reuse verified YouTube Data API contentDetails duration."""
+    if video_id and duration_seconds and float(duration_seconds) > 0:
+        _CACHE[video_id] = (float(duration_seconds), time.monotonic())
+
+
 def clear_cache() -> None:
     _CACHE.clear()

@@ -7,6 +7,10 @@ Features:
 - Cache hit/miss statistics
 """
 
+from backend.services.source_media_policy import (
+    AUDIO_SELECTION_POLICY, SOURCE_VIDEO_FORMAT, SOURCE_AUDIO_OPTIONS,
+)
+
 import os
 import json
 import shutil
@@ -126,7 +130,8 @@ class VideoCacheManager:
             "file_size": file_size,
             "last_accessed": datetime.now().isoformat(),
             "downloaded_at": datetime.now().isoformat(),
-            "pinned": pinned
+            "pinned": pinned,
+            "audio_selection_policy": AUDIO_SELECTION_POLICY,
         }
 
         os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
@@ -256,7 +261,18 @@ class VideoCacheManager:
 
         video_path = self._get_video_path(video_id)
 
-        if self._validate_cached_video(video_path):
+        # Legacy downloads may contain auto-dubs even when tagged "eng".
+        # Leave them on disk, but only reuse entries from the original policy.
+        try:
+            with open(self._get_metadata_path(video_id)) as metadata_file:
+                policy_matches = (
+                    json.load(metadata_file).get("audio_selection_policy")
+                    == AUDIO_SELECTION_POLICY
+                )
+        except (OSError, ValueError, AttributeError):
+            policy_matches = False
+
+        if policy_matches and self._validate_cached_video(video_path):
             print(f"📦 Cache HIT for video {video_id}")
             self._touch_access_time(video_id)
             with self._lock:
@@ -309,11 +325,10 @@ class VideoCacheManager:
                     # better to fail fast and surface the auth problem than to
                     # silently drain the per-attempt_timeout budget.
                     "--throttled-rate", "100K",
-                    # 360p cap: the highlight pipeline scales everything to
-                    # 720p anyway; downloading 1080p wastes bandwidth and the
-                    # cache disk budget.  Matches the fallback in video_service.
-                    "-f", "bestvideo[height<=360][ext=mp4]+bestaudio[abr<=64]"
-                          "/best[height<=360][ext=mp4]/worst[ext=mp4]/worst",
+                    "--concurrent-fragments", "4",
+                    "--buffer-size", "16M",
+                    *SOURCE_AUDIO_OPTIONS,
+                    "-f", SOURCE_VIDEO_FORMAT,
                     # Force the merged output into an MP4 container.  Without
                     # this, a webm audio track causes yt-dlp to emit MKV, and
                     # the validation check on `output_path` (which ends in
@@ -427,7 +442,11 @@ class VideoCacheManager:
                     raise Exception(f"Failed to download {video_id} after {DOWNLOAD_RETRY_ATTEMPTS} attempts")
 
                 # Atomic move to final location
-                shutil.move(temp_path, final_path)
+                if os.path.exists(final_path):
+                    # Preserve legacy media for diagnosis rather than deleting it.
+                    legacy_path = final_path + f".legacy-{time.time_ns()}"
+                    shutil.copy2(final_path, legacy_path)
+                os.replace(temp_path, final_path)
 
                 # Update metadata
                 file_size = os.path.getsize(final_path)
@@ -462,8 +481,8 @@ class VideoCacheManager:
             "--socket-timeout", "60",
             "--retries", "10",
             # 360p + forced MP4: see _download_with_retry for rationale.
-            "-f", "bestvideo[height<=360][ext=mp4]+bestaudio[abr<=64]"
-                  "/best[height<=360][ext=mp4]/worst[ext=mp4]/worst",
+            *SOURCE_AUDIO_OPTIONS,
+            "-f", SOURCE_VIDEO_FORMAT,
             "--merge-output-format", "mp4",
             "-o", output_template,
             url,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchVideos } from './youtubeApi.js';
 import { fetchTranscript, searchKeywordInTranscript } from './youtubeTranscript.mjs';
@@ -26,12 +26,40 @@ const TRANSCRIPT_CONCURRENCY = 4;
 const selectedKeywordsFromInput = (value = '') =>
   [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))].slice(0, 30);
 
+export const buildKeywordMergeRequest = (videoIds, durationMinutes, term) => {
+  const normalizedTerm = (term || '').trim();
+  return {
+    video_ids: videoIds,
+    target_duration_minutes: durationMinutes,
+    generate_audio: false,
+    generate_video: true,
+    style: 'educational',
+    summary_scope: 'keyword',
+    source_scope: videoIds.length === 1 ? 'single' : 'multi',
+    summary_query: normalizedTerm || undefined,
+    selected_keywords: selectedKeywordsFromInput(normalizedTerm),
+  };
+};
+
 const SearchByKeywordsPage = () => {
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState([]);
   const [expandedSummaries, setExpandedSummaries] = useState({});
   const [summaryLoading, setSummaryLoading] = useState({});
-  const [selectedVideos, setSelectedVideos] = useState([]);
+  const [selectedVideos, setSelectedVideos] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('keywordSelectedVideos');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('keywordSelectedVideos', JSON.stringify(selectedVideos));
+    } catch {}
+  }, [selectedVideos]);
   const [loading, setLoading] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -41,6 +69,9 @@ const SearchByKeywordsPage = () => {
   const [searchStats, setSearchStats] = useState({ scanned: 0, searchable: 0, skipped: 0, matched: 0 });
   const navigate = useNavigate();
   const { query: urlQuery } = useParams();
+  const location = useLocation();
+  // When navigated from history (state.fromHistory=true), just pre-fill — don't auto-scan
+  const fromHistory = location.state?.fromHistory === true;
   // Guards against overlapping runSearch calls
   const searchAbortControllerRef = useRef(null);
   const summaryAbortControllersRef = useRef({});
@@ -49,7 +80,7 @@ const SearchByKeywordsPage = () => {
     if (urlQuery) {
       const decoded = decodeURIComponent(urlQuery);
       setKeyword(decoded);
-      // Will trigger search via the keyword effect below
+      // Will trigger search via the auto-run effect below (unless from history)
       return;
     }
     const savedKeyword = sessionStorage.getItem('keyword');
@@ -81,16 +112,16 @@ const SearchByKeywordsPage = () => {
     }
   };
 
-  // Auto-run search when navigated from history with a URL query param
+  // Auto-run search when navigated via URL param (NOT from history — history just pre-fills)
   useEffect(() => {
-    if (urlQuery) {
+    if (urlQuery && !fromHistory) {
       const decoded = decodeURIComponent(urlQuery);
       if (decoded.trim()) {
         runSearch(decoded);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlQuery]);
+  }, [urlQuery, fromHistory]);
 
   const runSearch = useCallback(async (searchTerm) => {
     const term = (searchTerm || keyword).trim();
@@ -105,6 +136,7 @@ const SearchByKeywordsPage = () => {
 
     setResults([]);
     setSelectedVideos([]);
+    sessionStorage.removeItem('keywordSelectedVideos');
     setExpandedSummaries({});
     setSummaryLoading({});
     setErrorMsg('');
@@ -297,26 +329,18 @@ const SearchByKeywordsPage = () => {
     try {
       const token = localStorage.getItem('access_token') || '';
       const term = keyword.trim();
-      const selectedKeywords = selectedKeywordsFromInput(term);
       const res = await fetch(`${API_BASE_URL}/api/v1/merge`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({
-          video_ids: selectedVideos,
-          target_duration_minutes: durationMinutes,
-          generate_audio: true,
-          generate_video: true,
-          style: 'educational',
-          query: term || undefined,
-          selected_keywords: selectedKeywords,
-        }),
+        body: JSON.stringify(buildKeywordMergeRequest(selectedVideos, durationMinutes, term)),
       });
       
       const data = await res.json();
       if (res.ok && data.job_id) {
+        sessionStorage.removeItem('keywordSelectedVideos');
         navigate(`/merged-player/${data.job_id}`, {
           state: { query: term }
         });

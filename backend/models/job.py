@@ -9,10 +9,12 @@ Features:
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Literal
 from datetime import datetime
 from enum import Enum
 import uuid
+
+from .output_contracts import OutputComponentState
 
 
 class JobStatus(str, Enum):
@@ -134,12 +136,21 @@ class MergeJobCreate(BaseModel):
     video_ids: List[str] = Field(..., min_length=1, max_length=10)
     # le=30 adds the "Comprehensive Summary" mode.
     target_duration_minutes: int = Field(default=10, ge=5, le=30)
-    generate_audio: bool = True
+    # The highlight MP4 already contains the original audio. A separate MP3 is
+    # optional and disabled by default because extracting a long reel can add
+    # minutes without improving the core video-summary result.
+    generate_audio: bool = False
     generate_video: bool = False
     # le raised from 1200 to 1800 alongside the 30-minute profile. The reel is
     # the product itself (original audio), not a companion to a narration.
     highlight_duration_seconds: int = Field(default=120, ge=30, le=1800)
     style: str = "educational"
+    # Explicit intent contract. ``None`` preserves compatibility with older
+    # callers, whose legacy query fields are resolved at job creation time.
+    summary_scope: Optional[Literal["overall", "keyword"]] = None
+    source_scope: Optional[Literal["single", "multi"]] = None
+    discovery_query: Optional[str] = None
+    summary_query: Optional[str] = None
     query: Optional[str] = None
     selected_keywords: List[str] = Field(default_factory=list, max_length=30)
     allow_partial_sources: bool = False
@@ -159,10 +170,14 @@ class MergeJob(BaseModel):
     video_ids: List[str]
     target_duration_minutes: int
     duration_style: DurationStyle = DurationStyle.BRIEF
-    generate_audio: bool = True
+    generate_audio: bool = False
     generate_video: bool = False
     highlight_duration_seconds: int = 120
     style: str = "educational"
+    summary_scope: Optional[Literal["overall", "keyword"]] = None
+    source_scope: Optional[Literal["single", "multi"]] = None
+    discovery_query: Optional[str] = None
+    summary_query: Optional[str] = None
     query: Optional[str] = None
     selected_keywords: List[str] = Field(default_factory=list, max_length=30)
 
@@ -181,6 +196,15 @@ class MergeJob(BaseModel):
     selection_trace: List[Dict] = []
     summarization_decision: Optional[Dict] = None
     selection_mode: str = "legacy"      # "semantic" | "legacy"
+    content_type: Literal["explanatory", "narrative"] = "explanatory"
+    content_type_confidence: float = 0.0
+
+    # Additive migration fields. The legacy aggregate status remains available
+    # until video and text execution are moved to independent workers.
+    evidence_manifest: Optional[Dict] = None
+    structured_text_output: Optional[Dict] = None
+    video_component: OutputComponentState = Field(default_factory=OutputComponentState)
+    text_component: OutputComponentState = Field(default_factory=OutputComponentState)
 
     # Source duration snapshot (resolved at creation time, used for duration gating & Source Reuse Report)
     source_durations: Dict[str, float] = Field(default_factory=dict)
@@ -209,14 +233,13 @@ class MergeJob(BaseModel):
     retry_count: int = 0
     max_retries: int = 3
 
-    # Language-abort metadata: set when transcript language is unsupported by
-    # the text pipeline (BART/enrichment).  The job still runs video generation
-    # and reaches VIDEO_READY / PARTIAL_SUCCESS — these fields distinguish
-    # "no summary" from the normal completed state without touching status before
-    # video generation has finished.
+    # Language-capability metadata. Unsupported transcripts terminate during
+    # preflight, before semantic selection or media rendering.
     summary_unavailable: bool = False
     summary_unavailable_reason: Optional[str] = None
     detected_language: Optional[str] = None
+    supported_languages: List[str] = Field(default_factory=lambda: ["en"])
+    preflight_failure: Optional[Dict] = None
 
     # M1 Hardening: Preflight, timings and active source observability
     allow_partial_sources: bool = False
@@ -225,6 +248,15 @@ class MergeJob(BaseModel):
     active_source: Optional[str] = None
     elapsed_seconds: Optional[float] = None
     job_started_at: Optional[datetime] = None
+
+    checkpoint: str = "created"
+    worker_heartbeat_at: Optional[datetime] = None
+    recovery_state: Optional[str] = None
+    recoverable: bool = False
+
+    evaluation_state: str = "pending"
+    evaluation_error: Optional[str] = None
+    evaluation_updated_at: Optional[datetime] = None
 
     class Config:
         use_enum_values = True
@@ -240,12 +272,21 @@ class MergeJobResponse(BaseModel):
     estimated_seconds: Optional[int] = None
     error: Optional[str] = None
     warning: Optional[str] = None
+    summary_scope: Optional[Literal["overall", "keyword"]] = None
+    source_scope: Optional[Literal["single", "multi"]] = None
+    discovery_query: Optional[str] = None
+    summary_query: Optional[str] = None
     query: Optional[str] = None
     selected_keywords: List[str] = Field(default_factory=list)
     stage_timings_seconds: Dict[str, float] = Field(default_factory=dict)
     active_source: Optional[str] = None
     elapsed_seconds: Optional[float] = None
     transcript_preflight: Optional[Dict[str, dict]] = None
+    has_video_ready: Optional[bool] = None
+    output_status: Optional[str] = None
+    video_component: Optional[OutputComponentState] = None
+    text_component: Optional[OutputComponentState] = None
+    manifest_version: Optional[int] = None
 
     class Config:
         use_enum_values = True
@@ -263,6 +304,10 @@ class MergeJobResult(BaseModel):
     created_at: datetime
     completed_at: datetime
     processing_time_seconds: float
+    summary_scope: Optional[Literal["overall", "keyword"]] = None
+    source_scope: Optional[Literal["single", "multi"]] = None
+    discovery_query: Optional[str] = None
+    summary_query: Optional[str] = None
     query: Optional[str] = None
     selected_keywords: List[str] = Field(default_factory=list)
 

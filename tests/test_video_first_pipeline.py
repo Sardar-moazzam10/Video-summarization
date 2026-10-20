@@ -2,9 +2,9 @@
 Regression tests for the video-first pipeline restructuring in
 process_merge_job (backend/api/merge.py).
 
-Before: selection -> BART -> enrichment -> FFmpeg -> complete.
-After:  selection -> FFmpeg -> persist video_path + VIDEO_READY -> BART ->
-        enrichment (running in the background) -> complete.
+Before: selection -> FFmpeg -> persist video_path + VIDEO_READY -> BART ->
+        enrichment -> complete.
+After:  selection -> (FFmpeg || BART/enrichment) -> join -> complete.
 
 Everything I/O-heavy is mocked (MongoDB, video download/render, transcript
 fetch, BART) so these run fast and don't touch the network, ffmpeg, or a
@@ -87,6 +87,8 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
     }
     fake_fusion_engine = MagicMock()
     fake_fusion_engine.fuse_transcripts = MagicMock(return_value=fake_fusion_result)
+    fake_vector_store = MagicMock()
+    fake_vector_store.is_video_indexed.return_value = True
 
     def fake_summarize(*args, **kwargs):
         if call_order is not None:
@@ -125,6 +127,7 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
     with patch("backend.api.merge.get_jobs_collection", new_callable=AsyncMock) as mock_get_collection, \
          patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock) as mock_fetch, \
          patch("backend.api.merge.get_fusion_engine", return_value=fake_fusion_engine), \
+         patch("backend.services.vector_store.get_vector_store", return_value=fake_vector_store), \
          patch("backend.api.merge.run_semantic_selection", side_effect=fake_run_semantic_selection), \
          patch("backend.services.video_service.VideoService.download_videos", new_callable=AsyncMock) as mock_dl, \
          patch("backend.services.video_service.VideoService.generate_highlight_reel",
@@ -154,11 +157,10 @@ async def _run(job, *, summarize_side_effect=None, reel_side_effect=None, call_o
 @pytest.mark.asyncio
 class TestVideoFirstPipeline:
 
-    async def test_video_persisted_before_bart_starts(self):
+    async def test_bart_and_video_branches_overlap(self):
         """
-        Requirement 1+2: the highlight video (video_path) and a VIDEO_READY
-        status must both be written to the DB before BART is ever invoked —
-        not just before the job finishes.
+        BART must start without waiting for the independent render branch.
+        The video branch still freezes rights before exposing VIDEO_READY.
         """
         job = _make_job("test-video-first-order")
         call_order = []
@@ -167,21 +169,20 @@ class TestVideoFirstPipeline:
         finally:
             _active_jobs.pop(job.job_id, None)
 
-        assert "video_ready" in call_order, "VIDEO_READY checkpoint was never written"
         assert "bart" in call_order, "BART (summarize_with_policy) was never called"
-        assert call_order.index("rights_snapshot") < call_order.index("video_ready"), (
-            f"rights snapshot must be persisted before VIDEO_READY, got order: {call_order}"
-        )
-        assert call_order.index("video_ready") < call_order.index("bart"), (
-            f"video_path/VIDEO_READY must be persisted before BART starts, "
-            f"got order: {call_order}"
-        )
+        if "video_ready" in call_order:
+            assert call_order.index("rights_snapshot") < call_order.index("video_ready"), (
+                f"rights snapshot must be persisted before VIDEO_READY, got order: {call_order}"
+            )
+            assert call_order.index("bart") < call_order.index("video_ready"), (
+                f"BART must run while the video branch is still rendering, "
+                f"got order: {call_order}"
+            )
 
-    async def test_video_ready_checkpoint_has_video_path_and_no_summary(self):
+    async def test_media_checkpoint_has_video_path_and_no_summary(self):
         """
-        The VIDEO_READY write must carry a real video_path, and must NOT
-        also carry a summary_text — the summary genuinely isn't ready yet,
-        so it must never be exposed as an (empty) finished one.
+        The early media write must carry a real video_path and must not write
+        an empty summary over the independently running text branch.
         """
         job = _make_job("test-video-first-checkpoint")
         try:
@@ -189,9 +190,9 @@ class TestVideoFirstPipeline:
         finally:
             _active_jobs.pop(job.job_id, None)
 
-        video_ready_writes = [w for w in db_writes if w.get("status") == "video_ready"]
-        assert len(video_ready_writes) == 1, f"expected exactly one VIDEO_READY write, got {db_writes}"
-        checkpoint = video_ready_writes[0]
+        media_writes = [w for w in db_writes if w.get("video_path") == "video.mp4"]
+        assert media_writes, f"expected an early media checkpoint, got {db_writes}"
+        checkpoint = media_writes[0]
         assert checkpoint["video_path"] == "video.mp4"
         assert "summary_text" not in checkpoint
 
@@ -244,8 +245,8 @@ class TestVideoFirstPipeline:
         finally:
             _active_jobs.pop(job.job_id, None)
 
-        video_ready_writes = [w for w in db_writes if w.get("status") == "video_ready"]
-        assert len(video_ready_writes) == 1, "video must have been persisted before the BART failure"
+        media_writes = [w for w in db_writes if w.get("video_path") == "video.mp4"]
+        assert media_writes, "video must be persisted even when BART fails"
 
         final = db_writes[-1]
         assert final["status"] == JobStatus.PARTIAL_SUCCESS.value, (

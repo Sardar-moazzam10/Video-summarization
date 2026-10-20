@@ -153,13 +153,13 @@ const STEPS = [
   {
     num: '02', color: '#8b5cf6', colorRgb: '139,92,246',
     title: 'AI Fusion',
-    desc: 'Ollama + FAISS clusters topics, removes duplicates, and weaves a unified narrative.',
+    desc: 'Semantic analysis groups related topics, removes duplicates, and weaves a unified narrative.',
     icon: <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"/></svg>,
   },
   {
     num: '03', color: '#10b981', colorRgb: '16,185,129',
     title: 'Listen & Learn',
-    desc: 'Get a rich summary with the speakers\' own audio, BART chapters, and highlights.',
+    desc: 'Get a rich summary with the speakers\' own audio, summary chapters, and highlights.',
     icon: <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
   },
 ];
@@ -171,7 +171,7 @@ const STAT_ITEMS = [
   { value: '7',    label: 'AI Stages',   icon: '🤖' },
 ];
 
-const TECH_STACK = ['Whisper ASR', 'FAISS Vectors', 'Ollama LLM', 'SBERT Ranking', 'BART Model'];
+const TECH_STACK = ['Whisper Recovery', 'BGE Semantics', 'FAISS Search', 'TF-IDF Analysis', 'AI Summary'];
 
 const fadeUp = {
   hidden: { opacity: 0, y: 28 },
@@ -260,7 +260,7 @@ const ChoicePage = () => {
           <motion.p variants={fadeUp} className="cp-hero-desc">
             Search YouTube videos, merge multiple sources with AI fusion,
             and get concise summaries in the speakers' own voices.
-            Powered by Whisper, Ollama, FAISS and BART — 100% free.
+            Multilingual transcript recovery, semantic analysis, and AI summaries in one free workflow.
           </motion.p>
 
           <motion.div variants={fadeUp} className="cp-hero-actions">

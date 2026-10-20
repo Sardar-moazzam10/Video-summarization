@@ -7,7 +7,7 @@ Uses fpdf2 (pure Python, free, no system dependencies).
 from typing import Optional
 
 
-def format_as_text(summary: str, rich_output: Optional[dict] = None) -> str:
+def format_as_text(summary: str, rich_output: Optional[dict] = None, content_type: str = "explanatory") -> str:
     """Format summary + rich output as plain text."""
     lines = []
 
@@ -25,7 +25,7 @@ def format_as_text(summary: str, rich_output: Optional[dict] = None) -> str:
         takeaways = rich_output.get("key_takeaways", [])
         if takeaways:
             lines.append("-" * 40)
-            lines.append("KEY TAKEAWAYS")
+            lines.append("KEY EVENTS" if content_type == "narrative" else "KEY TAKEAWAYS")
             lines.append("-" * 40)
             for i, t in enumerate(takeaways, 1):
                 lines.append(f"  {i}. {t}")
@@ -92,7 +92,7 @@ def _mcell(pdf, text: str, h: float = 6) -> None:
     pdf.multi_cell(0, h, _safe_text(text))
 
 
-def generate_pdf(summary: str, rich_output: Optional[dict] = None) -> bytes:
+def generate_pdf(summary: str, rich_output: Optional[dict] = None, content_type: str = "explanatory") -> bytes:
     """Generate a PDF from summary + rich output. Returns PDF bytes."""
     from fpdf import FPDF
 
@@ -123,11 +123,12 @@ def generate_pdf(summary: str, rich_output: Optional[dict] = None) -> bytes:
     pdf.ln(4)
 
     if rich_output:
-        # Key Takeaways
+        # Key Takeaways / Key Events
         takeaways = rich_output.get("key_takeaways", [])
         if takeaways:
             pdf.set_font("Helvetica", "B", 13)
-            pdf.cell(0, 10, "Key Takeaways", new_x="LMARGIN", new_y="NEXT")
+            heading = "Key Events" if content_type == "narrative" else "Key Takeaways"
+            pdf.cell(0, 10, heading, new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Helvetica", "", 10)
             for i, t in enumerate(takeaways, 1):
                 _mcell(pdf, f"  {i}. {t}")

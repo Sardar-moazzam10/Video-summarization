@@ -181,7 +181,10 @@ class TestLanguageAbortPath:
             patch("backend.api.merge.get_jobs_collection", return_value=jobs_collection),
             patch("backend.api.merge.fetch_transcripts_with_segments", new_callable=AsyncMock,
                   return_value=(text_map, seg_map)),
-            patch("backend.api.merge.get_fusion_engine") as fake_fusion_factory, patch("backend.services.vector_store.get_vector_store"),
+            patch("backend.api.merge.get_fusion_engine") as fake_fusion_factory,
+            patch("backend.services.vector_store.get_vector_store") as vector_store,
+            patch("backend.api.merge.run_semantic_selection", new_callable=AsyncMock) as semantic_selection,
+            patch("backend.services.video_service.get_video_service") as video_service,
             patch("langdetect.detect", return_value="hi"),
             patch("backend.api.merge._active_jobs", {"test-hindi-job-001": job}),
             patch("asyncio.sleep", new_callable=AsyncMock),
@@ -194,7 +197,10 @@ class TestLanguageAbortPath:
             from backend.api.merge import process_merge_job
             await process_merge_job("test-hindi-job-001")
 
-        # Fusion must not have been called
+        # No English-only or media stage may run after preflight rejection.
+        semantic_selection.assert_not_awaited()
+        vector_store.assert_not_called()
+        video_service.assert_not_called()
         assert len(fusion_called) == 0, (
             "fusion_engine.fuse_transcripts() was called on a Hindi transcript — "
             "the language gate did not abort the pipeline"
@@ -329,7 +335,6 @@ class TestLanguageAbortPath:
             patch("langdetect.detect", return_value="en"),
             patch("backend.api.merge._active_jobs", {"test-english-job-001": job}),
             patch("backend.services.summarization_service.get_summarization_service") as fake_ss,
-            patch("backend.api.merge.settings.ENABLE_OLLAMA_ENRICHMENT", False),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             fe = MagicMock()

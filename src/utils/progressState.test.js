@@ -12,7 +12,7 @@ const VIDEO_FIRST_SEQUENCE = [
   'video_ready',
   'fusing',      // 74% transcript reconstruction for BART
   'summarizing', // 79-84% BART
-  'enriching',   // 85-90% Ollama
+  'enriching',   // 85-90% local text enrichment
   'completed',
 ];
 

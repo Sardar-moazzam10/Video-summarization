@@ -185,7 +185,7 @@ const MergePreviewPage = () => {
         body: JSON.stringify({
           video_ids: sentVideoIds,
           target_duration_minutes: targetMinutes,
-          generate_audio: true,
+          generate_audio: false,
           generate_video: generateVideo,
           highlight_duration_seconds: highlightSeconds,
           style: selectedStyle,

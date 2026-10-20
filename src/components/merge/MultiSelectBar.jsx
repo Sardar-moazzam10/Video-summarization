@@ -58,6 +58,16 @@ const MultiSelectBar = ({
   const count = selectedVideos.length;
   const isVisible = count > 0;
 
+  // Seed the local duration cache with verified YouTube Data API metadata.
+  // This avoids an unnecessary yt-dlp probe for search results.
+  selectedVideos.forEach((video) => {
+    const id = getVideoId(video);
+    const seconds = Number(video?.durationSeconds ?? video?.duration_seconds);
+    if (id && Number.isFinite(seconds) && seconds > 0) {
+      PROBED_DURATIONS_CACHE.set(id, seconds);
+    }
+  });
+
   // Deduplicate unique video IDs
   const uniqueVideoIds = Array.from(
     new Set(selectedVideos.map(getVideoId).filter(Boolean))
@@ -184,6 +194,9 @@ const MultiSelectBar = ({
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uniqueVideoIds.join(',')]);
+
+  // Transcript preflight is deliberately submit-time only (SearchPage.handleMerge).
+  // Running it here as well duplicated selected-source acquisition.
 
   // Strict canMerge gating
   const canMerge =

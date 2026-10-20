@@ -85,7 +85,7 @@ const SuggestedPodcastsPage = () => {
         body: JSON.stringify({
           video_ids: selectedForMerge,
           target_duration_minutes: durationMinutes,
-          generate_audio: true,
+          generate_audio: false,
           generate_video: true,
         }),
       });

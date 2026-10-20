@@ -1,12 +1,25 @@
 """Server-side YouTube Data API proxy used by the video search pages."""
 
 import httpx
+import re
 from fastapi import APIRouter, HTTPException, Query
+
+from ..services.media_probe import prime_duration_cache
 
 from ..core.config import get_settings
 
 
 router = APIRouter(prefix="/api/v1/youtube", tags=["youtube"])
+
+_ISO_DURATION = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
+
+def _duration_seconds(value):
+    match = _ISO_DURATION.match(str(value or ""))
+    if not match:
+        return None
+    hours, minutes, seconds = (int(part or 0) for part in match.groups())
+    total = hours * 3600 + minutes * 60 + seconds
+    return float(total) if total > 0 else None
 
 
 @router.get("/search")
@@ -76,24 +89,31 @@ async def search_videos(
                     videos_resp = await client.get(
                         "https://www.googleapis.com/youtube/v3/videos",
                         params={
-                            "part": "status",
+                            "part": "status,contentDetails",
                             "id": ",".join(video_ids),
                             "key": api_key,
                         },
                     )
                     status_map = {}
+                    duration_map = {}
                     if not videos_resp.is_error:
                         for v_item in videos_resp.json().get("items", []):
                             raw_id = v_item.get("id")
                             vid_str = raw_id if isinstance(raw_id, str) else (raw_id.get("videoId") if isinstance(raw_id, dict) else None)
                             if vid_str:
                                 status_map[vid_str] = v_item.get("status", {}).get("license")
+                                seconds = _duration_seconds(v_item.get("contentDetails", {}).get("duration"))
+                                if seconds:
+                                    duration_map[vid_str] = seconds
+                                    prime_duration_cache(vid_str, seconds)
 
                     # A failed or incomplete videos.list response is explicit
                     # unverified evidence; the search filter alone grants nothing.
                     for item in items:
                         vid = item.get("id", {}).get("videoId")
                         raw_lic = status_map.get(vid)
+                        if duration_map.get(vid):
+                            item["duration_seconds"] = duration_map[vid]
                         if raw_lic == "creativeCommon":
                             item["rights"] = {
                                 "youtube_license": "creativeCommon",

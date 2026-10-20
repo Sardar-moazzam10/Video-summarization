@@ -18,7 +18,7 @@ const KNOWLEDGE_BASE = {
   // ── OVERVIEW ──────────────────────────────────────
   "What does VidFusion do?": {
     answer:
-      "VidFusion turns long YouTube videos into short, intelligent summaries. You pick 1–10 YouTube videos, choose how long you want the output (5, 10, 15, or 20 minutes), and VidFusion produces:\n\n• A written summary with TLDR, chapters, and key takeaways\n• An MP3 of the summary in the original speakers' voices\n• A highlight video reel using clips from the original videos\n• An AI chat so you can ask questions about the content\n• Downloadable PDF, text, and subtitle files",
+      "VidFusion turns long YouTube videos into concise summaries. You pick YouTube videos, choose an output length, and VidFusion produces:\n\n• A written summary with TLDR, chapters, and key takeaways\n• An MP3 of the summary in the original speakers' voices\n• A highlight video reel using clips from the original videos\n• Downloadable PDF, text, and subtitle files",
     followUps: [
       "How do I get started?",
       "What output durations are available?",
@@ -29,7 +29,7 @@ const KNOWLEDGE_BASE = {
   // ── GETTING STARTED ───────────────────────────────
   "How do I get started?": {
     answer:
-      "Here is the step-by-step new user flow:\n\n**1. Create an account** → go to /signup, fill in name, email, username, password\n**2. Verify your email** → check inbox for the 6-digit code → enter it at /verify-code\n**3. Log in** → /login → you land on the Search page\n**4. Find videos** → use Search (type a title) or Discover (pick a topic)\n**5. Select 1–10 videos** → click any video card to select it\n**6. Choose output duration** → 5, 10, 15, or 20 minutes\n**7. Click Summarize** → processing begins automatically\n**8. Get results** → video, audio, summary, chapters, chat all appear when done",
+      "Here is the step-by-step new user flow:\n\n**1. Create an account** → go to /signup, fill in name, email, username, password\n**2. Verify your email** → check inbox for the 6-digit code → enter it at /verify-code\n**3. Log in** → /login → you land on the Search page\n**4. Find videos** → use Search (type a title) or Discover (pick a topic)\n**5. Select 1–10 videos** → click any video card to select it\n**6. Choose output duration** → 5, 10, 15, or 20 minutes\n**7. Click Summarize** → processing begins automatically\n**8. Get results** → video, audio, summary, chapters, and downloads appear when done",
     followUps: [
       "How do I find videos?",
       "What output durations are available?",
@@ -72,7 +72,7 @@ const KNOWLEDGE_BASE = {
   // ── PROCESSING STAGES ─────────────────────────────
   "How does the processing work?": {
     answer:
-      "After clicking Summarize, VidFusion runs 7 stages automatically:\n\n**01 Transcribing** — fetches spoken words from each video (YouTube API → yt-dlp → Whisper AI fallback)\n**02 Analyzing** — detects topics, language, structure. Non-English? NLLB-200 translates to English\n**03 Fusing** — merges content from all selected videos, removes duplicates\n**04 Selecting** — SBERT + TF-IDF rank transcript segments against the summary\n**05 Video Gen** — top clips trimmed from the original videos → concatenated, original audio kept\n**06 Summarizing** — BART-large-CNN compresses the narrative to your target word count\n**07 AI Enriching** — Ollama LLM adds chapters, TLDR, key takeaways\n\nProgress is shown live on the page.",
+      "After clicking Summarize, VidFusion processes your videos through these stages:\n\n**01 Transcribing** — retrieves available captions, with Whisper recovery when needed\n**02 Transcript Recovery** — detects language and recovers non-English speech as English with Whisper\n**03 Fusing** — combines selected sources and removes duplicated content\n**04 Selecting** — semantic analysis ranks and selects relevant transcript segments\n**05 Video** — selected clips are trimmed and combined with their original audio\n**06 Summarizing** — AI Summary condenses the selected narrative to your target length\n**07 Enriching** — local text analysis prepares the TLDR, takeaways, and chapters\n\nProgress is shown live on the page.",
     followUps: [
       "How long does processing take?",
       "What features are on the results page?",
@@ -82,7 +82,7 @@ const KNOWLEDGE_BASE = {
 
   "How long does processing take?": {
     answer:
-      "Typical processing times:\n\n• 1 video, 5-min output → **3–5 minutes**\n• 2 videos, 10-min output → **6–10 minutes**\n• 3+ videos, 20-min output → **12–18 minutes**\n\nLonger videos (2h+) or non-English videos (need NLLB translation) take more time. You can leave the page and come back — the job keeps running in the background.",
+      "Typical processing times:\n\n• 1 video, 5-min output → **3–5 minutes**\n• 2 videos, 10-min output → **6–10 minutes**\n• 3+ videos, 20-min output → **12–18 minutes**\n\nLonger videos (2h+) or non-English videos that need Whisper recovery can take more time. You can leave the page and come back — the job keeps running in the background.",
     followUps: [
       "What features are on the results page?",
       "How does the highlight video work?",
@@ -93,7 +93,7 @@ const KNOWLEDGE_BASE = {
   // ── RESULTS PAGE ──────────────────────────────────
   "What features are on the results page?": {
     answer:
-      "When processing completes, the same page transforms into a results dashboard with:\n\n**A — Highlight Video** — clips from the original videos, played in narration order with original speaker audio\n**B — Audio** — standalone MP3 player with the highlight reel's original audio\n**C — Text Summary** — full written summary with paragraphs\n**D — TLDR + Chapters + Takeaways** — 2-sentence core point, 5 key bullet points, 3 chapter sections\n**E — AI Chat** — type any question about the video content\n**F — Downloads** — audio MP3, text export, PDF with chapters, SRT subtitles\n**G — Warning banner** — if video highlights failed, you still get everything else",
+      "When processing completes, the same page transforms into a results dashboard with:\n\n**A — Highlight Video** — clips from the original videos, played in narration order with original speaker audio\n**B — Audio** — standalone MP3 player with the highlight reel's original audio\n**C — Text Summary** — full written summary with paragraphs\n**D — TLDR + Chapters + Takeaways** — the core point, key ideas, and chapter sections\n**E — Downloads** — audio MP3, text export, PDF, and subtitles\n**F — Warning banner** — if video highlights failed, you still get the available summary and audio",
     followUps: [
       "How does the highlight video work?",
       "Can I chat with the video?",
@@ -115,7 +115,7 @@ const KNOWLEDGE_BASE = {
   // ── AI CHAT ───────────────────────────────────────
   "Can I chat with the video?": {
     answer:
-      "Yes! The results page has a **Chat with Video** section at the bottom.\n\nHow it works:\n• You type any question — e.g. \"What did the speaker say about inflation?\"\n• FAISS semantic search finds the most relevant transcript segments\n• Ollama LLM (local, free) synthesizes a concise answer grounded in the actual video content\n• Answers are never hallucinated — they come from what was actually said in the video\n\nYou can ask anything: topic explanations, quotes, chapter summaries, comparisons between speakers.",
+      "Chat with Video is currently unavailable. You can still review the written summary, key topics, transcript, and source clips from the results page.",
     followUps: [
       "What AI models are used?",
       "What can I download?",
@@ -179,7 +179,7 @@ const KNOWLEDGE_BASE = {
   // ── AI MODELS ─────────────────────────────────────
   "What AI models are used?": {
     answer:
-      "VidFusion uses these AI models — all free, all running locally:\n\n**BART-large-CNN** — hierarchical text summarization (compresses transcripts to target word count)\n**Sentence-BERT (all-MiniLM-L6-v2)** — semantic similarity for clip selection, deduplication, and AI chat search\n**FAISS** — vector index for fast semantic search across all video transcripts\n**Ollama (local LLM)** — generates chapters, TLDR, key takeaways, and answers chat questions\n**Whisper** — speech-to-text when YouTube transcripts are unavailable\n**NLLB-200** — translates non-English transcripts to English (200 languages)\n**CLIP ViT-B/16** — cross-modal visual-text scoring for selecting the most relevant video frames",
+      "VidFusion combines AI models with local text analysis:\n\n**DistilBART** — creates concise written summaries\n**BGE embeddings** — support semantic understanding and relevance ranking\n**FAISS** — indexes transcript segments for similarity search\n**Whisper** — transcribes speech and recovers non-English audio as English\n**NLLB-200** — an additional translation fallback for supported languages\n**CLIP ViT-B/16** — scores video frames for visual relevance\n**TF-IDF** — helps identify key ideas and prepare summary details",
     followUps: [
       "How does the processing work?",
       "How does the highlight video work?",
@@ -190,7 +190,7 @@ const KNOWLEDGE_BASE = {
   // ── TROUBLESHOOTING ───────────────────────────────
   "What if the video fails or gets stuck?": {
     answer:
-      "A few common situations:\n\n**Stuck at a stage for 10+ min** — the job has a timeout system. If a stage (e.g. translation, video download) times out, it automatically falls back and continues.\n\n**'Something went wrong' banner** — the summary and audio still completed. Only the video highlight reel failed. You still have the full written summary, audio narration, TLDR, chapters, and chat.\n\n**Stuck at 98% (video generation)** — this usually means the video download timed out. Try with a shorter or different video.\n\n**Non-English video** — VidFusion auto-detects the language and translates via NLLB-200. If translation times out, it proceeds with the original text (summary quality may be reduced).",
+      "A few common situations:\n\n**Stuck at a stage for 10+ min** — the job has a timeout system. If a stage (such as transcript recovery or video download) times out, it can fall back and continue.\n\n**'Something went wrong' banner** — the summary and audio may still be available even if video rendering failed.\n\n**Stuck during video generation** — this may mean a source download or rendering step timed out. Try a shorter or different video.\n\n**Non-English video** — VidFusion detects the transcript language and uses Whisper for multilingual recovery. If recovery is unavailable, the result may be limited.",
     followUps: [
       "How long does processing take?",
       "What features are on the results page?",

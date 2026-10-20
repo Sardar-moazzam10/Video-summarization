@@ -1,15 +1,21 @@
 import { buildMergeRequest } from './SearchPage';
 
-test('normal Search query is propagated through the existing merge request', () => {
+test('title discovery is explicitly an overall multi-source request', () => {
   expect(buildMergeRequest(['a', 'b'], 5, ' Supervised Machine Learning ')).toEqual({
     video_ids: ['a', 'b'],
     target_duration_minutes: 5,
-    generate_audio: true,
+    generate_audio: false,
     generate_video: true,
-    query: 'Supervised Machine Learning',
+    summary_scope: 'overall',
+    source_scope: 'multi',
+    discovery_query: 'Supervised Machine Learning',
   });
 });
 
-test('query remains optional for normal non-keyword merges', () => {
-  expect(buildMergeRequest(['a'], 10, '').query).toBeUndefined();
+test('title discovery single never sends semantic intent', () => {
+  const request = buildMergeRequest(['a'], 10, 'Some Video Title');
+  expect(request.source_scope).toBe('single');
+  expect(request.summary_scope).toBe('overall');
+  expect(request.summary_query).toBeUndefined();
+  expect(request.query).toBeUndefined();
 });

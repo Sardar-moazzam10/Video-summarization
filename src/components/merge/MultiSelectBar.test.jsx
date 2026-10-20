@@ -7,6 +7,7 @@ import * as apiModule from '../../config/api';
 jest.mock('../../config/api', () => ({
   API: {
     MERGE_VIDEO_DURATIONS: (ids) => `http://localhost:8000/api/v1/merge/video-durations?video_ids=${ids.join(',')}`,
+    MERGE_PREFLIGHT: 'http://localhost:8000/api/v1/merge/preflight',
   },
   authenticatedFetch: jest.fn(),
 }));
@@ -14,13 +15,20 @@ jest.mock('../../config/api', () => ({
 describe('MultiSelectBar duration validation & gating', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    apiModule.authenticatedFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ can_merge: true, sources: {} }),
+    });
   });
 
   test('deduplicates videos and disables submit while validating', async () => {
     let resolvePromise;
-    apiModule.authenticatedFetch.mockImplementation(() => new Promise((resolve) => {
-      resolvePromise = resolve;
-    }));
+    apiModule.authenticatedFetch.mockImplementation((url) => {
+      if (url.includes('preflight')) {
+        return Promise.resolve({ ok: true, json: async () => ({ can_merge: true, sources: {} }) });
+      }
+      return new Promise((resolve) => { resolvePromise = resolve; });
+    });
 
     // Pass duplicate videos
     const videos = [
@@ -121,6 +129,37 @@ describe('MultiSelectBar duration validation & gating', () => {
 
     fireEvent.click(submitBtn);
     expect(onMerge).toHaveBeenCalledWith(10); // defaults to 10 if allowed
+  });
+
+  test('defers transcript preflight to submit handler and avoids duplicate requests', async () => {
+    apiModule.authenticatedFetch.mockImplementation((url) => {
+      if (url.includes('video-durations')) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          status: 'valid', durations: { hindi_vid: 900 },
+          combined_duration_label: '15m', allowed_durations: [5, 10],
+        }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({
+        can_merge: false,
+        sources: { hindi_vid: {
+          source_id: 'hindi_vid', error_code: 'UNSUPPORTED_TRANSCRIPT_LANGUAGE',
+          detected_language: 'hi', supported_languages: ['en'], ready: false,
+        } },
+      }) });
+    });
+
+    const onMerge = jest.fn();
+    render(<MultiSelectBar selectedVideos={[{ id: 'hindi_vid', title: 'Hindi video' }]} onRemove={() => {}} onClear={() => {}} onMerge={onMerge} />);
+
+    const submitBtn = screen.getByTestId('multiselectbar-submit-btn');
+    await waitFor(() => expect(submitBtn).not.toBeDisabled());
+    expect(apiModule.authenticatedFetch).toHaveBeenCalledTimes(1);
+    expect(apiModule.authenticatedFetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('preflight'),
+      expect.anything()
+    );
+    fireEvent.click(submitBtn);
+    expect(onMerge).toHaveBeenCalledWith(10);
   });
 });
 

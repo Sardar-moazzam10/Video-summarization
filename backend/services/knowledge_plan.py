@@ -2,7 +2,7 @@
 
 TF-IDF remains the candidate generator.  This module filters obviously noisy
 phrases, keeps the existing BGE-canonicalised concepts, and labels evidence in
-complete-thought segments with deterministic educational roles.  It deliberately
+complete-thought segments with deterministic content roles.  It deliberately
 does not call an LLM or create a second selection path.
 """
 
@@ -26,6 +26,26 @@ UNIT_ROLES = (
     "solution_prevention_application",
 )
 
+NARRATIVE_ROLES = ("event", "interaction", "development")
+
+_NARRATIVE_ROLE_PATTERNS = {
+    "event": (
+        r"\b(?:arrived|left|entered|returned|found|gave|took|started|stopped|happened|occurred|met|joined|lost|won)\b",
+    ),
+    "interaction": (
+        r"\b(?:asked|answered|told|said|replied|called|spoke|talked|thanked|argued|agreed)\b",
+    ),
+    "development": (
+        r"\b(?:then|later|afterwards|eventually|finally|began|became|changed|continued|decided|realized)\b",
+    ),
+}
+
+_NARRATIVE_ROLE_TIERS = {
+    "event": (1, 1.00),
+    "interaction": (1, 0.90),
+    "development": (1, 0.95),
+}
+
 _GENERIC_TERMS = frozenset(
     """
     bit way thing things stuff little looking new particularly times point points
@@ -46,6 +66,7 @@ _ROLE_PATTERNS = {
     "mechanism_cause": (
         r"\b(because|caused by|happens when|why|mechanism|leads to|results from|works by)\b",
         r"\b(train|training|learns?|fitting|optimi[sz])\w*\b",
+        r"\b(allows?|prevents?|resists?|moves?|movement|flow)\b",
     ),
     "example": (
         r"\b(for example|for instance|suppose|imagine|consider|e\.g\.|example)\b",
@@ -103,6 +124,46 @@ _HARD_FILLER_PATTERNS = (
     r"\b(like and subscribe|thanks for watching|welcome to|today'?s lecture)\b",
     r"\b(homework|office hours?|course website|enrollment|subscribe|sponsor|money back guarantee)\b",
 )
+
+_QUERY_GLUE = frozenset(
+    "what is are explain describe tell show about difference differences between"
+    .split()
+)
+
+
+def _stemmed_tokens(text: str) -> List[str]:
+    """Small deterministic normaliser for lexical evidence, not a stemmer API."""
+    tokens = re.findall(r"\b\w{2,}\b", _normalise(text).replace("-", " "))
+    return [
+        token[:-1] if len(token) > 4 and token.endswith("s") else token
+        for token in tokens
+    ]
+
+
+def _query_facets(query: str, segments: Sequence) -> List[str]:
+    """Split explicit intent into transcript-supported facets."""
+    clean = re.sub(r"[-_/]+", " ", _normalise(query))
+    clauses = re.split(r"\s+(?:and|or|versus|vs)\s+|\s*[,;:]\s*", clean)
+    evidence_tokens = set(_stemmed_tokens(" ".join(
+        str(getattr(segment, "text", "")) for segment in segments
+    )))
+    facets = []
+    for clause in clauses:
+        words = [word for word in _stemmed_tokens(clause) if word not in _QUERY_GLUE]
+        if not words or not set(words) <= evidence_tokens:
+            continue
+        label = " ".join(words)
+        if label not in facets:
+            facets.append(label)
+    return facets
+
+
+def _facet_evidence(text: str, facet: str) -> float:
+    wanted = set(_stemmed_tokens(facet))
+    present = set(_stemmed_tokens(text))
+    if not wanted or not wanted <= present:
+        return 0.0
+    return 1.0 if len(wanted) > 1 else 0.85
 
 
 @dataclass(frozen=True)
@@ -201,15 +262,10 @@ def filter_candidate_concepts(
         tokens = set(_normalise(name).split())
         if _is_noise(name) and not (query_tokens and tokens & query_tokens):
             continue
-        if query_embedding is not None and getattr(concept, "embedding", None) is not None:
-            q = np.asarray(query_embedding, dtype=float).reshape(-1)
-            c = np.asarray(concept.embedding, dtype=float).reshape(-1)
-            denom = np.linalg.norm(q) * np.linalg.norm(c)
-            similarity = float(np.dot(q, c) / denom) if denom > 1e-9 else 0.0
-            # BGE short-phrase similarities are compressed high; 0.62 removes
-            # clear corpus accidents while retaining related subtopics.
-            if query_tokens and similarity < 0.62 and not (tokens & query_tokens):
-                continue
+        # These concepts already have source evidence. A broad search title or
+        # misspelled query is not an exhaustive vocabulary of its subtopics.
+        # Query relevance belongs in the selector's soft score, not a hard
+        # filter that deleted all 25 concepts in the computer-course report.
         kept.append(concept)
     return kept
 
@@ -227,6 +283,15 @@ def _roles_for_text(text: str) -> Dict[str, float]:
     for role, (patterns, _tier, _importance) in _KNOWLEDGE_SPECS.items():
         if any(re.search(pattern, folded) for pattern in patterns):
             scores[role] = 0.90
+    return scores
+
+
+def _narrative_roles_for_text(text: str) -> Dict[str, float]:
+    scores = {}
+    for role, patterns in _NARRATIVE_ROLE_PATTERNS.items():
+        hits = sum(bool(re.search(pattern, text, re.I)) for pattern in patterns)
+        if hits:
+            scores[role] = min(1.0, 0.75 + 0.15 * (hits - 1))
     return scores
 
 
@@ -269,6 +334,7 @@ def build_knowledge_plan(
     query: str = "",
     query_embedding=None,
     budget_seconds: float | None = None,
+    content_type: str = "explanatory",
 ) -> KnowledgePlan:
     """Annotate the existing complete-thought candidates with knowledge units."""
     canonical = filter_candidate_concepts(
@@ -302,6 +368,7 @@ def build_knowledge_plan(
     else:
         max_tier = 4
     query_tokens = set(_normalise(query).split())
+    query_facets = _query_facets(query, segments) if query_tokens else []
     # With explicit intent, knowledge units belong to the intent root. Related
     # TF-IDF concepts remain useful annotations/candidates, but must not each
     # spawn a second full definition/example/evaluation checklist of their own.
@@ -361,8 +428,62 @@ def build_knowledge_plan(
                 },
             }
 
-        roles = _roles_for_text(segment.text)
-        specific_roles = {
+        narrative = content_type == "narrative"
+        roles = _narrative_roles_for_text(segment.text) if narrative else _roles_for_text(segment.text)
+
+        # Explicit query facets become units only when transcript evidence
+        # contains them. Embeddings/TF-IDF still handle semantic expansion.
+        for facet in query_facets:
+            evidence = _facet_evidence(segment.text, facet)
+            if not evidence:
+                continue
+            unit_id = f"query::{facet.replace(' ', '_')}"
+            unit = KnowledgeUnit(
+                unit_id=unit_id,
+                concept=facet,
+                role="query_facet",
+                importance=1.0,
+                essential=True,
+                tier=1,
+            )
+            units.setdefault(unit_id, unit)
+            segment.knowledge_unit_scores[unit_id] = evidence
+            segment.knowledge_unit_metadata[unit_id] = unit.to_dict()
+            candidate_counts[unit_id] = candidate_counts.get(unit_id, 0) + 1
+
+        # Educational roles become query units when a supported query facet is
+        # present, even if a broad query embedding misses the passage.
+        facet_strength = max(
+            (_facet_evidence(segment.text, facet) for facet in query_facets),
+            default=0.0,
+        )
+        if query_name and facet_strength:
+            for role, role_strength in roles.items():
+                if narrative:
+                    tier, role_importance = _NARRATIVE_ROLE_TIERS[role]
+                elif role in _KNOWLEDGE_SPECS:
+                    _patterns, tier, role_importance = _KNOWLEDGE_SPECS[role]
+                else:
+                    tier, role_importance = _ROLE_TIERS[role]
+                if tier > max_tier:
+                    continue
+                unit_id = f"{_normalise(query_name).replace(' ', '_')}::{role}"
+                unit = KnowledgeUnit(
+                    unit_id=unit_id,
+                    concept=query_name,
+                    role=role,
+                    importance=role_importance,
+                    essential=tier == 1,
+                    tier=tier,
+                )
+                units.setdefault(unit_id, unit)
+                segment.knowledge_unit_scores[unit_id] = float(np.clip(
+                    facet_strength * role_strength, 0.0, 1.0
+                ))
+                segment.knowledge_unit_metadata[unit_id] = unit.to_dict()
+                candidate_counts[unit_id] = candidate_counts.get(unit_id, 0) + 1
+
+        specific_roles = set(roles) if narrative else {
             role for role in roles if role in _KNOWLEDGE_SPECS
         }
         scored_concepts = []
@@ -396,7 +517,9 @@ def build_knowledge_plan(
                 )
             )
             for role, role_strength in roles.items():
-                if role in _KNOWLEDGE_SPECS:
+                if narrative:
+                    tier, role_importance = _NARRATIVE_ROLE_TIERS[role]
+                elif role in _KNOWLEDGE_SPECS:
                     _patterns, tier, role_importance = _KNOWLEDGE_SPECS[role]
                 else:
                     tier, role_importance = _ROLE_TIERS[role]

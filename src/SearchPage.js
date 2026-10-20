@@ -21,16 +21,32 @@ const EXAMPLE_QUERIES = [
 export const buildMergeRequest = (videoIds, durationMinutes, query, allowPartial = false) => ({
   video_ids: videoIds,
   target_duration_minutes: durationMinutes,
-  generate_audio: true,
+  generate_audio: false,
   generate_video: true,
-  query: (query || '').trim() || undefined,
+  summary_scope: 'overall',
+  source_scope: videoIds.length === 1 ? 'single' : 'multi',
+  discovery_query: (query || '').trim() || undefined,
   ...(allowPartial ? { allow_partial_sources: true } : {}),
 });
 
 const SearchPage = () => {
   const [videos, setVideos] = useState([]);
   const [noResults, setNoResults] = useState(false);
-  const [selectedForMerge, setSelectedForMerge] = useState([]);
+  const [selectedForMerge, setSelectedForMerge] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('selectedForMerge');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('selectedForMerge', JSON.stringify(selectedForMerge));
+    } catch {}
+  }, [selectedForMerge]);
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [searchQuery, setSearchQuery] = useState(
@@ -56,6 +72,7 @@ const SearchPage = () => {
     setSearchQuery(normalizedQuery);
     sessionStorage.setItem('normalSearchQuery', normalizedQuery);
     setSelectedForMerge([]);
+    sessionStorage.removeItem('selectedForMerge');
     setErrorMsg('');
     setNoResults(false);
     setIsLoading(true);
@@ -99,6 +116,7 @@ const SearchPage = () => {
         id: v.id?.videoId,
         title: v.snippet?.title,
         thumbnail: v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url,
+        durationSeconds: v.duration_seconds,
       }));
 
   const executeMergeJob = async (videoIds, durationMinutes, allowPartial = false) => {
@@ -120,6 +138,7 @@ const SearchPage = () => {
       }
       const data = await res.json();
       if (data.job_id) {
+        sessionStorage.removeItem('selectedForMerge');
         navigate(`/merged-player/${data.job_id}`);
       } else {
         setErrorMsg(
@@ -195,7 +214,10 @@ const SearchPage = () => {
   const handleRemoveVideo = (videoId) =>
     setSelectedForMerge((prev) => prev.filter((id) => id !== videoId));
 
-  const handleClearSelection = () => setSelectedForMerge([]);
+  const handleClearSelection = () => {
+    setSelectedForMerge([]);
+    sessionStorage.removeItem('selectedForMerge');
+  };
 
   return (
     <div className="min-h-screen text-white" style={{ background: '#000212' }}>

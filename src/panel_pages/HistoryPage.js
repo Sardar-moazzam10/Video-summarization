@@ -27,7 +27,15 @@ const typeConfig = {
 
 function timeAgo(dateStr) {
   const now = new Date();
-  const date = new Date(dateStr);
+  // MongoDB returns naive ISO datetimes for UTC values. Without an explicit
+  // suffix browsers interpret them as local time, which makes fresh history
+  // entries look hours old outside UTC.
+  const normalizedDate = typeof dateStr === 'string'
+    && /^\d{4}-\d{2}-\d{2}T/.test(dateStr)
+    && !/(?:Z|[+-]\d{2}:?\d{2})$/.test(dateStr)
+      ? `${dateStr}Z`
+      : dateStr;
+  const date = new Date(normalizedDate);
   const diff = Math.floor((now - date) / 1000);
   if (diff < 60) return 'Just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
@@ -84,7 +92,7 @@ const HistoryPage = () => {
     if (item.type === 'merge') {
       navigate(`/merged-player/${item.jobId}`);
     } else if (item.type === 'search') {
-      navigate(`/search/${encodeURIComponent(item.query || '')}`);
+      navigate(`/search/${encodeURIComponent(item.query || '')}`, { state: { fromHistory: true } });
     } else if (item.type === 'watch') {
       navigate(`/video-player/${encodeURIComponent(item.videoId)}`);
     } else if (item.type === 'transcript-view') {
