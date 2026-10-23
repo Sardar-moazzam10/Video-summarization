@@ -117,22 +117,57 @@ def _component_state(value, *, default_status=ComponentStatus.QUEUED) -> OutputC
 
 def _output_state_payload(value) -> Dict[str, Any]:
     """Return component states plus their independently derived presentation state."""
-    generate_video = (
-        value.get("generate_video", False)
-        if isinstance(value, dict)
-        else getattr(value, "generate_video", False)
-    )
-    video_default = (
-        ComponentStatus.QUEUED if bool(generate_video)
-        else ComponentStatus.NOT_REQUESTED
-    )
+    def _field(name, default=None):
+        if isinstance(value, dict):
+            return value.get(name, default)
+        return getattr(value, name, default)
+
+    raw_status = _field("status")
+    job_status = raw_status.value if hasattr(raw_status, "value") else str(raw_status or "")
+    generate_video = bool(_field("generate_video", False))
+    has_video = bool(_field("video_path"))
+    has_summary = bool(_field("summary_text"))
+    summary_unavailable = bool(_field("summary_unavailable", False))
+
+    if not generate_video:
+        video_default = ComponentStatus.NOT_REQUESTED
+    elif job_status in ("completed", "partial_success", "video_ready") and has_video:
+        video_default = ComponentStatus.READY
+    elif job_status in ("completed", "partial_success") and not has_video:
+        video_default = ComponentStatus.FAILED
+    elif job_status == "error":
+        video_default = ComponentStatus.FAILED
+    elif job_status == "cancelled":
+        video_default = ComponentStatus.CANCELLED
+    else:
+        video_default = ComponentStatus.QUEUED
+
+    if job_status in ("completed", "partial_success") and has_summary:
+        text_default = ComponentStatus.READY
+    elif job_status in ("completed", "partial_success") and (summary_unavailable or not has_summary):
+        text_default = ComponentStatus.FAILED
+    elif job_status == "error":
+        text_default = ComponentStatus.FAILED
+    elif job_status == "cancelled":
+        text_default = ComponentStatus.CANCELLED
+    else:
+        text_default = ComponentStatus.QUEUED
+
     video = _component_state(
-        value.get("video_component") if isinstance(value, dict) else getattr(value, "video_component", None),
+        _field("video_component"),
         default_status=video_default,
     )
     text = _component_state(
-        value.get("text_component") if isinstance(value, dict) else getattr(value, "text_component", None),
+        _field("text_component"),
+        default_status=text_default,
     )
+
+    if job_status in ("completed", "partial_success"):
+        if has_summary and text.status in (ComponentStatus.QUEUED, ComponentStatus.RUNNING):
+            text = OutputComponentState(status=ComponentStatus.READY, stage="ready", progress_percent=100)
+        if generate_video and has_video and video.status in (ComponentStatus.QUEUED, ComponentStatus.RUNNING):
+            video = OutputComponentState(status=ComponentStatus.READY, stage="ready", progress_percent=100)
+
     return {
         "output_status": derive_output_status(video, text),
         "video_component": video,
@@ -604,8 +639,20 @@ async def create_merge_job(
     jobs_collection = await get_jobs_collection()
     await jobs_collection.insert_one(job.model_dump())
 
-    # Start background processing
-    background_tasks.add_task(process_merge_job, job.job_id)
+    # Start background processing: Dispatch to Redis worker queue if available, with safe fallback
+    enqueued = False
+    if settings.REDIS_QUEUE_ENABLED:
+        try:
+            from ..core.redis_queue import enqueue_merge_job
+            enqueued = await enqueue_merge_job(job.job_id)
+            if enqueued:
+                logger.info("Job %s successfully dispatched to Redis worker queue", job.job_id)
+                _active_jobs.pop(job.job_id, None)
+        except Exception as exc:
+            logger.warning("Redis enqueue failed for job %s: %s; falling back to in-memory processing", job.job_id, exc)
+
+    if not enqueued:
+        background_tasks.add_task(process_merge_job, job.job_id)
 
     # Estimate time (rough: 30s per video + 60s for fusion)
     estimated_seconds = len(request.video_ids) * 30 + 60
@@ -650,13 +697,15 @@ async def preflight_merge_sources_post(
     results = await service.preflight_sources(request.video_ids, per_source_timeout=request.per_source_timeout)
     ready_ids = [vid for vid, r in results.items() if r.get("ready")]
     unavailable_ids = [vid for vid, r in results.items() if not r.get("ready")]
-    unsupported_ids = [vid for vid, r in results.items() if r.get("error_code") == "UNSUPPORTED_TRANSCRIPT_LANGUAGE"]
+    unsupported_ids = [vid for vid, r in results.items() if r.get("error_code") in ("UNSUPPORTED_TRANSCRIPT_LANGUAGE", "AUDIO_TRANSCRIPTION_EXCEEDED")]
+    translation_required_ids = [vid for vid, r in results.items() if r.get("status") == "translation_required"]
     return {
         "can_merge": len(unavailable_ids) == 0,
         "requested_video_ids": request.video_ids,
         "ready_video_ids": ready_ids,
         "unavailable_video_ids": unavailable_ids,
         "unsupported_video_ids": unsupported_ids,
+        "translation_required_video_ids": translation_required_ids,
         "sources": results,
         "ready_count": len(ready_ids),
         "total_count": len(request.video_ids),
@@ -675,13 +724,15 @@ async def preflight_merge_sources_get(
     results = await service.preflight_sources(video_ids, per_source_timeout=per_source_timeout)
     ready_ids = [vid for vid, r in results.items() if r.get("ready")]
     unavailable_ids = [vid for vid, r in results.items() if not r.get("ready")]
-    unsupported_ids = [vid for vid, r in results.items() if r.get("error_code") == "UNSUPPORTED_TRANSCRIPT_LANGUAGE"]
+    unsupported_ids = [vid for vid, r in results.items() if r.get("error_code") in ("UNSUPPORTED_TRANSCRIPT_LANGUAGE", "AUDIO_TRANSCRIPTION_EXCEEDED")]
+    translation_required_ids = [vid for vid, r in results.items() if r.get("status") == "translation_required"]
     return {
         "can_merge": len(unavailable_ids) == 0,
         "requested_video_ids": video_ids,
         "ready_video_ids": ready_ids,
         "unavailable_video_ids": unavailable_ids,
         "unsupported_video_ids": unsupported_ids,
+        "translation_required_video_ids": translation_required_ids,
         "sources": results,
         "ready_count": len(ready_ids),
         "total_count": len(video_ids),
@@ -700,8 +751,8 @@ async def get_job_status(
     """
     job_data = await _get_owned_job(job_id, current_user)
 
-    # Check memory first after database-backed ownership validation.
-    if job_id in _active_jobs:
+    # Check memory first only if Redis queue is disabled and job is actively tracked locally
+    if not settings.REDIS_QUEUE_ENABLED and job_id in _active_jobs:
         job = _active_jobs[job_id]
         output_state = _output_state_payload(job)
         return MergeJobResponse(
@@ -850,7 +901,9 @@ async def get_job_result(
         )
 
     text_component_status = (job_data.get("text_component") or {}).get("status")
-    if text_component_status:
+    if job_data["status"] in {JobStatus.COMPLETED.value, JobStatus.PARTIAL_SUCCESS.value} and job_data.get("summary_text"):
+        summary_pending = False
+    elif text_component_status:
         summary_pending = text_component_status in {
             ComponentStatus.QUEUED.value,
             ComponentStatus.RUNNING.value,
@@ -1045,13 +1098,26 @@ async def evaluate_job_quality(
     if cached:
         return cached
 
+    # If already running asynchronously in background, return non-blocking running status
+    if not llm and job_data.get("evaluation_state") == "running":
+        return {
+            "job_id": job_id,
+            "evaluation_state": "running",
+            "unavailable": False,
+            "summary_score": None,
+            "video_score": None,
+            "check_a": {},
+            "check_b": {},
+            "message": "Quality scorecard is currently computing in the background...",
+        }
+
     now = datetime.utcnow()
     await jobs_collection.update_one({"job_id": job_id}, {"$set": {
         "evaluation_state": "running",
         "evaluation_error": None,
         "evaluation_updated_at": now,
     }})
-    timeout_seconds = 180.0 if llm else 90.0
+    timeout_seconds = 240.0 if llm else 120.0
     try:
         report = await asyncio.wait_for(
             _build_quality_report(job_data, use_llm=bool(llm)),
@@ -1169,6 +1235,36 @@ async def _build_quality_report(job_data: dict, use_llm: bool) -> dict:
         "summary_words": report["summary_words"],
         "num_clips": report["num_clips"],
     }
+
+
+async def precompute_job_quality_scorecard(job_id: str, jobs_collection) -> None:
+    """Precompute the llm=false quality scorecard in the background upon job completion."""
+    try:
+        job_data = await jobs_collection.find_one({"job_id": job_id})
+        if not job_data:
+            return
+        if job_data.get(_QUALITY_CACHE_FIELD):
+            return
+        if job_data.get("summary_unavailable") or not (job_data.get("summary_text") or "").strip():
+            return
+
+        now = datetime.utcnow()
+        await jobs_collection.update_one({"job_id": job_id}, {"$set": {
+            "evaluation_state": "running",
+            "evaluation_updated_at": now,
+        }})
+        report = await _build_quality_report(job_data, use_llm=False)
+        report["evaluation_state"] = "completed"
+        await jobs_collection.update_one({"job_id": job_id}, {"$set": {
+            _QUALITY_CACHE_FIELD: report,
+            "evaluation_state": "completed",
+            "evaluation_error": None,
+            "evaluation_updated_at": datetime.utcnow(),
+        }})
+        print(f"[Quality] Scorecard precomputed and cached for job {job_id}")
+    except Exception as exc:
+        print(f"[Quality] Background scorecard precomputation failed for job {job_id}: {exc}")
+
 
 
 @router.get("/{job_id}/audio")
@@ -1334,7 +1430,7 @@ async def stream_job_progress(
 
     async def event_generator():
         while True:
-            job = _active_jobs.get(job_id)
+            job = None if settings.REDIS_QUEUE_ENABLED else _active_jobs.get(job_id)
 
             if job:
                 data = {
@@ -2155,7 +2251,7 @@ async def run_semantic_selection(
 # BACKGROUND PROCESSING
 # =====================================================
 
-async def process_merge_job(job_id: str):
+async def process_merge_job(job_id: str, is_worker: bool = False):
     """
     Process a merge job in the background.
 
@@ -2174,7 +2270,13 @@ async def process_merge_job(job_id: str):
     try:
         job = _active_jobs.get(job_id)
         if not job:
-            return
+            doc = await jobs_collection.find_one({"job_id": job_id})
+            if not doc:
+                logger.error("Job %s not found in memory or database; aborting", job_id)
+                return
+            doc.pop("_id", None)
+            job = MergeJob.model_validate(doc)
+            _active_jobs[job_id] = job
         content_type = "explanatory"
         content_type_confidence = 0.0
         if not getattr(job, "job_started_at", None):
@@ -3281,6 +3383,19 @@ async def process_merge_job(job_id: str):
                 print(f"[BART] Input narrative: {len(fusion_result.narrative.split())} words")
                 summarizer_svc = get_summarization_service()
                 t_bart_start = perf_counter()
+                loop = asyncio.get_running_loop()
+
+                def on_bart_chunk_done(done: int, total: int):
+                    pct = min(91, 86 + int(5 * (done / max(total, 1))))
+                    msg = f"Running BART-large-CNN summarization (Chunk {done}/{total})..."
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            update_status(JobStatus.SUMMARIZING, pct, msg),
+                            loop
+                        )
+                    except Exception:
+                        pass
+
                 summary_text, summarization_decision = await asyncio.to_thread(
                     summarizer_svc.summarize_with_policy,
                     fusion_result.narrative,
@@ -3288,7 +3403,10 @@ async def process_merge_job(job_id: str):
                     profile,
                     None,
                     content_type,
+                    on_bart_chunk_done,
                 )
+                from ..services.text_normalization import sanitize_summary_text
+                summary_text = sanitize_summary_text(summary_text)
                 t_bart_dur = round(perf_counter() - t_bart_start, 3)
                 job.stage_timings_seconds["bart_summarization"] = t_bart_dur
 
@@ -3493,6 +3611,14 @@ async def process_merge_job(job_id: str):
             }}
         )
 
+        # Trigger background precomputation of quality scorecard so frontend gets instant cached result
+        if summary_text and not getattr(job, "summary_unavailable", False):
+            try:
+                asyncio.create_task(precompute_job_quality_scorecard(job_id, jobs_collection))
+            except Exception as qc_err:
+                print(f"[Quality] Scorecard task schedule warning: {qc_err}")
+
+
 
 
     except Exception as e:
@@ -3565,7 +3691,7 @@ async def process_merge_job(job_id: str):
             # Preserve the existing five-minute in-memory retention for normal
             # completion/error paths. Cancellation performs minimal cleanup and
             # must propagate immediately.
-            if not was_cancelled and not delegated_outputs:
+            if not was_cancelled and not delegated_outputs and not is_worker:
                 try:
                     loop = asyncio.get_running_loop()
                     if not loop.is_closed():

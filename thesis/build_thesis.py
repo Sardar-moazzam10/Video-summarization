@@ -76,6 +76,9 @@ def set_base_style(doc):
     style.font.color.rgb = RGBColor(0, 0, 0)
     style.paragraph_format.space_after = Pt(10)
     style.paragraph_format.line_spacing = 1.5
+    # Justified body text, matching the reference template; headings,
+    # captions and title-page lines set their own alignment explicitly.
+    style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     rpr = style.element.get_or_add_rPr()
     rFonts = rpr.find(qn('w:rFonts'))
     if rFonts is None:
@@ -86,10 +89,10 @@ def set_base_style(doc):
     sec = doc.sections[0]
     sec.page_height = Cm(29.7)
     sec.page_width = Cm(21.0)
-    sec.left_margin = Cm(3.0)
-    sec.right_margin = Cm(2.5)
-    sec.top_margin = Cm(2.5)
-    sec.bottom_margin = Cm(2.5)
+    sec.left_margin = Inches(1)
+    sec.right_margin = Inches(1)
+    sec.top_margin = Inches(1)
+    sec.bottom_margin = Inches(1)
 
 
 def add_page_number_field(paragraph):
@@ -125,6 +128,8 @@ def heading(doc, text, level=1, page_break_before=True):
     run = h.add_run(text)
     run.font.name = FONT_NAME
     run.font.bold = True
+    # Sub-sections (1.6.1, 2.1.1, ...) are bold italic, as in the reference template.
+    run.font.italic = level >= 4
     run.font.size = Pt(H1_SIZE if level == 1 else (H2_SIZE if level == 2 else H3_SIZE))
     run.font.color.rgb = RGBColor(0, 0, 0)
 
@@ -661,11 +666,11 @@ def build(toc_page_map=None):
         align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
 
     # ---- Certificate of Approval ----
-    # Kept deliberately compact (small font, tight spacing, one designation
-    # line instead of three) so all six signatories fit on a single page, as
-    # in the university's own template — this page is meant to be signed by
-    # hand and printed, so it must not spill across a page break.
-    CERT_SIZE = 10.5
+    # Kept deliberately compact (tight spacing, one designation line instead
+    # of three) so all six signatories fit on a single page, as in the
+    # university's own template — this page is meant to be signed by hand and
+    # printed, so it must not spill across a page break.
+    CERT_SIZE = 12
     heading(doc, "CERTIFICATE OF APPROVAL", level=1)
     students_line = " and ".join(f"{name}, {reg}" for name, reg in STUDENTS)
     cert_intro = doc.add_paragraph()
@@ -699,6 +704,7 @@ def build(toc_page_map=None):
         detail.paragraph_format.space_before = Pt(0)
         detail.paragraph_format.space_after = Pt(0)
         detail.paragraph_format.left_indent = Cm(5.0)
+        detail.alignment = WD_ALIGN_PARAGRAPH.LEFT
         if name:
             nr = detail.add_run(f"{name}, ")
             nr.bold = True
@@ -927,7 +933,8 @@ def build(toc_page_map=None):
     return out_path
 
 
-SOFFICE = r"C:\Program Files\LibreOffice\program\soffice.exe"
+import shutil
+SOFFICE = shutil.which('soffice') or r"C:\Program Files\LibreOffice\program\soffice.exe"
 
 
 def convert_to_pdf(docx_path):

@@ -17,7 +17,6 @@ import VerifyCodePage from './pages/VerifyCodePage.js';
 import ResetPasswordPage from './pages/ResetPasswordPage.js';
 import VideoPlayerPage from './VideoPlayerPage.js';
 import MergedPodcastPlayer from './MergedPodcastPlayer.js';
-import TrimTestPage from './TrimTestPage.js';
 
 // USER Panel Pages
 import AccountInfoPage from './panel_pages/AccountInfoPage.js';
@@ -110,7 +109,6 @@ const App = () => {
         <Route path="/video-player/:videoId" element={<ProtectedRoute allowedRoles={['user', 'admin']}><VideoPlayerPage /></ProtectedRoute>} />
         <Route path="/merged-player/:mergeId" element={<ProtectedRoute allowedRoles={['user', 'admin']}><MergedPodcastPlayer /></ProtectedRoute>} />
         <Route path="/test-transcript" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TestTranscriptPage /></ProtectedRoute>} />
-        <Route path="/trim-test" element={<ProtectedRoute allowedRoles={['user', 'admin']}><TrimTestPage /></ProtectedRoute>} />
 
 
 

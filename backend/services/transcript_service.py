@@ -545,38 +545,55 @@ class TranscriptService:
             if lang != "en":
                 from ..core.config import get_settings
                 settings = get_settings()
-                print(f"[Transcript] {video_id} captions are '{lang}' — recovering canonical English")
+                print(f"[Transcript] {video_id} captions are '{lang}' — attempting fast text translation first")
                 if progress_cb:
                     try:
-                        await progress_cb(f"Recovering '{lang}' audio with Whisper for {video_id}...")
+                        await progress_cb(f"Translating '{lang}' captions to English for {video_id}...")
                     except Exception:
                         pass
-                whisper_transcript = None
-                if allow_whisper:
-                    await append_event(source_id=video_id, operation="audio_download", phase="attempted", method="yt_dlp_audio", outcome_code="started")
-                    whisper_transcript = await self._recover_whisper(video_id, lang, progress_cb)
-                    await append_event(source_id=video_id, operation="audio_download", phase="succeeded" if whisper_transcript else "failed", method="yt_dlp_audio", outcome_code="success" if whisper_transcript else "not_found")
 
-                if whisper_transcript and self._detect_transcript_language(whisper_transcript) == "en":
-                    transcript = whisper_transcript
-                    source = "whisper_translate"
-                elif self._detect_transcript_language(transcript) != "en":
-                    print(f"[Transcript] Whisper translation unavailable for {video_id} — trying bounded caption translation")
-                    timeout = settings.TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS
-                    try:
-                        translated = await asyncio.wait_for(
-                            asyncio.to_thread(self._translate_transcript_to_english, transcript, lang),
-                            timeout=timeout,
-                        )
-                    except asyncio.TimeoutError:
-                        translated = transcript
-                        print(f"[Transcript] Text translation timed out after {timeout}s for {video_id}")
-                    if self._detect_transcript_language(translated) == "en":
-                        transcript = self._canonicalize_segments(
-                            translated, video_id, original_language=lang,
-                            provenance=source, translation_method="text_translation",
-                        )
-                        source = f"{source}+translated"
+                timeout = settings.TRANSCRIPT_TRANSLATION_TIMEOUT_SECONDS
+                translated = None
+                try:
+                    translated = await asyncio.wait_for(
+                        asyncio.to_thread(self._translate_transcript_to_english, transcript, lang),
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"[Transcript] Text translation timed out after {timeout}s for {video_id}")
+                except Exception as e:
+                    print(f"[Transcript] Text translation error for {video_id}: {e}")
+
+                if translated and self._detect_transcript_language(translated) == "en":
+                    transcript = self._canonicalize_segments(
+                        translated, video_id, original_language=lang,
+                        provenance=source, translation_method="text_translation",
+                    )
+                    source = f"{source}+translated"
+                    print(f"[Transcript] Successfully translated '{lang}' captions to English for {video_id}")
+                else:
+                    # Text translation failed or was incomplete. Fall back to Whisper only if allowed
+                    # and video duration does not exceed CPU capability limits.
+                    whisper_transcript = None
+                    if allow_whisper:
+                        from .media_probe import get_video_duration_seconds
+                        dur = get_video_duration_seconds(video_id)
+                        max_duration = getattr(settings, "MAX_WHISPER_AUDIO_DURATION_SECONDS", 1200.0)
+                        if dur and dur > max_duration:
+                            print(f"[Transcript] Video {video_id} is {dur:.1f}s (> {max_duration:.1f}s) — skipping Whisper STT to prevent CPU freeze")
+                        else:
+                            if progress_cb:
+                                try:
+                                    await progress_cb(f"Recovering '{lang}' audio with Whisper for {video_id}...")
+                                except Exception:
+                                    pass
+                            await append_event(source_id=video_id, operation="audio_download", phase="attempted", method="yt_dlp_audio", outcome_code="started")
+                            whisper_transcript = await self._recover_whisper(video_id, lang, progress_cb)
+                            await append_event(source_id=video_id, operation="audio_download", phase="succeeded" if whisper_transcript else "failed", method="yt_dlp_audio", outcome_code="success" if whisper_transcript else "not_found")
+
+                    if whisper_transcript and self._detect_transcript_language(whisper_transcript) == "en":
+                        transcript = whisper_transcript
+                        source = "whisper_translate"
                     else:
                         source = f"{source}+partial"
             else:
@@ -591,24 +608,32 @@ class TranscriptService:
         # every other in-flight request (including other videos in the same
         # search) appears frozen until this one finishes.
         if not transcript and allow_whisper:
-            if progress_cb:
-                await progress_cb(f"Trying Whisper recovery for {video_id}...")
-            await append_event(
-                source_id=video_id,
-                operation="audio_download",
-                phase="attempted",
-                method="yt_dlp_audio",
-                outcome_code="started",
-            )
-            transcript = await self._recover_whisper(video_id, None, progress_cb)
-            source = "whisper_translate"
-            await append_event(
-                source_id=video_id,
-                operation="audio_download",
-                phase="succeeded" if transcript else "failed",
-                method="yt_dlp_audio",
-                outcome_code="success" if transcript else "not_found",
-            )
+            from .media_probe import get_video_duration_seconds
+            dur = get_video_duration_seconds(video_id)
+            from ..core.config import get_settings
+            settings = get_settings()
+            max_duration = getattr(settings, "MAX_WHISPER_AUDIO_DURATION_SECONDS", 1200.0)
+            if dur and dur > max_duration:
+                print(f"[Transcript] Video {video_id} duration ({dur:.1f}s) exceeds max Whisper limit ({max_duration:.1f}s) — skipping Whisper STT to prevent CPU freeze")
+            else:
+                if progress_cb:
+                    await progress_cb(f"Trying Whisper recovery for {video_id}...")
+                await append_event(
+                    source_id=video_id,
+                    operation="audio_download",
+                    phase="attempted",
+                    method="yt_dlp_audio",
+                    outcome_code="started",
+                )
+                transcript = await self._recover_whisper(video_id, None, progress_cb)
+                source = "whisper_translate"
+                await append_event(
+                    source_id=video_id,
+                    operation="audio_download",
+                    phase="succeeded" if transcript else "failed",
+                    method="yt_dlp_audio",
+                    outcome_code="success" if transcript else "not_found",
+                )
 
         if not transcript:
             return None
@@ -851,6 +876,14 @@ class TranscriptService:
     # TIER 3: Whisper speech-to-text
     # -------------------------------------------------
     async def _recover_whisper(self, video_id, language=None, progress_cb=None):
+        from .media_probe import get_video_duration_seconds
+        from ..core.config import get_settings
+        dur = get_video_duration_seconds(video_id)
+        settings = get_settings()
+        max_duration = getattr(settings, "MAX_WHISPER_AUDIO_DURATION_SECONDS", 1200.0)
+        if dur and dur > max_duration:
+            print(f"[Transcript] Video {video_id} duration ({dur:.1f}s) exceeds max CPU Whisper limit ({max_duration:.1f}s) — skipping Whisper recovery")
+            return None
         from .whisper_recovery import recover_audio
         return await recover_audio(self, video_id, language, progress_cb)
 
@@ -859,6 +892,15 @@ class TranscriptService:
         Last resort: Download audio and transcribe with OpenAI Whisper.
         Slower but works for any video with audio. Bounded download timeout.
         """
+        from ..core.config import get_settings
+        settings = get_settings()
+        from .media_probe import get_video_duration_seconds
+        dur = get_video_duration_seconds(video_id)
+        max_duration = getattr(settings, "MAX_WHISPER_AUDIO_DURATION_SECONDS", 1200.0)
+        if dur and dur > max_duration:
+            print(f"[Transcript] Video {video_id} duration ({dur:.1f}s) exceeds max CPU Whisper limit ({max_duration:.1f}s) — skipping audio download")
+            return None
+
         ytdlp = _ytdlp_cmd()
         if ytdlp is None:
             print("[Transcript] yt-dlp needed for audio download, skipping Whisper")
@@ -989,6 +1031,10 @@ class TranscriptService:
         overlap = min(max(0.0, float(settings.WHISPER_CHUNK_OVERLAP_SECONDS)), chunk_seconds / 4)
         if duration is None:
             raise RuntimeError("audio duration is required for safe Whisper chunking")
+        max_duration = getattr(settings, "MAX_WHISPER_AUDIO_DURATION_SECONDS", 1200.0)
+        if duration > max_duration:
+            print(f"[Transcript] Audio duration ({duration:.1f}s) exceeds max CPU Whisper limit ({max_duration:.1f}s) — skipping Whisper chunking to avoid CPU lock")
+            return [], 0
         ranges = []
         start = 0.0
         while start < duration:
@@ -1189,6 +1235,7 @@ class TranscriptService:
             else:
                 final_status = "unsupported_transcript_language"
                 ready = False
+            warning = f"Transcript is in '{detected_language}' (will be translated to English)" if (detected_language and detected_language != "en") else None
             return {
                 "video_id": video_id,
                 "source_id": video_id,
@@ -1198,6 +1245,7 @@ class TranscriptService:
                 "time_seconds": round(time.perf_counter() - t0, 3),
                 "error": None if ready else "Transcript language is not supported",
                 "error_code": None if ready else "UNSUPPORTED_TRANSCRIPT_LANGUAGE",
+                "warning": warning,
                 "detected_language": detected_language,
                 "supported_languages": supported_languages,
             }
@@ -1232,6 +1280,25 @@ class TranscriptService:
 
         # If captions are not fast-available, slow recovery (Whisper) would be required
         t_elapsed = round(time.perf_counter() - t0, 3)
+        from .media_probe import get_video_duration_seconds
+        dur = get_video_duration_seconds(video_id)
+        from ..core.config import get_settings
+        settings = get_settings()
+        max_duration = getattr(settings, "MAX_WHISPER_AUDIO_DURATION_SECONDS", 1200.0)
+        if dur and dur > max_duration:
+            return {
+                "video_id": video_id,
+                "source_id": video_id,
+                "status": "unsupported_video_too_long_for_whisper",
+                "ready": False,
+                "method": "whisper_exceeded",
+                "time_seconds": t_elapsed,
+                "error": f"Captions unavailable and video length ({int(dur // 60)}m) exceeds audio transcription limit ({int(max_duration // 60)}m)",
+                "error_code": "AUDIO_TRANSCRIPTION_EXCEEDED",
+                "detected_language": None,
+                "supported_languages": ["en"],
+                "duration_seconds": dur,
+            }
         return {
             "video_id": video_id,
             "source_id": video_id,
@@ -1262,7 +1329,6 @@ class TranscriptService:
         text = " ".join(text.split())[:4000]
 
         try:
-            summarizer = get_summarizer()
             from .summarization_service import _get_pipeline
             summarizer = _get_pipeline()
             result = summarizer(

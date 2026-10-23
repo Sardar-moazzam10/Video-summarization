@@ -1,5 +1,13 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config/api.js';
+import { extractErrorMessage } from '../utils/apiError.js';
+
+const getErrorMessage = (error, fallback) => {
+  if (error.response) {
+    return extractErrorMessage(error.response.data, fallback);
+  }
+  return 'Network error. Please check your connection and try again.';
+};
 
 export const sendVerificationCode = async (email) => {
   try {
@@ -7,7 +15,10 @@ export const sendVerificationCode = async (email) => {
     return response.data;
   } catch (error) {
     console.error('Error sending verification code:', error);
-    return { success: false, message: 'Network Error' };
+    return {
+      success: false,
+      message: getErrorMessage(error, 'Failed to send verification code. Please try again.'),
+    };
   }
 };
 
@@ -17,7 +28,10 @@ export const verifyCode = async (email, code) => {
     return response.data;
   } catch (error) {
     console.error('Error verifying code:', error);
-    return { success: false, message: 'Network Error' };
+    return {
+      success: false,
+      message: getErrorMessage(error, 'Invalid or expired verification code.'),
+    };
   }
 };
 
@@ -30,6 +44,9 @@ export const resetPassword = async (resetToken, password) => {
     return response.data;
   } catch (error) {
     console.error('Error resetting password:', error);
-    return { success: false, message: 'Network Error' };
+    return {
+      success: false,
+      message: getErrorMessage(error, 'Failed to reset password. Please try again.'),
+    };
   }
 };

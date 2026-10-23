@@ -133,29 +133,7 @@ const TrimTestPage = () => {
     return () => clearInterval(intervalRef.current);
   }, []);
 
-useEffect(() => {
-  if (durationsReady) loadPlayer();
-}, [durationsReady, loadPlayer]);
-
-  const loadPlayer = useCallback(() => {
-    const firstSegment = segments[0];
-    playerRef.current = new window.YT.Player('ytplayer', {
-      height: '390',
-      width: '640',
-      videoId: firstSegment.videoId,
-      playerVars: { controls: 0, modestbranding: 1, rel: 0, showinfo: 0, fs: 0 },
-      events: {
-        onReady: () => {
-          setTimeout(() => {
-            setReadyToPlay(true);
-            playSegment(0);
-          }, 1000);
-        }
-      }
-    });
-  }, [segments]);
-
-  const playSegment = (index) => {
+  const playSegment = useCallback((index) => {
     clearInterval(intervalRef.current);
     const segment = segments[index];
     if (!segment || !playerRef.current) return;
@@ -178,7 +156,31 @@ useEffect(() => {
         if (index + 1 < segments.length) playSegment(index + 1);
       }
     }, 200);
-  };
+  }, [segments]);
+
+  const loadPlayer = useCallback(() => {
+    const firstSegment = segments[0];
+    if (!firstSegment) return;
+
+    playerRef.current = new window.YT.Player('ytplayer', {
+      height: '390',
+      width: '640',
+      videoId: firstSegment.videoId,
+      playerVars: { controls: 0, modestbranding: 1, rel: 0, showinfo: 0, fs: 0 },
+      events: {
+        onReady: () => {
+          setTimeout(() => {
+            setReadyToPlay(true);
+            playSegment(0);
+          }, 1000);
+        }
+      }
+    });
+  }, [segments, playSegment]);
+
+  useEffect(() => {
+    if (durationsReady) loadPlayer();
+  }, [durationsReady, loadPlayer]);
 
   const handleSliderChange = (e) => {
     const globalTarget = (totalDurationRef.current * Number(e.target.value)) / 100;

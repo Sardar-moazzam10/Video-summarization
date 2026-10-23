@@ -6,6 +6,7 @@ import { extractErrorMessage } from './utils/apiError.js';
 import { getStepStatus, monotonicPercent, nextVisitedStages } from './utils/progressState.js';
 import QualityPanel from './QualityPanel.js';
 import RightsPanel from './components/rights/RightsPanel.jsx';
+import VideoChatPanel from './components/chat/VideoChatPanel.jsx';
 import { formatCompressionMetric, formatTopicsCount, resolveTopicsList } from './utils/resultMetrics.js';
 
 const LANGUAGE_NAMES = { hi: "Hindi", en: "English", ar: "Arabic", zh: "Chinese", es: "Spanish", fr: "French" };
@@ -60,6 +61,15 @@ const MergedPodcastPlayer = () => {
   const pollAbortRef = useRef(null);
   const videoFetchedRef = useRef(false);
   const historySavedRef = useRef(false);
+  const videoRef = useRef(null);
+
+  const handleSeekToTimestamp = (seconds) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = seconds;
+      videoRef.current.play().catch(() => {});
+      videoRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
 
   const getPollInterval = (status) => {
     switch (status) {
@@ -212,9 +222,11 @@ const MergedPodcastPlayer = () => {
     || status === 'video_ready' || visitedStages.has('video_ready');
   const hasTextReady = textComponent?.status === 'ready' || Boolean(summary);
   const isProcessing = !hasVideoReady && !hasTextReady && !isFinal && status !== 'error';
-  const summaryPending = textComponent
-    ? ['queued', 'running'].includes(textComponent.status)
-    : (hasVideoReady && !isFinal && status !== 'error');
+  const summaryPending = !isFinal && !hasTextReady && hasVideoReady && (
+    textComponent
+      ? ['queued', 'running'].includes(textComponent.status)
+      : (status !== 'error')
+  );
   const previewOnly = resultData?.preview_allowed === true && resultData?.download_allowed !== true;
   const downloadAllowed = resultData?.download_allowed === true;
   const copySummaryAllowed = resultData?.copy_summary_allowed === true;
@@ -359,7 +371,9 @@ const MergedPodcastPlayer = () => {
             </div>
           )}
           <p style={styles.subtitle}>
-            {isProcessing
+            {status === 'queued'
+              ? 'Job queued — worker will pick it up in a moment...'
+              : isProcessing
               ? (warning
                   ? `Summary unavailable for this language — generating highlight video…`
                   : 'Processing your videos...')
@@ -381,6 +395,41 @@ const MergedPodcastPlayer = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
           >
+            {/* Queue Position Banner */}
+            {status === 'queued' && (
+              <div
+                style={{
+                  maxWidth: '460px',
+                  margin: '0 auto 20px',
+                  padding: '10px 16px',
+                  background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.18) 0%, rgba(59, 130, 246, 0.1) 100%)',
+                  border: '1px solid rgba(96, 165, 250, 0.45)',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  boxShadow: '0 4px 14px rgba(37, 99, 235, 0.15)',
+                }}
+              >
+                <div style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: '#60a5fa',
+                  boxShadow: '0 0 8px #60a5fa',
+                  flexShrink: 0,
+                }} />
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ color: '#ffffff', fontSize: '13px', fontWeight: 600 }}>
+                    Job Queued in Worker Pool
+                  </div>
+                  <div style={{ color: '#93c5fd', fontSize: '11px', marginTop: '1px' }}>
+                    Your request is queued safely. Dedicated background worker is picking it up.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Progress Ring */}
             <div style={styles.ringContainer}>
               <svg width="140" height="140" viewBox="0 0 140 140" style={{ transform: 'rotate(-90deg)' }}>
@@ -400,7 +449,7 @@ const MergedPodcastPlayer = () => {
               </div>
             </div>
 
-            <p style={styles.stageMessage}>{stage}</p>
+            <p style={styles.stageMessage}>{status === 'queued' ? 'Queued in background worker pool...' : stage}</p>
 
             {/* Steps */}
             <div style={styles.stepsRow}>
@@ -599,7 +648,12 @@ const MergedPodcastPlayer = () => {
                   </div>
                 )}
                 <video
+                  ref={videoRef}
+                  key={videoUrl}
+                  src={videoUrl}
                   controls
+                  playsInline
+                  preload="metadata"
                   style={styles.videoPlayer}
                   poster=""
                 >
@@ -724,15 +778,52 @@ const MergedPodcastPlayer = () => {
               >
                 <h3 style={styles.sectionTitle}>Chapters</h3>
                 <div style={styles.chaptersList}>
-                  {richOutput.chapters.map((ch, idx) => (
-                    <div key={idx} style={styles.chapterItem}>
-                      <div style={styles.chapterNumber}>{String(idx + 1).padStart(2, '0')}</div>
-                      <div style={styles.chapterContent}>
-                        <h4 style={styles.chapterTitle}>{ch.title}</h4>
-                        <p style={styles.chapterText}>{ch.text}</p>
+                  {richOutput.chapters.map((ch, idx) => {
+                    const hasTimestamp = ch.timestamp_seconds !== undefined && ch.timestamp_seconds !== null;
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          ...styles.chapterItem,
+                          cursor: hasTimestamp ? 'pointer' : 'default',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          transition: 'background 0.2s ease',
+                        }}
+                        className={hasTimestamp ? 'hover:bg-white/5' : ''}
+                        onClick={() => {
+                          if (hasTimestamp) {
+                            handleSeekToTimestamp(ch.timestamp_seconds);
+                          }
+                        }}
+                        title={hasTimestamp ? `Jump to ${ch.timestamp_label || 'chapter'}` : ''}
+                      >
+                        <div style={styles.chapterNumber}>{String(idx + 1).padStart(2, '0')}</div>
+                        <div style={styles.chapterContent}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <h4 style={styles.chapterTitle}>{ch.title}</h4>
+                            {ch.timestamp_label && (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '2px 8px',
+                                borderRadius: '9999px',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                background: 'rgba(59, 130, 246, 0.15)',
+                                color: '#60a5fa',
+                                border: '1px solid rgba(59, 130, 246, 0.3)',
+                              }}>
+                                ▶ {ch.timestamp_label}
+                              </span>
+                            )}
+                          </div>
+                          <p style={styles.chapterText}>{ch.text}</p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </motion.div>
             )}
@@ -818,55 +909,8 @@ const MergedPodcastPlayer = () => {
               );
             })()}
 
-            {/* Chat with Video (Temporarily Disabled) */}
-            {false && (
-            <motion.div
-              style={styles.chatCard}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.62 }}
-            >
-              <h3 style={styles.sectionTitle}>Chat with Video</h3>
-              <p style={styles.chatSubtext}>Ask questions about the video content</p>
-              <div style={styles.chatInputRow}>
-                <input
-                  type="text"
-                  value={chatQuestion}
-                  onChange={(e) => setChatQuestion(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleChat()}
-                  placeholder="e.g. What are the main arguments discussed?"
-                  style={styles.chatInput}
-                  disabled={chatLoading}
-                />
-                <button
-                  onClick={handleChat}
-                  disabled={chatLoading || !chatQuestion.trim()}
-                  style={{
-                    ...styles.chatBtn,
-                    opacity: chatLoading || !chatQuestion.trim() ? 0.5 : 1,
-                  }}
-                >
-                  {chatLoading ? 'Thinking...' : 'Ask'}
-                </button>
-              </div>
-              {chatAnswer && (
-                <div style={styles.chatAnswerBox}>
-                  <p style={styles.chatAnswerText}>{chatAnswer.answer}</p>
-                  {chatAnswer.sources?.length > 0 && (
-                    <div style={styles.chatSources}>
-                      <span style={styles.chatSourcesLabel}>Sources:</span>
-                      {chatAnswer.sources.map((src, i) => (
-                        <span key={i} style={styles.chatSourceTag}>
-                          {src.video_title || `Segment ${i + 1}`}
-                          {src.timestamp != null && ` @ ${Math.floor(src.timestamp)}s`}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </motion.div>
-            )}
+            {/* Interactive Video Chat & Q&A */}
+            <VideoChatPanel mergeId={mergeId} onSeek={handleSeekToTimestamp} />
 
             {/* Export Buttons — need a finished summary; hidden while it's
                 still generating (video_ready). */}

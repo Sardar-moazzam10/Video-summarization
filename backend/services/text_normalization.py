@@ -55,3 +55,26 @@ def topic_keyphrase(texts):
         return max(candidates, default=(0, ""))[1]
     except ValueError:
         return ""
+
+
+def sanitize_summary_text(text: str) -> str:
+    """Clean punctuation spacing artifacts, deduplicate stuttered words, and ensure complete terminal punctuation."""
+    if not text or not str(text).strip():
+        return ""
+    # 1. Clean spacing before punctuation marks (e.g. "output ." -> "output.")
+    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", str(text))
+    # 2. Fix multiple redundant periods (e.g. ".. " -> ". ")
+    cleaned = re.sub(r"\.{2,}", ".", cleaned)
+    # 3. Deduplicate immediate stuttered words (e.g. "and and" -> "and", "the the" -> "the")
+    cleaned = re.sub(r"\b(and|the|that|in|to|of|is|a|an)\s+\1\b", r"\1", cleaned, flags=re.IGNORECASE)
+    # 4. Collapse multi-spaces
+    cleaned = re.sub(r"[ \t]+", " ", cleaned).strip()
+    # 5. Ensure complete sentence termination (do not leave trailing incomplete fragment)
+    if cleaned and cleaned[-1] not in ".!?":
+        last_punct = max(cleaned.rfind("."), cleaned.rfind("!"), cleaned.rfind("?"))
+        if last_punct > 0:
+            cleaned = cleaned[:last_punct + 1].strip()
+        else:
+            cleaned = cleaned + "."
+    return cleaned
+

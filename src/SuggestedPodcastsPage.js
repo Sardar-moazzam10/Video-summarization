@@ -72,6 +72,7 @@ const SuggestedPodcastsPage = () => {
         id: v.id?.videoId || v.id,
         title: v.snippet?.title,
         thumbnail: v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url,
+        durationSeconds: v.duration_seconds,
       }));
 
   const handleMerge = async (durationMinutes) => {

@@ -298,6 +298,7 @@ class SummarizationService:
         profile: DurationProfile,
         embedder=None,
         content_type: str = "explanatory",
+        progress_callback=None,
     ):
         """
         Same as hierarchical_summarize() but also returns the decision.
@@ -329,7 +330,7 @@ class SummarizationService:
         text = "\n\n".join(_policy_clean(p) for p in text.split("\n\n") if p.strip())
 
         if decision.action == "compress":
-            result = self._recursive_summarize(text, target_words, config, depth=0)
+            result = self._recursive_summarize(text, target_words, config, depth=0, progress_callback=progress_callback)
 
         elif decision.action == "rewrite":
             # Short enough to keep, but reads like machine-glued fragments.
@@ -339,14 +340,14 @@ class SummarizationService:
             dropped = len(text.split()) - len(deduped.split())
             if dropped > 0:
                 print(f"[Summarizer] Rewrite: removed {dropped} words of restatement")
-            result = self._smooth(deduped, config)
+            result = self._smooth(deduped, config, progress_callback=progress_callback)
 
         else:  # "clean" or "pass"
             result = text
 
         return result.strip(), decision.to_dict()
 
-    def _smooth(self, text: str, config) -> str:
+    def _smooth(self, text: str, config, progress_callback=None) -> str:
         """
         Length-preserving BART pass: fix phrasing, keep the content.
 
@@ -361,7 +362,7 @@ class SummarizationService:
             return text
 
         out = []
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             words = len(chunk.split())
             if words < 60:
                 # Too short to be worth a model call, and BART's min_length
@@ -370,6 +371,11 @@ class SummarizationService:
                 continue
             rewritten = self._summarize_chunk(chunk, max(50, int(words * 0.92)), config, mode="rewrite")
             out.append(rewritten if len(rewritten.split()) >= words * 0.45 else chunk)
+            if progress_callback:
+                try:
+                    progress_callback(i + 1, len(chunks))
+                except Exception:
+                    pass
 
         return " ".join(out)
 
@@ -379,6 +385,7 @@ class SummarizationService:
         target_words: int,
         config,
         depth: int,
+        progress_callback=None,
     ) -> str:
         """
         Recursively summarize text until target_words is reached.
@@ -402,7 +409,13 @@ class SummarizationService:
         if len(chunks) == 1:
             # Single chunk: direct summarization
             # Calculate per-chunk target proportionally
-            return self._summarize_chunk(chunks[0], target_words, config)
+            res = self._summarize_chunk(chunks[0], target_words, config)
+            if progress_callback:
+                try:
+                    progress_callback(1, 1)
+                except Exception:
+                    pass
+            return res
 
         # Multi-chunk: summarize each chunk in parallel
         chunk_target = max(50, target_words // len(chunks))
@@ -420,9 +433,16 @@ class SummarizationService:
                 executor.submit(self._summarize_chunk, chunk, target, config): idx
                 for idx, (chunk, target) in enumerate(chunk_tasks)
             }
+            completed_count = 0
             for future in as_completed(futures):
                 idx = futures[future]
                 summaries[idx] = future.result()
+                completed_count += 1
+                if progress_callback:
+                    try:
+                        progress_callback(completed_count, len(chunk_tasks))
+                    except Exception:
+                        pass
 
         # Merge chunk summaries
         merged = " ".join(summaries)

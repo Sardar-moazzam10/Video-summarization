@@ -65,6 +65,25 @@ const VideoCard = ({ video, videosList, isSelected = false, onToggleSelectForMer
           className="vc-thumb-img"
           onError={() => setImgError(true)}
         />
+        {/* License Pill */}
+        {video?.rights?.verified_metadata && (
+          <span style={{
+            position: 'absolute',
+            top: '8px',
+            left: '8px',
+            padding: '2px 7px',
+            borderRadius: '4px',
+            fontSize: '10px',
+            fontWeight: 600,
+            background: video?.rights?.youtube_license === 'creativeCommon' ? 'rgba(30, 64, 175, 0.9)' : 'rgba(31, 41, 55, 0.85)',
+            color: video?.rights?.youtube_license === 'creativeCommon' ? '#93c5fd' : '#9ca3af',
+            border: video?.rights?.youtube_license === 'creativeCommon' ? '1px solid rgba(96, 165, 250, 0.4)' : '1px solid rgba(75, 85, 99, 0.4)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 2,
+          }}>
+            {video?.rights?.youtube_license === 'creativeCommon' ? '⚖️ CC BY' : 'Standard'}
+          </span>
+        )}
         {/* Selection overlay */}
         <AnimatePresence>
           {isSelected && (

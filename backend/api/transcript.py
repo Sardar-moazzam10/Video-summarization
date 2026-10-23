@@ -1,6 +1,8 @@
 """
 Transcript API routes
 """
+import asyncio
+import hashlib
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -9,6 +11,7 @@ from ..services.transcript_service import (
     extract_video_id,
 )
 from ..core.security import get_current_user, require_role
+from ..core.redis_queue import get_redis_pool
 
 router = APIRouter(prefix="/api/v1/transcript", tags=["transcript"])
 
@@ -51,13 +54,35 @@ async def get_transcript(
 
 @router.post("/summarize")
 async def summarize_text(request: SummarizeRequest, _user: dict = Depends(get_current_user)):
-    """Summarize transcript text"""
+    """Summarize transcript text using threadpool execution and Redis cache."""
+    cache_key = None
+    pool = None
+    try:
+        pool = await get_redis_pool()
+        if pool is not None:
+            text_hash = hashlib.sha256(request.text.strip().encode("utf-8")).hexdigest()
+            cache_key = f"quick_summary:{text_hash}:{request.max_length}:{request.min_length}"
+            cached = await pool.get(cache_key)
+            if cached:
+                cached_text = cached.decode("utf-8") if isinstance(cached, bytes) else str(cached)
+                return {"summary": cached_text}
+    except Exception:
+        pass
+
     service = await get_transcript_service()
-    summary = service.summarize(
+    summary = await asyncio.to_thread(
+        service.summarize,
         request.text,
         max_length=request.max_length,
         min_length=request.min_length
     )
+
+    if pool is not None and cache_key is not None and summary:
+        try:
+            await pool.set(cache_key, summary, ex=86400)
+        except Exception:
+            pass
+
     return {"summary": summary}
 
 

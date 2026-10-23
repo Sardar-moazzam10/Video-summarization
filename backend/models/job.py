@@ -90,6 +90,9 @@ class ChapterInfo(BaseModel):
     """Chapter/section in the rich summary"""
     title: str
     text: str
+    timestamp_seconds: Optional[int] = None
+    timestamp_label: Optional[str] = None
+    video_id: Optional[str] = None
 
 
 class QuoteInfo(BaseModel):

@@ -6,6 +6,7 @@ import { fetchTranscript, searchKeywordInTranscript } from './youtubeTranscript.
 import { API_BASE_URL, authenticatedFetch } from './config/api.js';
 import { extractErrorMessage } from './utils/apiError.js';
 import './VideoCard.css';
+import RightsBadge from './components/rights/RightsBadge.jsx';
 import MultiSelectBar from './components/merge/MultiSelectBar.jsx';
 
 // Concrete, spoken-aloud phrases — the kind of thing that shows up in a
@@ -20,6 +21,13 @@ const EXAMPLE_KEYWORDS = [
 // Standard helper for resilient video ID extraction
 const getVideoId = (video) =>
   video?.id?.videoId || video?.id || (typeof video === 'string' ? video : '');
+
+// Safe timestamp formatter preventing RangeError on NaN/invalid values
+const formatMatchTime = (seconds) => {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s < 0) return '00:00:00';
+  return new Date(s * 1000).toISOString().slice(11, 19);
+};
 
 // How many videos to fetch transcripts for at once.
 const TRANSCRIPT_CONCURRENCY = 4;
@@ -146,7 +154,7 @@ const SearchByKeywordsPage = () => {
     setSearchStats({ scanned: 0, searchable: 0, skipped: 0, matched: 0 });
 
     try {
-      const videos = await fetchVideos(term, { maxResults: 10 });
+      const videos = await fetchVideos(term, { maxResults: 10, includeRights: true });
       if (signal.aborted) return;
       if (!videos || videos.length === 0) {
         setErrorMsg(`No YouTube videos found for "${term}".`);
@@ -588,8 +596,26 @@ const SearchByKeywordsPage = () => {
               className={`vc-card kw-card ${isSelected ? 'vc-card--selected' : ''}`}
             >
               <div className="kw-card-main">
-                <div className="kw-card-thumb">
+                <div className="kw-card-thumb" style={{ position: 'relative' }}>
                   <img src={thumb} alt={title} />
+                  {result.video?.rights?.verified_metadata && (
+                    <span style={{
+                      position: 'absolute',
+                      top: '6px',
+                      left: '6px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      fontSize: '10px',
+                      fontWeight: 600,
+                      background: result.video?.rights?.youtube_license === 'creativeCommon' ? 'rgba(30, 64, 175, 0.9)' : 'rgba(31, 41, 55, 0.85)',
+                      color: result.video?.rights?.youtube_license === 'creativeCommon' ? '#93c5fd' : '#9ca3af',
+                      border: result.video?.rights?.youtube_license === 'creativeCommon' ? '1px solid rgba(96, 165, 250, 0.4)' : '1px solid rgba(75, 85, 99, 0.4)',
+                      backdropFilter: 'blur(4px)',
+                      zIndex: 2,
+                    }}>
+                      {result.video?.rights?.youtube_license === 'creativeCommon' ? '⚖️ CC BY' : 'Standard'}
+                    </span>
+                  )}
                 </div>
                 <div className="vc-body kw-card-content">
                   <div className="kw-card-headrow">
@@ -599,12 +625,15 @@ const SearchByKeywordsPage = () => {
                     </span>
                   </div>
                   {channel && <p className="vc-channel">{channel}</p>}
+                  <div style={{ margin: '4px 0 6px 0' }}>
+                    <RightsBadge rights={result.video?.rights} />
+                  </div>
 
                   <div className="kw-matches-list">
                     {result.matches.slice(0, 5).map((m, i) => (
                       <a
                         key={i}
-                        href={`https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(m.timestamp)}s`}
+                        href={`https://www.youtube.com/watch?v=${videoId}&t=${Math.max(0, Math.floor(Number(m.timestamp) || 0))}s`}
                         target="_blank"
                         rel="noreferrer"
                         className="kw-match-link"
@@ -626,7 +655,7 @@ const SearchByKeywordsPage = () => {
                         }}
                       >
                         <span className="kw-match-time">
-                          {new Date(m.timestamp * 1000).toISOString().substr(11, 8)}
+                          {formatMatchTime(m.timestamp)}
                         </span>
                         <span className="kw-match-text">{m.contextText || m.text}</span>
                       </a>
@@ -724,6 +753,7 @@ const SearchByKeywordsPage = () => {
                   r.video.snippet?.thumbnails?.medium?.url ||
                   r.video.snippet?.thumbnails?.default?.url ||
                   '',
+                durationSeconds: r.video.duration_seconds,
               };
             })}
           onRemove={(id) => setSelectedVideos((prev) => prev.filter((vid) => vid !== id))}

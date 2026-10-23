@@ -32,7 +32,10 @@ jest.mock('framer-motion', () => {
     React.forwardRef(({ children, initial, animate, transition, ...rest }, ref) =>
       React.createElement(tag, { ...rest, ref }, children)
     );
-  return { motion: new Proxy({}, { get: (_, tag) => passthrough(tag) }) };
+  return {
+    motion: new Proxy({}, { get: (_, tag) => passthrough(tag) }),
+    AnimatePresence: ({ children }) => children,
+  };
 });
 
 jest.mock('./config/api.js', () => ({

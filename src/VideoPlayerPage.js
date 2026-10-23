@@ -1,32 +1,39 @@
 import React, { useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { API_BASE_URL, authenticatedFetch } from './config/api.js';
 
 const VideoPlayerPage = () => {
+  const { videoId: paramVideoId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const { video, videosList } = location.state || {};
 
+  const cleanParamId = paramVideoId ? decodeURIComponent(paramVideoId) : null;
+  const effectiveVideoId =
+    video?.id?.videoId ||
+    (typeof video?.id === 'string' ? video.id : null) ||
+    (typeof video === 'string' ? video : null) ||
+    cleanParamId;
+
   useEffect(() => {
-    if (!video) return;
+    if (!effectiveVideoId) return;
     const username = JSON.parse(localStorage.getItem('user'))?.username;
     if (!username) return;
-    const vidId = video.id?.videoId || video.id;
     authenticatedFetch(`${API_BASE_URL}/api/v1/auth/user-history`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         username,
         type: 'watch',
-        videoId: vidId,
-        title: video.snippet?.title || '',
+        videoId: effectiveVideoId,
+        title: video?.snippet?.title || '',
         timestamp: new Date().toISOString(),
       }),
     }).catch(() => {});
-  }, [video]);
+  }, [effectiveVideoId, video]);
 
-  if (!video) {
+  if (!effectiveVideoId) {
     return (
       <div style={styles.page}>
         <div style={styles.bgGrid} />
@@ -40,8 +47,6 @@ const VideoPlayerPage = () => {
       </div>
     );
   }
-
-  const videoId = video.id?.videoId || video.id;
 
   return (
     <div style={styles.page}>
@@ -58,7 +63,7 @@ const VideoPlayerPage = () => {
         >
           <div style={styles.iframeWrap}>
             <iframe
-              src={`https://www.youtube.com/embed/${videoId}`}
+              src={`https://www.youtube.com/embed/${effectiveVideoId}`}
               title="Video Player"
               frameBorder="0"
               allow="autoplay; encrypted-media"
@@ -66,7 +71,7 @@ const VideoPlayerPage = () => {
               style={styles.iframe}
             />
           </div>
-          {video.snippet?.title && (
+          {video?.snippet?.title && (
             <div style={styles.playerInfo}>
               <h2 style={styles.playerTitle}>{video.snippet.title}</h2>
               {video.snippet?.channelTitle && (

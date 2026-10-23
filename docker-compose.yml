@@ -6,9 +6,13 @@ services:
     environment:
       - MONGODB_URI=mongodb://mongo:27017/
       - MONGODB_DATABASE=video-summarizer
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_URL=redis://redis:6379/0
       - SEPARATE_OUTPUT_WORKERS_ENABLED=true
     depends_on:
       - mongo
+      - redis
     volumes:
       - audio_cache:/app/audio_cache
       - faiss_index:/app/faiss_index
@@ -37,6 +41,30 @@ services:
       - audio_cache:/app/audio_cache
       - faiss_index:/app/faiss_index
 
+  merge-worker:
+    build: .
+    command: ["python", "-m", "backend.workers.merge_worker"]
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/
+      - MONGODB_DATABASE=video-summarizer
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - mongo
+      - redis
+    volumes:
+      - audio_cache:/app/audio_cache
+      - faiss_index:/app/faiss_index
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
   mongo:
     image: mongo:7
     restart: unless-stopped
@@ -47,5 +75,6 @@ services:
 
 volumes:
   mongo_data:
+  redis_data:
   audio_cache:
   faiss_index:

@@ -18,10 +18,12 @@ the duration of a published video does not change.
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
 # video_id -> (duration_seconds, fetched_at_monotonic)
@@ -104,8 +106,80 @@ def get_video_duration_seconds(
     return duration
 
 
+_ISO_DURATION = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
+
+
+def _parse_iso_duration(value: str) -> Optional[float]:
+    match = _ISO_DURATION.match(str(value or ""))
+    if not match:
+        return None
+    hours, minutes, seconds = (int(part or 0) for part in match.groups())
+    total = hours * 3600 + minutes * 60 + seconds
+    return float(total) if total > 0 else None
+
+
+def _prime_from_youtube_api(video_ids: List[str]) -> None:
+    """Attempt fast batched resolution using YouTube Data API contentDetails."""
+    if not video_ids:
+        return
+    try:
+        from ..core.config import get_settings
+        api_key = get_settings().REACT_APP_YOUTUBE_API_KEY.strip()
+        if not api_key:
+            return
+        import httpx
+        with httpx.Client(timeout=8.0) as client:
+            resp = client.get(
+                "https://www.googleapis.com/youtube/v3/videos",
+                params={
+                    "part": "contentDetails",
+                    "id": ",".join(video_ids),
+                    "key": api_key,
+                },
+            )
+            if resp.is_success:
+                for item in resp.json().get("items", []):
+                    raw_id = item.get("id")
+                    vid_str = raw_id if isinstance(raw_id, str) else (raw_id.get("videoId") if isinstance(raw_id, dict) else None)
+                    if vid_str:
+                        raw_dur = item.get("contentDetails", {}).get("duration")
+                        secs = _parse_iso_duration(raw_dur)
+                        if secs:
+                            prime_duration_cache(vid_str, secs)
+    except Exception:
+        pass
+
+
 def get_durations(video_ids: List[str], timeout: float = DEFAULT_PROBE_TIMEOUT) -> Dict[str, Optional[float]]:
     """Duration per video id; the value is None where it could not be resolved."""
+    if not video_ids:
+        return {}
+
+    now = time.monotonic()
+    # 1. Check which IDs are missing from local process cache
+    missing = [
+        vid for vid in video_ids
+        if not (vid in _CACHE and (now - _CACHE[vid][1]) < _CACHE_TTL_SECONDS)
+    ]
+
+    # 2. Fast-path: batch resolve missing IDs via YouTube Data API
+    if missing:
+        _prime_from_youtube_api(missing)
+
+    # 3. Fallback: for any IDs STILL missing, use parallel yt-dlp probes
+    now = time.monotonic()
+    still_missing = [
+        vid for vid in video_ids
+        if not (vid in _CACHE and (now - _CACHE[vid][1]) < _CACHE_TTL_SECONDS)
+    ]
+
+    if still_missing:
+        if len(still_missing) == 1:
+            get_video_duration_seconds(still_missing[0], timeout=timeout)
+        else:
+            with ThreadPoolExecutor(max_workers=min(4, len(still_missing))) as executor:
+                list(executor.map(lambda v: get_video_duration_seconds(v, timeout=timeout), still_missing))
+
     return {vid: get_video_duration_seconds(vid, timeout=timeout) for vid in video_ids}
 
 

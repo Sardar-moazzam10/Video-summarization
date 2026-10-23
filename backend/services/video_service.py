@@ -505,6 +505,7 @@ class VideoService:
             "-t",  f"{duration:.3f}",
             "-threads", "2",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             "-r", "30",
             "-vf", vf,
@@ -568,6 +569,7 @@ class VideoService:
             "-f", "concat", "-safe", "0",
             "-i", list_path,
             "-c", "copy",
+            "-movflags", "+faststart",
             output,
         ]
         result = await asyncio.to_thread(

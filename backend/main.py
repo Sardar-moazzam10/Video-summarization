@@ -26,7 +26,7 @@ import time
 
 from .core.config import get_settings
 from .core.database import close_database
-from .api import auth, transcript, merge, search, chat, youtube
+from .core.redis_queue import init_redis_pool, close_redis_pool
 from .api import auth, transcript, merge, search, chat, youtube, rights
 
 settings = get_settings()
@@ -144,9 +144,16 @@ async def lifespan(app: FastAPI):
 
     hygiene_task = asyncio.create_task(_periodic_hygiene())
 
+    # Redis Queue pool initialization for async worker processing
+    try:
+        await init_redis_pool()
+    except Exception as e:
+        print(f"[WARN] Redis Queue initialization error: {e}")
+
     yield
     # Shutdown
     hygiene_task.cancel()
+    await close_redis_pool()
     await close_database()
     print("[OK] Shutdown complete")
 

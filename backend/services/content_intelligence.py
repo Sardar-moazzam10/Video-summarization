@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .text_normalization import sanitize_asr_fragment, topic_keyphrase
+from .text_normalization import sanitize_asr_fragment, topic_keyphrase, sanitize_summary_text
 
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -305,7 +305,7 @@ def refine_narrative_summary(text: str, limit: int = 8) -> str:
     return " ".join(sentence for _index, sentence, _score in candidates)
 
 
-def _narrative_chapters(sentences: Sequence[str]) -> List[Dict[str, str]]:
+def _narrative_chapters(sentences: Sequence[str]) -> List[Dict[str, Any]]:
     if not sentences:
         return []
     target = min(5, max(2, round(len(sentences) ** 0.5))) if len(sentences) > 2 else 1
@@ -316,7 +316,14 @@ def _narrative_chapters(sentences: Sequence[str]) -> List[Dict[str, str]]:
         label = topic_keyphrase(group[:1])
         if not _valid_topic(label):
             label = " ".join(_words(group[0])[:6])
-        chapters.append({"title": label.title()[:80], "text": " ".join(group)})
+        clean_text = sanitize_summary_text(" ".join(group))
+        chapters.append({
+            "title": label.title()[:80],
+            "text": clean_text,
+            "timestamp_seconds": None,
+            "timestamp_label": None,
+            "video_id": "",
+        })
     return chapters
 
 
@@ -388,15 +395,28 @@ def _chapter_title(blocks: Sequence[ContentBlock]) -> str:
     return " ".join(words).strip().capitalize() or "Selected highlights"
 
 
-def _chapters(plan: ContentPlan) -> List[Dict[str, str]]:
+def _chapters(plan: ContentPlan) -> List[Dict[str, Any]]:
     blocks = plan.blocks
     if not blocks:
         return []
     target = min(6, max(2, round(len(blocks) ** 0.5))) if len(blocks) > 2 else 1
     size = max(1, int(np.ceil(len(blocks) / target)))
     groups = [blocks[start:start + size] for start in range(0, len(blocks), size)]
-    return [{"title": _chapter_title(group), "text": " ".join(block.clean_text for block in group[:2])}
-            for group in groups]
+    chapters = []
+    for group in groups:
+        first_block = group[0]
+        start_secs = int(getattr(first_block, "start_time", 0))
+        mins, secs = divmod(start_secs, 60)
+        ts_label = f"{mins:02d}:{secs:02d}"
+        clean_preview = sanitize_summary_text(" ".join(block.clean_text for block in group[:2]))
+        chapters.append({
+            "title": _chapter_title(group),
+            "text": clean_preview,
+            "timestamp_seconds": start_secs,
+            "timestamp_label": ts_label,
+            "video_id": getattr(first_block, "video_id", ""),
+        })
+    return chapters
 
 
 def enrich_summary(
@@ -411,6 +431,7 @@ def enrich_summary(
 
     timings = timings if timings is not None else {}
     total_started = perf_counter()
+    summary_text = sanitize_summary_text(summary_text)
     if plan and plan.content_type == "narrative":
         summary_text = refine_narrative_summary(summary_text)
     sentences = _split_sentences(summary_text)
@@ -435,13 +456,13 @@ def enrich_summary(
         support = float(np.max(block_vectors @ vector)) if len(block_vectors) else 0.5
         sentence_support.append(support)
     stage_started = perf_counter()
-    tldr_indices = sorted(_select_diverse(sentences, sentence_vectors, sentence_support, min(4, max(2, len(sentences) // 3))))
-    tldr = " ".join(sentences[index] for index in tldr_indices)
+    tldr_indices = sorted(_select_diverse(sentences, sentence_vectors, sentence_support, min(2, len(sentences))))
+    tldr = sanitize_summary_text(" ".join(sentences[index] for index in tldr_indices))
     timings["tldr_ranking"] = round(perf_counter() - stage_started, 4)
 
     stage_started = perf_counter()
     takeaway_indices = _select_diverse(sentences, sentence_vectors, sentence_support, min(5, len(sentences)))
-    takeaways = [sentences[index] for index in takeaway_indices]
+    takeaways = [sanitize_summary_text(sentences[index]) for index in takeaway_indices]
     timings["events_or_takeaways"] = round(perf_counter() - stage_started, 4)
 
     stage_started = perf_counter()

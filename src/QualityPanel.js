@@ -105,6 +105,23 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
     return () => { alive = false; };
   }, [fetchScores]);
 
+  // Reactive poll if scorecard is currently running in background
+  useEffect(() => {
+    if (data?.evaluation_state === 'running') {
+      const timer = setTimeout(() => {
+        fetchScores(false)
+          .then((d) => {
+            if (d) {
+              setData(d);
+              setError('');
+            }
+          })
+          .catch(() => {});
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [data?.evaluation_state, fetchScores]);
+
   // Optional detailed scores on button click
   const runDetailed = async () => {
     setAnalyzing(true);
@@ -119,7 +136,7 @@ export default function QualityPanel({ mergeId, delay = 0.18 }) {
     }
   };
 
-  if (loading) {
+  if (loading || data?.evaluation_state === 'running') {
     return (
       <motion.div style={panelStyles.card} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }}>
         <div style={panelStyles.header}>

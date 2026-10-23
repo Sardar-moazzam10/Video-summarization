@@ -8,7 +8,7 @@ const DEFAULT_OPTIONS = {
   duration: 'any',      // YouTube videoDuration: 'any' | 'short' | 'medium' | 'long'
   maxResults: 20,
   license: 'any',       // 'any' | 'creativeCommon' | 'youtube'
-  includeRights: false, // when true, requests status.license enrichment
+  includeRights: true,  // when true, requests status.license enrichment
 };
 
 /**

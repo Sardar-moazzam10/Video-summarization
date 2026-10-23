@@ -38,10 +38,18 @@ class Settings(BaseSettings):
     ]
 
     # =====================================================
-    # DATABASE
+    # DATABASE & CACHE
     # =====================================================
     MONGODB_URI: str = "mongodb://localhost:27017/"
     MONGODB_DATABASE: str = "video-summarizer"
+
+    # Redis Queue (ARQ background job worker)
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_PASSWORD: Optional[str] = None
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_QUEUE_ENABLED: bool = True
 
     # =====================================================
     # EMAIL
@@ -133,6 +141,10 @@ class Settings(BaseSettings):
     WHISPER_CHUNK_SECONDS: float = 60.0
     WHISPER_CHUNK_OVERLAP_SECONDS: float = 1.0
     WHISPER_AUDIO_DOWNLOAD_TIMEOUT_SECONDS: float = 180.0
+    # Maximum audio duration (seconds) eligible for CPU Whisper speech-to-text.
+    # Videos longer than 20 minutes (1200s) on CPU exceed the 15-minute deadline;
+    # skipping Whisper prevents hanging CPU cores for 15 minutes before an abort.
+    MAX_WHISPER_AUDIO_DURATION_SECONDS: float = Field(default=1200.0, gt=0)
 
     # =====================================================
     # DURATION PROFILES
