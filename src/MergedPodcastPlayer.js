@@ -7,6 +7,7 @@ import { getStepStatus, monotonicPercent, nextVisitedStages } from './utils/prog
 import QualityPanel from './QualityPanel.js';
 import RightsPanel from './components/rights/RightsPanel.jsx';
 import VideoChatPanel from './components/chat/VideoChatPanel.jsx';
+import ReelStudioCard from './components/reel/ReelStudioCard.jsx';
 import { formatCompressionMetric, formatTopicsCount, resolveTopicsList } from './utils/resultMetrics.js';
 
 const LANGUAGE_NAMES = { hi: "Hindi", en: "English", ar: "Arabic", zh: "Chinese", es: "Spanish", fr: "French" };
@@ -662,6 +663,9 @@ const MergedPodcastPlayer = () => {
                 </video>
               </motion.div>
             )}
+
+            {/* 9:16 Shorts & Reels Studio */}
+            {videoUrl && <ReelStudioCard mergeId={mergeId} />}
 
             {/* Summary generating — shown while video is ready but the text
                 pipeline is still running */}

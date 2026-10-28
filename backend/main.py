@@ -27,7 +27,7 @@ import time
 from .core.config import get_settings
 from .core.database import close_database
 from .core.redis_queue import init_redis_pool, close_redis_pool
-from .api import auth, transcript, merge, search, chat, youtube, rights
+from .api import auth, transcript, merge, search, chat, youtube, rights, reel
 
 settings = get_settings()
 
@@ -234,6 +234,7 @@ app.include_router(search.router)  # FAISS semantic search
 app.include_router(chat.router)  # Chat with video (FAISS + Ollama)
 app.include_router(youtube.router)  # Public video-title/topic search
 app.include_router(rights.router)  # Rights-aware provenance and gating
+app.include_router(reel.router)  # 9:16 Shorts & Reels Studio
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])
